@@ -1,0 +1,472 @@
+name: walletscaner
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/worker.Dockerfile
+  image: walletscaner-worker:local
+  env_file:
+    - .env.server
+  environment:
+    DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+    REDIS_URL: redis://redis:6379
+    ENABLE_LIVE_EXECUTION: "false"
+  volumes:
+    - ./reports:/app/reports
+    - ./logs:/app/logs
+  init: true
+  pids_limit: 128
+  cpu_shares: 128
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - shared_buffers=96MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=30
+      - -c
+      - autovacuum_max_workers=1
+    mem_limit: 256m
+    cpus: "0.18"
+    cpu_shares: 256
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:?POSTGRES_DB is required}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis-data:/data
+    mem_limit: 48m
+    cpus: "0.04"
+    cpu_shares: 64
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    <<: *app
+    command: ["npm", "run", "db:migrate"]
+    restart: "no"
+    mem_limit: 128m
+    cpus: "0.08"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  solana-ingestion:
+    <<: *app
+    command: ["npm", "run", "worker:solana"]
+    restart: unless-stopped
+    mem_limit: 160m
+    cpus: "0.15"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: walletscaner-api:local
+    profiles: ["ui"]
+    env_file:
+      - .env.server
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      REDIS_URL: redis://redis:6379
+      REPOSITORY_MODE: postgres
+      API_PORT: "4010"
+      ENABLE_LIVE_EXECUTION: "false"
+    ports:
+      - "${API_PORT:-4010}:4010"
+    init: true
+    mem_limit: 80m
+    cpus: "0.06"
+    cpu_shares: 128
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:4010}
+    image: walletscaner-web:local
+    profiles: ["ui"]
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:4010}
+    ports:
+      - "${WEB_PORT:-3010}:3010"
+    init: true
+    mem_limit: 96m
+    cpus: "0.05"
+    cpu_shares: 128
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  evidence-sampler:
+    <<: *app
+    profiles: ["research"]
+    command: ["node", "--import", "tsx", "apps/worker/src/sample-evidence-prices.ts"]
+    restart: unless-stopped
+    mem_limit: 80m
+    cpus: "0.05"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  wallet-alpha:
+    <<: *app
+    profiles: ["research", "paper"]
+    command:
+      - sh
+      - -lc
+      - |
+        failures=0
+        while true; do
+          if node --import tsx scripts/research/wallet-alpha-worker.ts; then
+            failures=0
+            sleep "$${WALLET_ALPHA_INTERVAL_SECONDS:-300}"
+          else
+            failures=$$((failures + 1))
+            delay=$$((60 * (1 << (failures > 5 ? 5 : failures))))
+            if [ "$$delay" -gt 3600 ]; then delay=3600; fi
+            echo "wallet-alpha failed; retrying in $${delay}s" >&2
+            sleep "$$delay"
+          fi
+        done
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      REDIS_URL: redis://redis:6379
+      ENABLE_LIVE_EXECUTION: "false"
+      NODE_OPTIONS: "--max-old-space-size=${WALLET_ALPHA_NODE_HEAP_MB:-112}"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    mem_limit: 160m
+    cpus: "0.07"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  paper-alert:
+    <<: *app
+    profiles: ["paper"]
+    command: ["node", "--import", "tsx", "apps/worker/src/process-wallet-alpha-outbox.ts"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      REDIS_URL: redis://redis:6379
+      ENABLE_LIVE_EXECUTION: "false"
+      PAPER_STRATEGY_VERSION: "${PAPER_STRATEGY_VERSION:-qualified-pool-paper-v1}"
+      NODE_OPTIONS: "--max-old-space-size=40"
+    mem_limit: 80m
+    cpus: "0.02"
+    cpu_shares: 32
+    pids_limit: 64
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  telegram-notifier:
+    <<: *app
+    profiles: ["notifications"]
+    command: ["node", "--import", "tsx", "apps/worker/src/telegram-notifier.ts"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      REDIS_URL: redis://redis:6379
+      ENABLE_LIVE_EXECUTION: "false"
+      NODE_OPTIONS: "--max-old-space-size=40"
+    mem_limit: 80m
+    cpus: "0.02"
+    cpu_shares: 32
+    pids_limit: 64
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  data-maintenance:
+    <<: *app
+    profiles: ["operations"]
+    command:
+      - sh
+      - -lc
+      - |
+        sleep "$${MAINTENANCE_INITIAL_DELAY_SECONDS:-300}"
+        while true; do
+          NODE_OPTIONS="--max-old-space-size=$${MAINTENANCE_NODE_HEAP_MB:-32}" \
+            node --import tsx scripts/maintenance/prune-operational-data.ts
+          sleep "$${MAINTENANCE_INTERVAL_SECONDS:-3600}"
+        done
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: "0.04"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  operations-monitor:
+    <<: *app
+    profiles: ["operations"]
+    command:
+      - sh
+      - -lc
+      - |
+        while true; do
+          NODE_OPTIONS="--max-old-space-size=$${OPERATIONS_MONITOR_NODE_HEAP_MB:-32}" \
+            node --import tsx scripts/maintenance/check-operational-health.ts
+          sleep "$${OPERATIONS_MONITOR_INTERVAL_SECONDS:-60}"
+        done
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: "0.03"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  postgres-backup:
+    image: postgres:16-alpine
+    profiles: ["operations"]
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_BACKUP_INITIAL_DELAY_SECONDS: ${POSTGRES_BACKUP_INITIAL_DELAY_SECONDS:-86400}
+      POSTGRES_BACKUP_INTERVAL_SECONDS: ${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}
+      POSTGRES_BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-2}
+      POSTGRES_BACKUP_REQUIRE_OFFSITE_ACK: ${POSTGRES_BACKUP_REQUIRE_OFFSITE_ACK:-true}
+      POSTGRES_BACKUP_MIN_FREE_BYTES: ${POSTGRES_BACKUP_MIN_FREE_BYTES:-2147483648}
+    volumes:
+      - ./backups:/backups
+    mem_limit: 96m
+    cpus: "0.04"
+    cpu_shares: 64
+    pids_limit: 64
+    command:
+      - sh
+      - -ec
+      - |
+        sleep "$${POSTGRES_BACKUP_INITIAL_DELAY_SECONDS:-86400}"
+        while true; do
+          # Interrupted dumps are not recovery artifacts. Remove only stale
+          # temporary files so restarts cannot consume the fixed disk forever.
+          find /backups -maxdepth 1 -type f \
+            -name 'memecoin_alpha_*.dump.tmp' \
+            -mmin +360 -delete
+          fresh_tmp=$$(find /backups -maxdepth 1 -type f \
+            -name 'memecoin_alpha_*.dump.tmp' \
+            -mmin -360 -print -quit)
+          if [ -n "$${fresh_tmp}" ]; then
+            echo "backup skipped: a recent interrupted generation is inside its safety window"
+            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            continue
+          fi
+
+          # Fail closed on off-host verification without accumulating an
+          # unbounded queue of completed multi-gigabyte dumps.
+          unacknowledged=""
+          if [ "$${POSTGRES_BACKUP_REQUIRE_OFFSITE_ACK:-true}" = "true" ]; then
+            for dump in /backups/memecoin_alpha_*.dump; do
+              [ -e "$${dump}" ] || continue
+              sidecar="$${dump}.sha256"
+              marker="$${dump}.offsite-verified"
+              [ -f "$${sidecar}" ] || {
+                unacknowledged="$${dump}"
+                break
+              }
+              [ -f "$${marker}" ] || {
+                unacknowledged="$${dump}"
+                break
+              }
+              expected=$$(cut -d ' ' -f 1 "$${sidecar}")
+              acknowledged=$$(sed -n 's/^sha256=//p' "$${marker}" | head -n 1)
+              [ -n "$${expected}" ] && [ "$${expected}" = "$${acknowledged}" ] || {
+                unacknowledged="$${dump}"
+                break
+              }
+            done
+          fi
+          if [ -n "$${unacknowledged}" ]; then
+            echo "backup skipped: one completed generation still awaits off-host verification"
+            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            continue
+          fi
+
+          # All completed generations are off-host verified at this point.
+          # Keep the newest server recovery point, but remove older verified
+          # copies before allocating another multi-gigabyte temporary dump.
+          newest=""
+          if [ "$${POSTGRES_BACKUP_REQUIRE_OFFSITE_ACK:-true}" = "true" ]; then
+            for dump in $$(ls -1t /backups/memecoin_alpha_*.dump 2>/dev/null || true); do
+              if [ -z "$${newest}" ]; then
+                newest="$${dump}"
+                continue
+              fi
+              rm -f -- "$${dump}" "$${dump}.sha256" "$${dump}.offsite-verified"
+            done
+          fi
+
+          # Reserve enough room for a dump as large as the newest generation
+          # plus a fixed emergency margin. If capacity is uncertain, fail
+          # closed and preserve the existing verified server recovery point.
+          previous_size=0
+          if [ -n "$${newest}" ] && [ -f "$${newest}" ]; then
+            previous_size=$$(stat -c '%s' "$${newest}")
+          fi
+          available=$$(df -PB1 /backups | awk 'NR == 2 { print $$4 }')
+          minimum_free="$${POSTGRES_BACKUP_MIN_FREE_BYTES:-2147483648}"
+          required=$$((previous_size + minimum_free))
+          if [ -z "$${available}" ] || [ "$${available}" -lt "$${required}" ]; then
+            echo "backup skipped: insufficient free space for a bounded generation"
+            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            continue
+          fi
+
+          stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+          tmp="/backups/memecoin_alpha_$${stamp}.dump.tmp"
+          final="/backups/memecoin_alpha_$${stamp}.dump"
+          pg_dump -h postgres -U postgres -d "$${POSTGRES_DB}" -Fc -Z 6 -f "$${tmp}"
+          pg_restore --list "$${tmp}" >/dev/null
+          mv "$${tmp}" "$${final}"
+          sha256sum "$${final}" > "$${final}.sha256"
+          if [ "$${POSTGRES_BACKUP_REQUIRE_OFFSITE_ACK:-true}" = "true" ]; then
+            find /backups -maxdepth 1 -type f \
+              -name 'memecoin_alpha_*.dump.offsite-verified' \
+              -mtime +"$${POSTGRES_BACKUP_RETENTION_DAYS:-3}" -print |
+            while IFS= read -r marker; do
+              dump="$${marker%.offsite-verified}"
+              sidecar="$${dump}.sha256"
+              [ -f "$${dump}" ] || continue
+              [ -f "$${sidecar}" ] || continue
+              expected=$$(cut -d ' ' -f 1 "$${sidecar}")
+              acknowledged=$$(sed -n 's/^sha256=//p' "$${marker}" | head -n 1)
+              [ -n "$${expected}" ] || continue
+              [ "$${expected}" = "$${acknowledged}" ] || continue
+              rm -f -- "$${dump}" "$${sidecar}" "$${marker}"
+            done
+          else
+            find /backups -maxdepth 1 -type f \
+              \( -name 'memecoin_alpha_*.dump' -o -name 'memecoin_alpha_*.dump.sha256' \) \
+              -mtime +"$${POSTGRES_BACKUP_RETENTION_DAYS:-3}" -delete
+          fi
+          sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  #   historical-backfill:
+  #     <<: *app
+  #     command:
+  #       - npm
+  #       - run
+  #       - backfill:helius-history
+  #       - --
+  #       - --run-id=helius-90d-v3
+  #       - --days=90
+  #       - --max-slices=1080
+  #       - --slice-minutes=1
+  #       - --max-pages=1
+  #       - --max-pools=500
+  #       - --pool-pages=1
+  #       - --max-mints=1500
+  #       - --mint-pages=1
+  #       - --max-assets=5000
+  #       - --asset-batch-size=1000
+  #       - --page-limit=100
+  #       - --credit-budget=450000
+  #       - --rps=1.5
+  #     restart: on-failure:5
+  #     depends_on:
+  #       migrate:
+  #         condition: service_completed_successfully
+
+  market-watch:
+    build:
+      context: .
+      dockerfile: docker/market-watch.Dockerfile
+    image: walletscaner-market-watch:local
+    profiles: ["legacy-research"]
+    env_file:
+      - .env.server
+    environment:
+      MARKET_WATCH_CYCLES: "0"
+      MARKET_WATCH_INTERVAL_SECONDS: "90"
+      MARKET_WATCH_RUN_SCAN: "true"
+      MARKET_WATCH_REFRESH_TOKENS: "40"
+      MARKET_WATCH_PAPER_ROUND_TRIP_COST_PCT: "3"
+      MARKET_WATCH_WALLET_OUTCOME_HORIZON_MINUTES: "20"
+      MARKET_WATCH_WALLET_OUTCOME_MAX_DELAY_MINUTES: "20"
+      LIVE_ALPHA_MAX_CANDIDATES: "8"
+      LIVE_ALPHA_TX_LIMIT_PER_PAIR: "20"
+      LIVE_ALPHA_ENRICH_WALLETS: "8"
+      LIVE_ALPHA_WALLET_TX_LIMIT: "12"
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    init: true
+    mem_limit: 128m
+    cpus: "0.05"
+    cpu_shares: 64
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+#   report-refresh:
+#     <<: *app
+#     command:
+#       - sh
+#       - -lc
+#       - |
+#         while true; do
+#           npm run research:historical-data-quality || true
+#           npm run research:evidence-report || true
+#           sleep 1800
+#         done
+#     restart: unless-stopped
+#     depends_on:
+#       migrate:
+#         condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  redis-data:

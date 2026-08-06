@@ -1,0 +1,16 @@
+node_modules
+.next
+dist
+coverage
+.git
+.env
+.env.*
+!.env.example
+logs
+reports
+backups
+deploy/*.tar
+deploy/*.tar.gz
+*.tar
+*.tar.gz
+npm-debug.log*

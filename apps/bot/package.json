@@ -1,0 +1,10 @@
+{
+  "name": "@memecoin-alpha/bot",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "send:test": "tsx src/send-test-alert.ts"
+  }
+}
+

@@ -1,0 +1,89 @@
+{
+  "name": "memecoin-alpha-intelligence-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "worker:poll": "npm run poll -w apps/worker",
+    "worker:solana": "tsx apps/worker/src/watch-solana.ts",
+    "worker:evidence-sampler": "tsx apps/worker/src/sample-evidence-prices.ts",
+    "worker:paper-alert": "tsx apps/worker/src/process-wallet-alpha-outbox.ts",
+    "worker:telegram-notifier": "tsx apps/worker/src/telegram-notifier.ts",
+    "worker:replay": "npm run replay -w apps/worker",
+    "bot:test": "npm run send:test -w apps/bot",
+    "backfill:dexscreener": "tsx scripts/backfill/dexscreener.ts",
+    "backfill:helius-history": "tsx scripts/backfill/helius-historical.ts",
+    "db:migrate": "tsx scripts/migrations/run.ts",
+    "research:live-alpha": "tsx scripts/research/live-solana-alpha.ts",
+    "research:market-watch": "tsx scripts/research/market-watch.ts",
+    "research:evidence-report": "tsx scripts/research/evidence-report.ts",
+    "research:evidence-replay": "tsx scripts/research/evidence-replay.ts",
+    "research:strategy-search": "tsx scripts/research/evidence-strategy-search.ts",
+    "research:backfill-status": "tsx scripts/research/backfill-status.ts",
+    "research:historical-data-quality": "tsx scripts/research/historical-data-quality.ts",
+    "research:wallet-alpha": "tsx scripts/research/wallet-alpha.ts",
+    "worker:wallet-alpha": "tsx scripts/research/wallet-alpha-worker.ts",
+    "research:wallet-alpha-managed-shadow": "tsx scripts/research/wallet-alpha-managed-shadow.ts",
+    "benchmark:wallet-alpha-managed": "node --max-old-space-size=112 --import tsx scripts/research/wallet-alpha-managed-benchmark.ts",
+    "benchmark:wallet-alpha-worker": "node --max-old-space-size=112 --import tsx scripts/research/wallet-alpha-worker-benchmark.ts",
+    "maintenance:prune": "tsx scripts/maintenance/prune-operational-data.ts",
+    "maintenance:health": "tsx scripts/maintenance/check-operational-health.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "bs58": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.2",
+    "lucide-react": "^0.468.0",
+    "next": "16.2.11",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.9.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@types/supertest": "^6.0.2",
+    "concurrently": "10.0.4",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0",
+    "vitest": "^4.1.9",
+    "wait-on": "^8.0.1"
+  },
+  "overrides": {
+    "body-parser": "1.20.6",
+    "postcss": "8.5.18",
+    "sharp": "0.35.0",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.17"
+    },
+    "minimatch@10.2.5": {
+      "brace-expansion": "5.0.8"
+    }
+  }
+}

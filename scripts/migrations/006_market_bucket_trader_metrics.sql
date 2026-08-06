@@ -1,0 +1,3 @@
+ALTER TABLE historical_market_buckets
+  ADD COLUMN IF NOT EXISTS unique_buyers INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS unique_sellers INTEGER NOT NULL DEFAULT 0;

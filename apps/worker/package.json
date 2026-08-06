@@ -1,0 +1,12 @@
+{
+  "name": "@memecoin-alpha/worker",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "poll": "tsx src/poll-dexscreener.ts",
+    "replay": "tsx src/run-backtest.ts",
+    "watch:solana": "tsx src/watch-solana.ts",
+    "sample:evidence": "tsx src/sample-evidence-prices.ts"
+  }
+}

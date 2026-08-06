@@ -1,0 +1,12 @@
+{
+  "name": "@memecoin-alpha/api",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "vitest run"
+  }
+}
+
