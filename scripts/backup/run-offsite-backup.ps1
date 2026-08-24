@@ -19,8 +19,9 @@ try {
   $parameters = @{
     LocalBackupRoot = $LocalBackupRoot
     BandwidthKbps = $BandwidthKbps
-    TransferAttempts = 4
+    TransferAttempts = 10
     AcknowledgeRemote = $true
+    PruneRemoteVerifiedBackups = $true
   }
   $result = & $pullScript @parameters
 

@@ -40,7 +40,16 @@ import type {
   CanonicalEventFailureResult,
   CanonicalEventStatus,
   CanonicalRepository,
+  DurableSolanaSignature,
+  DurableSolanaSignatureQueueSummary,
   EvidenceRepository,
+  IngestionGapRepair,
+  IngestionGapRepairCreateInput,
+  IngestionGapRepairPageInput,
+  IngestionGapRepairSignature,
+  IngestionCoverageIncident,
+  IngestionCoverageIncidentCloseInput,
+  IngestionCoverageIncidentOpenInput,
   IntelligenceRepository,
   PipelineHealthSummary,
   PipelineWatermark,
@@ -48,21 +57,27 @@ import type {
   SignalOutboxClaimOptions,
   SignalOutboxFailureOptions,
   SignalOutboxMessage,
+  SolanaFinalityBatchResult,
+  SolanaFinalityResult,
+  SolanaFinalityWorkItem,
   TokenRiskReport,
   WalletAlphaCoverageSummary,
+  WalletAlphaAdmissionProbe,
   WalletAlphaDetail,
   WalletAlphaRankingQuery,
   WalletAlphaSignalQuery,
   WalletAlphaStatusCounts,
   WalletAlphaWorkClaimOptions,
+  WalletAlphaWorkCandidate,
   WalletAlphaWorkItem,
+  WalletAlphaWorkPriority,
   WalletAlphaWorkSummary,
   WalletPositionEpisode,
   WalletPositionLedgerSnapshot,
   WalletPositionLedgerWriteResult,
   WalletPositionLot
 } from "./repository";
-import { assertWalletPositionLedgerSnapshot } from "./repository";
+import { assertWalletPositionLedgerSnapshot, classifyWalletAlphaEntryWork } from "./repository";
 
 interface MemoryWalletAlphaWork {
   chain: ChainId;
@@ -73,9 +88,58 @@ interface MemoryWalletAlphaWork {
   updatedAt: string;
   notBefore: string;
   attemptCount: number;
+  priority: WalletAlphaWorkPriority;
+  priorityReason: string;
+  pendingSince: string;
   lockedBy?: string;
   lockExpiresAt?: string;
   lastError?: string;
+}
+
+const COVERAGE_INCIDENT_REASONS = new Set([
+  "head_slot_lag",
+  "raw_websocket_silence",
+  "subscription_ack_timeout",
+  "stale_live_notification",
+  "backfill_truncated",
+  "source_start_failed",
+  "combined"
+]);
+
+function coverageTimestamp(value: string, label: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new Error(`${label} must be a valid timestamp.`);
+  return parsed;
+}
+
+function assertCoverageIncidentOpenInput(input: IngestionCoverageIncidentOpenInput): void {
+  if (input.chain !== "solana") throw new Error("Coverage incident chain must be solana.");
+  if (!input.idempotencyKey.trim()) throw new Error("Coverage incident id must not be empty.");
+  if (!input.provider.trim()) throw new Error("Coverage incident provider must not be empty.");
+  if (!input.programAddress.trim()) {
+    throw new Error("Coverage incident program address must not be empty.");
+  }
+  if (!COVERAGE_INCIDENT_REASONS.has(input.reason)) {
+    throw new Error("Coverage incident reason is not supported.");
+  }
+  const gapStartedAt = coverageTimestamp(input.gapStartedAt, "Coverage gap start");
+  const openedAt = coverageTimestamp(input.openedAt, "Coverage incident open time");
+  if (gapStartedAt > openedAt) {
+    throw new Error("Coverage incident cannot open before its gap starts.");
+  }
+  for (const [label, value] of [
+    ["slot lag", input.slotLag],
+    ["silence", input.silenceMs],
+    ["subscription ACK timeout count", input.subscriptionAckTimeoutCount],
+    ["successful subscription ACK count", input.successfulSubscriptionAckCount]
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+      throw new Error(`Coverage incident ${label} must be a non-negative safe integer.`);
+    }
+  }
+  if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
+    throw new Error("Coverage incident metadata must be an object.");
+  }
 }
 
 export class MemoryRepository
@@ -101,7 +165,25 @@ export class MemoryRepository
   private readonly hypothesisRuns = new Map<string, HypothesisRunEvidence>();
   private readonly ingestionCursors = new Map<string, IngestionCursorEvidence>();
   private readonly canonicalEvents = new Map<string, CanonicalChainEvent>();
+  private readonly solanaSignatureQueue = new Map<
+    string,
+    DurableSolanaSignature & { status: "pending" | "completed"; completedAt?: string }
+  >();
+  private readonly solanaFinalities = new Map<
+    string,
+    SolanaFinalityWorkItem & {
+      status: SolanaFinalityResult["status"];
+      finalizedAt?: string;
+      lastError?: string;
+    }
+  >();
   private readonly pipelineWatermarks = new Map<string, PipelineWatermark>();
+  private readonly ingestionCoverageIncidents = new Map<string, IngestionCoverageIncident>();
+  private readonly ingestionGapRepairs = new Map<string, IngestionGapRepair>();
+  private readonly ingestionGapRepairSignatures = new Map<
+    string,
+    IngestionGapRepairSignature & { status: "pending" | "completed"; completedAt?: string }
+  >();
   private readonly walletPositionEpisodes = new Map<string, WalletPositionEpisode>();
   private readonly walletPositionLots = new Map<string, WalletPositionLot>();
   private readonly signalOutbox = new Map<string, SignalOutboxMessage>();
@@ -109,10 +191,24 @@ export class MemoryRepository
   private readonly processingResults: Array<"succeeded" | "retry" | "dead_letter"> = [];
   private providerStatus: ProviderStatus[] = [];
 
-  private enqueueWalletAlpha(chain: ChainId, walletAddress: string, strategyVersion: string): void {
+  private enqueueWalletAlpha(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    priority: WalletAlphaWorkPriority,
+    priorityReason: string
+  ): void {
     const key = `${chain}:${walletAddress}:${strategyVersion}`;
     const now = nowIso();
     const existing = this.walletAlphaWork.get(key);
+    const wasPending = Boolean(existing && existing.revision > existing.completedRevision);
+    const nextPriority = (
+      wasPending ? Math.max(existing?.priority ?? 0, priority) : priority
+    ) as WalletAlphaWorkPriority;
+    const nextPriorityReason =
+      wasPending && existing && priority < existing.priority
+        ? existing.priorityReason
+        : priorityReason;
     this.walletAlphaWork.set(key, {
       chain,
       walletAddress,
@@ -122,6 +218,9 @@ export class MemoryRepository
       updatedAt: now,
       notBefore: now,
       attemptCount: existing?.attemptCount ?? 0,
+      priority: nextPriority,
+      priorityReason: nextPriorityReason,
+      pendingSince: wasPending ? (existing?.pendingSince ?? now) : now,
       ...(existing?.lockedBy ? { lockedBy: existing.lockedBy } : {}),
       ...(existing?.lockExpiresAt ? { lockExpiresAt: existing.lockExpiresAt } : {}),
       ...(existing?.lastError ? { lastError: existing.lastError } : {})
@@ -311,7 +410,19 @@ export class MemoryRepository
   }
 
   async saveQuotePriceObservation(observation: QuotePriceObservation): Promise<boolean> {
-    if (this.quotePriceObservations.has(observation.idempotencyKey)) return false;
+    const conflicts = [...this.quotePriceObservations.values()].filter(
+      (stored) =>
+        stored.idempotencyKey === observation.idempotencyKey ||
+        (stored.source === observation.source &&
+          stored.quoteTokenAddress === observation.quoteTokenAddress &&
+          new Date(stored.publishTime).getTime() === new Date(observation.publishTime).getTime())
+    );
+    if (conflicts.length > 0) {
+      if (conflicts.length === 1 && quotePriceEvidenceMatches(conflicts[0]!, observation)) {
+        return false;
+      }
+      throw new Error("Quote price observation conflicts with stored immutable evidence.");
+    }
     this.quotePriceObservations.set(observation.idempotencyKey, observation);
     return true;
   }
@@ -435,12 +546,26 @@ export class MemoryRepository
         ...signal,
         idempotencyKey: existingEntry.idempotencyKey
       });
-      this.enqueueWalletAlpha(signal.chain, signal.walletAddress, signal.strategyVersion);
+      const work = classifyWalletAlphaEntryWork(signal);
+      this.enqueueWalletAlpha(
+        signal.chain,
+        signal.walletAddress,
+        signal.strategyVersion,
+        work.priority,
+        work.reason
+      );
       return true;
     }
     if (this.walletEntrySignals.has(signal.idempotencyKey)) return false;
     this.walletEntrySignals.set(signal.idempotencyKey, signal);
-    this.enqueueWalletAlpha(signal.chain, signal.walletAddress, signal.strategyVersion);
+    const work = classifyWalletAlphaEntryWork(signal);
+    this.enqueueWalletAlpha(
+      signal.chain,
+      signal.walletAddress,
+      signal.strategyVersion,
+      work.priority,
+      work.reason
+    );
     return true;
   }
 
@@ -449,13 +574,25 @@ export class MemoryRepository
     if (existing) {
       if (!existing.executionPriceUsd && trade.executionPriceUsd) {
         this.walletTradeEvents.set(trade.idempotencyKey, { ...existing, ...trade });
-        this.enqueueWalletAlpha(trade.chain, trade.walletAddress, trade.strategyVersion);
+        this.enqueueWalletAlpha(
+          trade.chain,
+          trade.walletAddress,
+          trade.strategyVersion,
+          trade.side === "sell" ? 1 : 0,
+          trade.side === "sell" ? "sell-trade" : "buy-trade"
+        );
         return true;
       }
       return false;
     }
     this.walletTradeEvents.set(trade.idempotencyKey, trade);
-    this.enqueueWalletAlpha(trade.chain, trade.walletAddress, trade.strategyVersion);
+    this.enqueueWalletAlpha(
+      trade.chain,
+      trade.walletAddress,
+      trade.strategyVersion,
+      trade.side === "sell" ? 1 : 0,
+      trade.side === "sell" ? "sell-trade" : "buy-trade"
+    );
     return true;
   }
 
@@ -491,7 +628,13 @@ export class MemoryRepository
           }
         }
       });
-      this.enqueueWalletAlpha(trade.chain, trade.walletAddress, trade.strategyVersion);
+      this.enqueueWalletAlpha(
+        trade.chain,
+        trade.walletAddress,
+        trade.strategyVersion,
+        0,
+        "price-enrichment"
+      );
       updated += 1;
     }
     return updated;
@@ -543,10 +686,14 @@ export class MemoryRepository
     return [...this.walletAlphaWork.values()]
       .filter((work) => work.strategyVersion === options.strategyVersion)
       .filter((work) => work.revision > work.completedRevision)
+      .filter((work) => work.priority >= (options.minimumPriority ?? 0))
+      .filter((work) => work.priority <= (options.maximumPriority ?? 2))
       .filter((work) => new Date(work.notBefore).getTime() <= now)
       .filter((work) => !work.lockExpiresAt || new Date(work.lockExpiresAt).getTime() <= now)
       .sort(
         (a, b) =>
+          b.priority - a.priority ||
+          new Date(a.notBefore).getTime() - new Date(b.notBefore).getTime() ||
           new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime() ||
           a.walletAddress.localeCompare(b.walletAddress)
       )
@@ -562,9 +709,86 @@ export class MemoryRepository
           revision: work.revision,
           attemptCount: work.attemptCount,
           lockedBy: options.workerId,
-          lockExpiresAt: work.lockExpiresAt
+          lockExpiresAt: work.lockExpiresAt,
+          priority: work.priority,
+          priorityReason: work.priorityReason,
+          pendingSince: work.pendingSince
         };
       });
+  }
+
+  async listWalletAlphaWorkCandidates(
+    strategyVersion: string,
+    limit = 100,
+    priorities: Pick<WalletAlphaWorkClaimOptions, "minimumPriority" | "maximumPriority"> = {}
+  ): Promise<WalletAlphaWorkCandidate[]> {
+    const now = Date.now();
+    return [...this.walletAlphaWork.values()]
+      .filter((work) => work.strategyVersion === strategyVersion)
+      .filter((work) => work.revision > work.completedRevision)
+      .filter((work) => work.priority >= (priorities.minimumPriority ?? 0))
+      .filter((work) => work.priority <= (priorities.maximumPriority ?? 2))
+      .filter((work) => new Date(work.notBefore).getTime() <= now)
+      .filter((work) => !work.lockExpiresAt || new Date(work.lockExpiresAt).getTime() <= now)
+      .sort(
+        (a, b) =>
+          b.priority - a.priority ||
+          new Date(a.notBefore).getTime() - new Date(b.notBefore).getTime() ||
+          new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime() ||
+          a.walletAddress.localeCompare(b.walletAddress)
+      )
+      .slice(0, clampLimit(limit, 100, 100))
+      .map(
+        ({
+          chain,
+          walletAddress,
+          strategyVersion: workStrategyVersion,
+          revision,
+          priority,
+          pendingSince
+        }) => ({
+          chain,
+          walletAddress,
+          strategyVersion: workStrategyVersion,
+          revision,
+          priority,
+          pendingSince
+        })
+      );
+  }
+
+  async probeWalletAlphaAdmission(
+    candidates: WalletAlphaWorkCandidate[],
+    minEntryObservedAt: string,
+    minimumTradeEvents: number,
+    minimumEntries: number
+  ): Promise<WalletAlphaAdmissionProbe[]> {
+    if (candidates.length > 100) {
+      throw new Error("Wallet-alpha admission probe exceeds the 100-wallet ceiling.");
+    }
+    const tradeThreshold = clampLimit(minimumTradeEvents, 1, 100);
+    const entryThreshold = clampLimit(minimumEntries, 1, 100);
+    const minimumEntryTime = new Date(minEntryObservedAt).getTime();
+    return candidates.map((candidate) => ({
+      ...candidate,
+      tradeEventCount: Math.min(
+        tradeThreshold,
+        [...this.walletTradeEvents.values()].filter(
+          (trade) =>
+            trade.walletAddress === candidate.walletAddress &&
+            trade.strategyVersion === candidate.strategyVersion
+        ).length
+      ),
+      entryCount: Math.min(
+        entryThreshold,
+        [...this.walletEntrySignals.values()].filter(
+          (entry) =>
+            entry.walletAddress === candidate.walletAddress &&
+            entry.strategyVersion === candidate.strategyVersion &&
+            new Date(entry.observedAt).getTime() >= minimumEntryTime
+        ).length
+      )
+    }));
   }
 
   async completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean> {
@@ -573,6 +797,11 @@ export class MemoryRepository
     );
     if (!work || work.lockedBy !== item.lockedBy) return false;
     work.completedRevision = Math.max(work.completedRevision, item.revision);
+    if (work.revision <= item.revision) {
+      work.priority = 0;
+      work.priorityReason = "completed";
+      work.pendingSince = nowIso();
+    }
     work.attemptCount = 0;
     delete work.lockedBy;
     delete work.lockExpiresAt;
@@ -601,12 +830,20 @@ export class MemoryRepository
     const pending = [...this.walletAlphaWork.values()].filter(
       (work) => work.strategyVersion === strategyVersion && work.revision > work.completedRevision
     );
+    const signalPending = pending.filter((work) => work.priority === 2);
+    const oldestPendingAt = earliestIso(pending.map((work) => work.pendingSince));
+    const oldestSignalPendingAt = earliestIso(signalPending.map((work) => work.pendingSince));
     return {
       pending: pending.length,
       processing: pending.filter(
         (work) => work.lockExpiresAt && new Date(work.lockExpiresAt).getTime() > now
       ).length,
-      failed: pending.filter((work) => Boolean(work.lastError)).length
+      failed: pending.filter((work) => Boolean(work.lastError)).length,
+      backgroundPending: pending.filter((work) => work.priority === 0).length,
+      elevatedPending: pending.filter((work) => work.priority === 1).length,
+      signalPending: signalPending.length,
+      ...(oldestPendingAt ? { oldestPendingAt } : {}),
+      ...(oldestSignalPendingAt ? { oldestSignalPendingAt } : {})
     };
   }
 
@@ -731,8 +968,24 @@ export class MemoryRepository
     }
     this.walletSignalOutcomes.set(outcome.idempotencyKey, outcome);
     const entry = this.walletEntrySignals.get(outcome.entryIdempotencyKey);
-    if (entry) this.enqueueWalletAlpha(entry.chain, entry.walletAddress, outcome.strategyVersion);
+    if (entry) {
+      this.enqueueWalletAlpha(
+        entry.chain,
+        entry.walletAddress,
+        outcome.strategyVersion,
+        1,
+        "signal-outcome"
+      );
+    }
     return true;
+  }
+
+  async saveWalletSignalOutcomes(outcomes: WalletSignalOutcomeEvidence[]): Promise<number> {
+    let changed = 0;
+    for (const outcome of outcomes) {
+      if (await this.saveWalletSignalOutcome(outcome)) changed += 1;
+    }
+    return changed;
   }
 
   async saveHypothesisRun(run: HypothesisRunEvidence): Promise<boolean> {
@@ -970,6 +1223,166 @@ export class MemoryRepository
     // The in-memory repository is deliberately available only when explicitly injected in tests/demo.
   }
 
+  async admitSolanaSignature(item: DurableSolanaSignature): Promise<boolean> {
+    const key = `${item.provider}:${item.address}:${item.signature}`;
+    const existing = this.solanaSignatureQueue.get(key);
+    if (existing) return existing.status === "pending";
+    this.solanaSignatureQueue.set(key, { ...item, status: "pending" });
+    return true;
+  }
+
+  async listPendingSolanaSignatures(
+    provider: string,
+    address: string,
+    limit: number
+  ): Promise<DurableSolanaSignature[]> {
+    return [...this.solanaSignatureQueue.values()]
+      .filter(
+        (item) =>
+          item.provider === provider && item.address === address && item.status === "pending"
+      )
+      .sort(
+        (left, right) =>
+          left.slot - right.slot ||
+          left.notifiedAt.localeCompare(right.notifiedAt) ||
+          left.signature.localeCompare(right.signature)
+      )
+      .slice(0, Math.max(0, limit))
+      .map(({ status: _status, completedAt: _completedAt, ...item }) => item);
+  }
+
+  async completeSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    completedAt = nowIso()
+  ): Promise<boolean> {
+    const key = `${provider}:${address}:${signature}`;
+    const item = this.solanaSignatureQueue.get(key);
+    if (!item || item.status !== "pending") return false;
+    this.solanaSignatureQueue.set(key, { ...item, status: "completed", completedAt });
+    return true;
+  }
+
+  async getSolanaSignatureQueueSummary(
+    provider?: string
+  ): Promise<DurableSolanaSignatureQueueSummary> {
+    const items = [...this.solanaSignatureQueue.values()].filter(
+      (item) => !provider || item.provider === provider
+    );
+    const pending = items.filter((item) => item.status === "pending");
+    return {
+      pendingCount: pending.length,
+      completedCount: items.length - pending.length,
+      ...(pending.length > 0
+        ? { oldestPendingAt: pending.map((item) => item.notifiedAt).sort()[0] }
+        : {})
+    };
+  }
+
+  async listPendingSolanaFinalities(
+    limit: number,
+    minimumAgeSeconds: number
+  ): Promise<SolanaFinalityWorkItem[]> {
+    const cutoff = Date.now() - Math.max(0, minimumAgeSeconds) * 1_000;
+    return [...this.solanaFinalities.values()]
+      .filter((item) => item.status === "pending" && Date.parse(item.firstSeenAt) <= cutoff)
+      .sort(
+        (left, right) => left.slot - right.slot || left.signature.localeCompare(right.signature)
+      )
+      .slice(0, Math.max(0, limit))
+      .map(({ status: _status, ...item }) => item);
+  }
+
+  async reconcileTerminalSolanaFinalityEvents(limit: number): Promise<SolanaFinalityBatchResult> {
+    let finalizedEvents = 0;
+    let rolledBackEvents = 0;
+    const candidates = [...this.canonicalEvents.entries()]
+      .filter(([, event]) => {
+        if (
+          !event.requiresFinality ||
+          !event.signature ||
+          (event.status !== "pending" && event.status !== "retry")
+        ) {
+          return false;
+        }
+        const finality = this.solanaFinalities.get(event.signature);
+        return Boolean(
+          finality &&
+          finality.status !== "pending" &&
+          (finality.status !== "finalized" || event.commitment !== "finalized")
+        );
+      })
+      .sort(
+        ([leftKey, left], [rightKey, right]) =>
+          left.receivedAt.localeCompare(right.receivedAt) || leftKey.localeCompare(rightKey)
+      )
+      .slice(0, Math.max(0, limit));
+
+    for (const [key, event] of candidates) {
+      const finality = this.solanaFinalities.get(event.signature!);
+      if (!finality || finality.status === "pending") continue;
+      if (finality.status === "finalized") {
+        this.canonicalEvents.set(key, {
+          ...event,
+          commitment: "finalized",
+          finalizedAt: finality.finalizedAt ?? finality.firstSeenAt
+        });
+        finalizedEvents += 1;
+      } else {
+        this.canonicalEvents.set(key, {
+          ...event,
+          status: "rolled_back",
+          lastError: finality.lastError ?? `Solana finality ${finality.status}.`
+        });
+        rolledBackEvents += 1;
+      }
+    }
+    return { checkedSignatures: 0, finalizedEvents, rolledBackEvents };
+  }
+
+  async recordSolanaFinalities(
+    results: Array<{ signature: string; result: SolanaFinalityResult }>
+  ): Promise<SolanaFinalityBatchResult> {
+    let checkedSignatures = 0;
+    let finalizedEvents = 0;
+    let rolledBackEvents = 0;
+    for (const { signature, result } of results) {
+      const finality = this.solanaFinalities.get(signature);
+      if (!finality || finality.status !== "pending") continue;
+      checkedSignatures += 1;
+      this.solanaFinalities.set(signature, {
+        ...finality,
+        status: result.status,
+        attemptCount: finality.attemptCount + 1,
+        ...(result.status === "finalized" ? { finalizedAt: result.checkedAt } : {}),
+        ...(result.error ? { lastError: result.error } : {})
+      });
+      for (const [key, event] of this.canonicalEvents) {
+        if (event.signature !== signature || !event.requiresFinality) continue;
+        if (result.status === "finalized") {
+          this.canonicalEvents.set(key, {
+            ...event,
+            commitment: "finalized",
+            finalizedAt: result.checkedAt
+          });
+          finalizedEvents += 1;
+        } else if (
+          (result.status === "failed" || result.status === "unresolved") &&
+          (event.status === "pending" || event.status === "retry")
+        ) {
+          this.canonicalEvents.set(key, {
+            ...event,
+            status: "rolled_back",
+            lastError: result.error ?? `Solana finality ${result.status}.`
+          });
+          rolledBackEvents += 1;
+        }
+      }
+    }
+    return { checkedSignatures, finalizedEvents, rolledBackEvents };
+  }
+
   async insertChainEvent(event: CanonicalChainEventInput): Promise<boolean> {
     if (this.canonicalEvents.has(event.idempotencyKey)) return false;
     this.canonicalEvents.set(event.idempotencyKey, {
@@ -978,6 +1391,18 @@ export class MemoryRepository
       attemptCount: 0,
       nextAttemptAt: event.receivedAt
     });
+    if (event.requiresFinality && event.signature && event.slot !== undefined) {
+      if (!this.solanaFinalities.has(event.signature)) {
+        this.solanaFinalities.set(event.signature, {
+          chain: "solana",
+          signature: event.signature,
+          slot: event.slot,
+          firstSeenAt: event.receivedAt,
+          attemptCount: 0,
+          status: "pending"
+        });
+      }
+    }
     return true;
   }
 
@@ -1004,7 +1429,11 @@ export class MemoryRepository
       if (!partitionHeads.has(partition)) partitionHeads.set(partition, event);
     }
     const candidates = [...partitionHeads.values()]
-      .filter((event) => canonicalEventIsClaimable(event, now))
+      .filter(
+        (event) =>
+          canonicalEventIsClaimable(event, now) &&
+          (!event.requiresFinality || event.commitment === "finalized")
+      )
       .sort(compareCanonicalEvents)
       .slice(0, limit);
 
@@ -1081,6 +1510,272 @@ export class MemoryRepository
     partitionKey = "global"
   ): Promise<PipelineWatermark | undefined> {
     return this.pipelineWatermarks.get(`${pipeline}:${partitionKey}`);
+  }
+
+  async openIngestionCoverageIncident(
+    input: IngestionCoverageIncidentOpenInput
+  ): Promise<IngestionCoverageIncident> {
+    assertCoverageIncidentOpenInput(input);
+    const existingById = this.ingestionCoverageIncidents.get(input.idempotencyKey);
+    if (existingById) return existingById;
+    const existingOpen = [...this.ingestionCoverageIncidents.values()].find(
+      (incident) =>
+        incident.provider === input.provider &&
+        incident.programAddress === input.programAddress &&
+        !incident.closedAt
+    );
+    if (existingOpen) return existingOpen;
+    const incident: IngestionCoverageIncident = {
+      ...input,
+      restartAttemptCount: 0,
+      createdAt: input.openedAt
+    };
+    this.ingestionCoverageIncidents.set(input.idempotencyKey, incident);
+    return incident;
+  }
+
+  async listOpenIngestionCoverageIncidents(
+    provider?: string
+  ): Promise<IngestionCoverageIncident[]> {
+    return [...this.ingestionCoverageIncidents.values()]
+      .filter((incident) => !incident.closedAt && (!provider || incident.provider === provider))
+      .sort(
+        (left, right) =>
+          left.openedAt.localeCompare(right.openedAt) ||
+          left.programAddress.localeCompare(right.programAddress)
+      );
+  }
+
+  async markIngestionCoverageIncidentRestart(
+    idempotencyKey: string,
+    phase: "attempted" | "completed" | "failed",
+    at: string,
+    error?: string
+  ): Promise<boolean> {
+    const incident = this.ingestionCoverageIncidents.get(idempotencyKey);
+    if (!incident || incident.closedAt) return false;
+    const atTime = coverageTimestamp(at, "Coverage restart time");
+    const updated = { ...incident };
+    if (phase === "attempted") {
+      if (
+        updated.lastRestartAttemptedAt &&
+        atTime < coverageTimestamp(updated.lastRestartAttemptedAt, "Last coverage restart attempt")
+      ) {
+        throw new Error("Coverage incident restart attempt cannot move backward.");
+      }
+      updated.restartAttemptedAt ??= at;
+      updated.restartAttemptCount += 1;
+      updated.lastRestartAttemptedAt = at;
+      delete updated.lastRestartError;
+    } else if (phase === "completed") {
+      if (!updated.restartAttemptedAt) {
+        throw new Error("Coverage incident restart cannot complete before an attempt.");
+      }
+      if (
+        atTime < coverageTimestamp(updated.restartAttemptedAt, "First coverage restart attempt")
+      ) {
+        throw new Error("Coverage incident restart cannot complete before its first attempt.");
+      }
+      if (
+        updated.lastRestartCompletedAt &&
+        atTime <
+          coverageTimestamp(updated.lastRestartCompletedAt, "Last coverage restart completion")
+      ) {
+        throw new Error("Coverage incident restart completion cannot move backward.");
+      }
+      updated.restartCompletedAt ??= at;
+      updated.lastRestartCompletedAt = at;
+      delete updated.lastRestartError;
+    } else {
+      updated.lastRestartAttemptedAt ??= at;
+      updated.lastRestartError = error?.slice(0, 500) ?? "unknown error";
+    }
+    this.ingestionCoverageIncidents.set(idempotencyKey, updated);
+    return true;
+  }
+
+  async closeIngestionCoverageIncident(
+    idempotencyKey: string,
+    input: IngestionCoverageIncidentCloseInput
+  ): Promise<boolean> {
+    const incident = this.ingestionCoverageIncidents.get(idempotencyKey);
+    if (!incident || incident.closedAt) return false;
+    if (Boolean(input.coverageReconciledAt) !== Boolean(input.coverageRepairId)) return false;
+    if (input.coverageRepairId) {
+      const repair = this.ingestionGapRepairs.get(input.coverageRepairId);
+      if (!repair || repair.incidentId !== idempotencyKey || repair.status !== "completed") {
+        return false;
+      }
+      if (repair.boundarySource !== "truncation_cursor") return false;
+    }
+    if (
+      coverageTimestamp(input.closedAt, "Coverage incident close time") <
+      coverageTimestamp(incident.openedAt, "Coverage incident open time")
+    ) {
+      throw new Error("Coverage incident cannot close before it opened.");
+    }
+    if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
+      throw new Error("Coverage incident close metadata must be an object.");
+    }
+    this.ingestionCoverageIncidents.set(idempotencyKey, {
+      ...incident,
+      closedAt: input.closedAt,
+      ...(input.clusterSlot !== undefined ? { closeClusterSlot: input.clusterSlot } : {}),
+      ...(input.sourceSlot !== undefined ? { closeSourceSlot: input.sourceSlot } : {}),
+      ...(input.coverageReconciledAt
+        ? { coverageReconciledAt: input.coverageReconciledAt }
+        : {}),
+      ...(input.coverageRepairId ? { coverageRepairId: input.coverageRepairId } : {}),
+      resolution: "transport_recovered_gap_unreconciled",
+      closeMetadata: input.metadata
+    });
+    return true;
+  }
+
+  async getOrCreateIngestionGapRepair(
+    input: IngestionGapRepairCreateInput
+  ): Promise<IngestionGapRepair> {
+    const active = [...this.ingestionGapRepairs.values()].find(
+      (repair) =>
+        repair.incidentId === input.incidentId &&
+        (repair.status === "collecting" || repair.status === "replaying")
+    );
+    if (active) return { ...active };
+    const existing = this.ingestionGapRepairs.get(input.repairId);
+    if (existing) return { ...existing };
+    const now = nowIso();
+    const created: IngestionGapRepair = {
+      ...input,
+      status: "collecting",
+      boundaryReached: false,
+      fetchedSignatureCount: 0,
+      completedSignatureCount: 0,
+      collectionAttemptCount: 0,
+      replayAttemptCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.ingestionGapRepairs.set(input.repairId, created);
+    return { ...created };
+  }
+
+  async stageIngestionGapRepairPage(
+    input: IngestionGapRepairPageInput
+  ): Promise<IngestionGapRepair> {
+    const repair = this.ingestionGapRepairs.get(input.repairId);
+    if (!repair || repair.status !== "collecting") {
+      throw new Error("Gap repair is not collecting signatures.");
+    }
+    for (const item of input.signatures) {
+      const key = `${input.repairId}:${item.signature}`;
+      if (!this.ingestionGapRepairSignatures.has(key)) {
+        this.ingestionGapRepairSignatures.set(key, {
+          repairId: input.repairId,
+          signature: item.signature,
+          slot: item.slot,
+          positionFromHead: item.positionFromHead,
+          status: "pending"
+        });
+      }
+    }
+    const fetchedSignatureCount = [...this.ingestionGapRepairSignatures.values()].filter(
+      (item) => item.repairId === input.repairId
+    ).length;
+    const updated: IngestionGapRepair = {
+      ...repair,
+      ...(repair.targetSignature
+        ? {}
+        : input.targetSignature && input.targetSlot !== undefined
+          ? { targetSignature: input.targetSignature, targetSlot: input.targetSlot }
+          : {}),
+      ...(input.beforeSignature ? { beforeSignature: input.beforeSignature } : {}),
+      status: input.boundaryReached ? "replaying" : "collecting",
+      boundaryReached: input.boundaryReached,
+      fetchedSignatureCount,
+      collectionAttemptCount: repair.collectionAttemptCount + 1,
+      updatedAt: nowIso()
+    };
+    this.ingestionGapRepairs.set(input.repairId, updated);
+    return { ...updated };
+  }
+
+  async listPendingIngestionGapRepairSignatures(
+    repairId: string,
+    limit: number
+  ): Promise<IngestionGapRepairSignature[]> {
+    return [...this.ingestionGapRepairSignatures.values()]
+      .filter((item) => item.repairId === repairId && item.status === "pending")
+      .sort((left, right) => right.positionFromHead - left.positionFromHead)
+      .slice(0, Math.max(0, limit))
+      .map(({ status: _status, completedAt: _completedAt, ...item }) => item);
+  }
+
+  async completeIngestionGapRepairSignature(
+    repairId: string,
+    signature: string,
+    completedAt = nowIso()
+  ): Promise<boolean> {
+    const key = `${repairId}:${signature}`;
+    const item = this.ingestionGapRepairSignatures.get(key);
+    const repair = this.ingestionGapRepairs.get(repairId);
+    if (!item || item.status !== "pending" || !repair) return false;
+    this.ingestionGapRepairSignatures.set(key, { ...item, status: "completed", completedAt });
+    const repairWithoutError = { ...repair };
+    delete repairWithoutError.lastError;
+    this.ingestionGapRepairs.set(repairId, {
+      ...repairWithoutError,
+      completedSignatureCount: repair.completedSignatureCount + 1,
+      replayAttemptCount: repair.replayAttemptCount + 1,
+      updatedAt: completedAt
+    });
+    return true;
+  }
+
+  async recordIngestionGapRepairError(
+    repairId: string,
+    phase: "collection" | "replay",
+    error: string
+  ): Promise<boolean> {
+    const repair = this.ingestionGapRepairs.get(repairId);
+    if (!repair || repair.status === "completed") return false;
+    this.ingestionGapRepairs.set(repairId, {
+      ...repair,
+      ...(error.startsWith("gap-repair-signature-cap-") ? { status: "failed" as const } : {}),
+      collectionAttemptCount:
+        phase === "collection"
+          ? repair.collectionAttemptCount + 1
+          : repair.collectionAttemptCount,
+      replayAttemptCount:
+        phase === "replay" ? repair.replayAttemptCount + 1 : repair.replayAttemptCount,
+      lastError: error.slice(0, 500),
+      updatedAt: nowIso()
+    });
+    return true;
+  }
+
+  async completeIngestionGapRepair(
+    repairId: string,
+    coveredThrough: { signature: string; slot: number; completedAt?: string }
+  ): Promise<boolean> {
+    const repair = this.ingestionGapRepairs.get(repairId);
+    if (!repair || repair.status !== "replaying") return false;
+    if (repair.boundarySource !== "truncation_cursor") return false;
+    const pending = [...this.ingestionGapRepairSignatures.values()].some(
+      (item) => item.repairId === repairId && item.status === "pending"
+    );
+    if (pending) return false;
+    const completedAt = coveredThrough.completedAt ?? nowIso();
+    const repairWithoutError = { ...repair };
+    delete repairWithoutError.lastError;
+    this.ingestionGapRepairs.set(repairId, {
+      ...repairWithoutError,
+      status: "completed",
+      coveredThroughSignature: coveredThrough.signature,
+      coveredThroughSlot: coveredThrough.slot,
+      completedAt,
+      updatedAt: completedAt
+    });
+    return true;
   }
 
   async getPipelineHealth(): Promise<PipelineHealthSummary> {
@@ -1305,6 +2000,21 @@ const historicalWindowKey = (
 const compareObservedAt = (a: { observedAt: string }, b: { observedAt: string }) =>
   new Date(a.observedAt).getTime() - new Date(b.observedAt).getTime();
 
+function quotePriceEvidenceMatches(
+  stored: QuotePriceObservation,
+  observation: QuotePriceObservation
+): boolean {
+  return (
+    stored.chain === observation.chain &&
+    stored.quoteTokenAddress === observation.quoteTokenAddress &&
+    stored.priceUsd === observation.priceUsd &&
+    stored.confidenceUsd === observation.confidenceUsd &&
+    stored.source === observation.source &&
+    stored.quality === observation.quality &&
+    new Date(stored.publishTime).getTime() === new Date(observation.publishTime).getTime()
+  );
+}
+
 const canonicalStatuses: CanonicalEventStatus[] = [
   "pending",
   "processing",
@@ -1362,6 +2072,10 @@ function maxDefined(values: Array<number | undefined>): number | undefined {
 
 function latestIso(values: string[]): string | undefined {
   return values.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+}
+
+function earliestIso(values: string[]): string | undefined {
+  return values.sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
 }
 
 function latestEventTime(events: CanonicalChainEvent[], eventType: string): string | undefined {

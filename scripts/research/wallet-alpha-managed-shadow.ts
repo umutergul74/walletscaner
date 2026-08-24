@@ -15,10 +15,17 @@ const sourceScoreReadLimit = positiveInt(
   process.env.WALLET_ALPHA_MANAGED_SHADOW_SCORE_READ_LIMIT,
   250
 );
+const walletBatchSize = positiveInt(process.env.WALLET_ALPHA_MANAGED_SHADOW_BATCH_SIZE, 5);
+const maximumEntryDetectionDelaySeconds = positiveInt(
+  process.env.WALLET_ALPHA_MANAGED_SHADOW_MAX_ENTRY_DELAY_SECONDS,
+  60
+);
 const repository = new PostgresRepository(databaseUrl);
 const report = await buildManagedShadowReport(repository, sourceStrategyVersion, undefined, {
   maximumWallets,
-  sourceScoreReadLimit
+  sourceScoreReadLimit,
+  walletBatchSize,
+  maximumEntryDetectionDelaySeconds
 });
 
 await mkdir("reports", { recursive: true });

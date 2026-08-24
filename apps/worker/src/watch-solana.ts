@@ -14,12 +14,16 @@ import {
   HeliusWebhookAddressClient,
   HeliusTransactionEventSource,
   PythPriceClient,
+  POOL_DISCOVERY_DECODER_VERSION,
+  REVIEWED_SOLANA_VENUE_PROGRAMS,
+  SolanaEventNotAcceptedError,
   StandardSolanaEventSource,
   type ActivePoolState,
   type DexScreenerPair,
   type PoolDiscovery,
   type PythUsdQuote,
   type RawBuyInstructionDefinition,
+  type SolanaBackfillTruncation,
   type SolanaChainEvent,
   type SolanaCursorStore,
   type SolanaEventSource,
@@ -48,7 +52,19 @@ import {
   resolveRpcTradeWsUrl,
   websocketProviderLabel
 } from "./solana-trade-transport.js";
+import { resolveDiscoveryWebSocketRoutes } from "./solana-discovery-transport.js";
 import { compactDexScreenerPair } from "./evidence-sampling.js";
+import {
+  DiscoverySupervisor,
+  fetchConfirmedSolanaSlot,
+  fetchLatestSolanaAddressActivity
+} from "./discovery-supervisor.js";
+import { activateTradeSubscription, excludeTradeCoverage } from "./trade-coverage.js";
+import {
+  createSolanaFinalityDiagnostics,
+  reconcileSolanaFinalityCycle
+} from "./solana-finality.js";
+import { discoveryBackfillProfile } from "./discovery-backfill-profile.js";
 
 interface ProgramConfig {
   programId: string;
@@ -57,14 +73,19 @@ interface ProgramConfig {
     name: string;
     discriminatorHex: string;
     poolAccountIndex: number;
-    baseTokenAccountIndex: number;
+    baseTokenAccountIndex?: number;
     quoteTokenAccountIndex?: number;
+    tokenPairAccountIndexes?: [number, number];
+    quoteTokenAddresses?: string[];
+    creatorAccountIndex?: number;
+    creatorDataEncoding?: "pump-borsh-after-3-strings";
   }>;
 }
 
 interface TrackedPool extends ActivePoolState {
   tokenAddress: string;
   quoteTokenAddress?: string;
+  creatorAddress?: string;
   programId: string;
   signature: string;
   slot: number;
@@ -179,6 +200,21 @@ const webhookManagementEnabled = parseBooleanEnv(
 );
 const strategyVersion = process.env.ALPHA_STRATEGY_VERSION ?? "evidence-v1";
 const programs = parsePrograms(process.env.SOLANA_POOL_PROGRAMS_JSON);
+const discoveryWebSocketRoutes = resolveDiscoveryWebSocketRoutes({
+  configuredWsUrl: wsUrl,
+  programIds: programs.map((program) => program.programId),
+  ...(process.env.SOLANA_DISCOVERY_WS_SECONDARY_URL
+    ? { secondaryWsUrl: process.env.SOLANA_DISCOVERY_WS_SECONDARY_URL }
+    : {}),
+  ...(process.env.SOLANA_DISCOVERY_WS_SECONDARY_PROGRAMS_JSON
+    ? {
+        secondaryProgramIdsJson: process.env.SOLANA_DISCOVERY_WS_SECONDARY_PROGRAMS_JSON
+      }
+    : {})
+});
+const discoveryWebSocketUrlByProgram = new Map(
+  discoveryWebSocketRoutes.map((route) => [route.programId, route.wsUrl])
+);
 const minLiquidityUsd = Number(process.env.MIN_LIQUIDITY_USD ?? 10_000);
 const minVolume5mUsd = Number(process.env.MIN_VOLUME_5M_USD ?? 5_000);
 const maxSwaps5m = Number(process.env.MAX_SWAPS_5M ?? 300);
@@ -261,6 +297,34 @@ const historicalSolUsdProviderMinIntervalMs = boundedInteger(
 );
 const repository = new PostgresRepository(databaseUrl);
 const ingestionStartedAtMs = Date.now();
+const finalityDiagnostics = createSolanaFinalityDiagnostics();
+const finalityIntervalMs =
+  boundedInteger(process.env.SOLANA_FINALITY_INTERVAL_SECONDS, 5, 2, 30) * 1_000;
+const finalityBatchSize = boundedInteger(process.env.SOLANA_FINALITY_BATCH_SIZE, 256, 1, 256);
+const finalityMinimumAgeSeconds = boundedInteger(
+  process.env.SOLANA_FINALITY_MINIMUM_AGE_SECONDS,
+  8,
+  1,
+  120
+);
+const finalityUnresolvedAfterSeconds = boundedInteger(
+  process.env.SOLANA_FINALITY_UNRESOLVED_AFTER_SECONDS,
+  300,
+  60,
+  3_600
+);
+const finalityMinimumRootDistanceSlots = boundedInteger(
+  process.env.SOLANA_FINALITY_MINIMUM_ROOT_DISTANCE_SLOTS,
+  150,
+  32,
+  10_000
+);
+const finalityRequestTimeoutMs = boundedInteger(
+  process.env.SOLANA_FINALITY_REQUEST_TIMEOUT_MS,
+  4_000,
+  500,
+  30_000
+);
 
 const tokenRiskDiagnostics = {
   primaryProvider: rpcProviderLabel(tokenRiskRpcUrl),
@@ -313,6 +377,24 @@ const canonicalParserDiagnostics = {
   lastClaimDurationMs: 0,
   lastClaimedEventCount: 0
 };
+interface PoolDiscoveryProgramDiagnostics {
+  sourceEventCount: number;
+  decodedEventCount: number;
+  unmatchedEventCount: number;
+  decodedPoolCount: number;
+  topLevelInstructionPoolCount: number;
+  innerInstructionPoolCount: number;
+}
+const poolDiscoveryDiagnostics = {
+  startedAt: new Date(ingestionStartedAtMs).toISOString(),
+  sourceEventCount: 0,
+  decodedEventCount: 0,
+  unmatchedEventCount: 0,
+  decodedPoolCount: 0,
+  topLevelInstructionPoolCount: 0,
+  innerInstructionPoolCount: 0,
+  byProgram: new Map<string, PoolDiscoveryProgramDiagnostics>()
+};
 const historicalSolUsdDiagnostics = {
   memoryHitCount: 0,
   databaseHitCount: 0,
@@ -339,27 +421,161 @@ const tradeCursorStore = createCursorStore(
       ? "helius-webhook"
       : rpcTradeProvider
 );
-const discoverySource = new StandardSolanaEventSource({
-  rpcUrl,
-  wsUrl,
-  addresses: programs.map((program) => program.programId),
-  logIncludesByAddress: Object.fromEntries(
-    programs.map((program) => [
-      program.programId,
-      program.rawInstructions?.map(
-        (instruction) => `Program log: Instruction: ${anchorLogName(instruction.name)}`
-      ) ?? []
-    ])
+const discoveryProvider = "solana-rpc-discovery";
+const discoverySourceCount = programs.length;
+const discoveryBackfill = discoveryBackfillProfile();
+const discoveryAggregateMaxConcurrentFetches = boundedInteger(
+  process.env.SOLANA_DISCOVERY_MAX_CONCURRENT_TRANSACTION_FETCHES,
+  128,
+  discoverySourceCount,
+  512
+);
+const discoveryAggregateMaxQueuedSignatures = boundedInteger(
+  process.env.SOLANA_DISCOVERY_MAX_QUEUED_SIGNATURES,
+  2_000,
+  discoverySourceCount,
+  10_000
+);
+const discoveryMaxConcurrentPerProgram = boundedInteger(
+  process.env.SOLANA_DISCOVERY_MAX_CONCURRENT_PER_PROGRAM,
+  4,
+  1,
+  8
+);
+const discoverySentinelIntervalMs =
+  boundedInteger(process.env.SOLANA_DISCOVERY_SENTINEL_INTERVAL_SECONDS, 30, 15, 300) * 1_000;
+const discoverySentinelTimeoutMs = boundedInteger(
+  process.env.SOLANA_DISCOVERY_SENTINEL_TIMEOUT_MS,
+  3_000,
+  500,
+  10_000
+);
+const discoverySentinelRetries = boundedInteger(
+  process.env.SOLANA_DISCOVERY_SENTINEL_RETRIES,
+  1,
+  0,
+  2
+);
+const discoveryHeartbeatIntervalMs =
+  boundedInteger(process.env.SOLANA_DISCOVERY_HEARTBEAT_INTERVAL_SECONDS, 30, 10, 120) * 1_000;
+const discoveryHeartbeatTimeoutMs = boundedInteger(
+  process.env.SOLANA_DISCOVERY_HEARTBEAT_TIMEOUT_MS,
+  10_000,
+  1_000,
+  30_000
+);
+const discoveryGapRepairReplayLimit = boundedInteger(
+  process.env.SOLANA_DISCOVERY_GAP_REPAIR_REPLAY_LIMIT,
+  50,
+  1,
+  100
+);
+const discoveryGapRepairMaxSignatures = boundedInteger(
+  process.env.SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES,
+  20_000,
+  500,
+  100_000
+);
+const discoveryProgramSources = programs.map((program) => ({
+  programId: program.programId,
+  probeLatestActivity: () =>
+    fetchLatestSolanaAddressActivity({
+      rpcUrl,
+      provider: discoveryProvider,
+      address: program.programId,
+      timeoutMs: discoverySentinelTimeoutMs,
+      // The sentinel itself is periodic. Keep each disambiguation probe to one
+      // bounded HTTP attempt so several quiet programs cannot stack retries.
+      retries: 0
+    }),
+  source: new StandardSolanaEventSource({
+    rpcUrl,
+    wsUrl: discoveryWebSocketUrlByProgram.get(program.programId)!,
+    addresses: [program.programId],
+    logIncludesByAddress: {
+      [program.programId]:
+        program.rawInstructions?.map(
+          (instruction) => `Program log: Instruction: ${anchorLogName(instruction.name)}`
+        ) ?? []
+    },
+    initialBackfillLimit: discoveryBackfill.initialLimit,
+    backfillPageLimit: discoveryBackfill.pageLimit,
+    maxBackfillPages: discoveryBackfill.maxPages,
+    gapRepairStore: repository,
+    heartbeatIntervalMs: discoveryHeartbeatIntervalMs,
+    heartbeatTimeoutMs: discoveryHeartbeatTimeoutMs,
+    gapRepairReplayLimit: discoveryGapRepairReplayLimit,
+    gapRepairMaxSignatures: discoveryGapRepairMaxSignatures,
+    minTransactionRequestIntervalMs: Number(
+      process.env.SOLANA_TRANSACTION_REQUEST_INTERVAL_MS ?? 0
+    ),
+    transactionFetchDelayMs: Number(process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_DELAY_MS ?? 0),
+    transactionFetchMaxAttempts: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_MAX_ATTEMPTS ?? 6
+    ),
+    transactionFetchRetryDelayMs: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_RETRY_DELAY_MS ?? 250
+    ),
+    transactionFetchRetryMaxDelayMs: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_RETRY_MAX_DELAY_MS ?? 2_000
+    ),
+    // With inner retries disabled this profile has one visibility retry owner.
+    // Six 4s outer requests plus capped backoff is bounded near 29.75s.
+    transactionRequestTimeoutMs: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_REQUEST_TIMEOUT_MS ?? 4_000
+    ),
+    transactionRequestRetries: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_REQUEST_RETRIES ?? 0
+    ),
+    providerLatencyWarningMs: Number(process.env.SOLANA_PROVIDER_LATENCY_WARNING_MS ?? 30_000),
+    subscriptionAckTimeoutMs: Number(
+      process.env.SOLANA_DISCOVERY_SUBSCRIPTION_ACK_TIMEOUT_MS ?? 15_000
+    ),
+    maxConcurrentTransactionFetches: Math.min(
+      discoveryMaxConcurrentPerProgram,
+      Math.max(1, Math.floor(discoveryAggregateMaxConcurrentFetches / discoverySourceCount))
+    ),
+    maxQueuedSignatures: Math.max(
+      1,
+      Math.floor(discoveryAggregateMaxQueuedSignatures / discoverySourceCount)
+    ),
+    seenSignatureLimit: Math.max(
+      1_000,
+      Math.floor(standardSeenSignatureLimit / discoverySourceCount)
+    ),
+    cursorStore: discoveryCursorStore,
+    liveSignatureStore: repository,
+    allowConcurrentLiveSignaturesPerAddress: true,
+    provider: discoveryProvider
+  })
+}));
+const discoverySupervisor = new DiscoverySupervisor({
+  provider: discoveryProvider,
+  programs: discoveryProgramSources,
+  repository,
+  headLagThresholdSlots: boundedInteger(
+    process.env.SOLANA_DISCOVERY_HEAD_LAG_SLOTS,
+    150,
+    1,
+    10_000
   ),
-  initialBackfillLimit: 5,
-  backfillPageLimit: 5,
-  maxBackfillPages: 1,
-  minTransactionRequestIntervalMs: Number(process.env.SOLANA_TRANSACTION_REQUEST_INTERVAL_MS ?? 0),
-  transactionFetchDelayMs: Number(process.env.SOLANA_TRANSACTION_FETCH_DELAY_MS ?? 1_000),
-  seenSignatureLimit: standardSeenSignatureLimit,
-  cursorStore: discoveryCursorStore,
-  provider: "solana-rpc-discovery"
+  rawSilenceThresholdMs:
+    boundedInteger(process.env.SOLANA_DISCOVERY_RAW_SILENCE_SECONDS, 120, 30, 3_600) * 1_000,
+  restartCooldownMs:
+    boundedInteger(process.env.SOLANA_DISCOVERY_RESTART_COOLDOWN_SECONDS, 300, 300, 3_600) * 1_000,
+  activityProbeCooldownMs:
+    boundedInteger(process.env.SOLANA_DISCOVERY_ACTIVITY_PROBE_COOLDOWN_SECONDS, 120, 60, 900) *
+    1_000,
+  repairCooldownMs:
+    boundedInteger(process.env.SOLANA_DISCOVERY_GAP_REPAIR_COOLDOWN_SECONDS, 30, 15, 300) * 1_000,
+  initialLiveNotificationMaxAgeMs: boundedInteger(
+    process.env.SOLANA_DISCOVERY_INITIAL_NOTIFICATION_MAX_AGE_MS,
+    30_000,
+    5_000,
+    300_000
+  )
 });
+discoverySupervisor.setSentinelInterval(discoverySentinelIntervalMs);
 const liveTradeSource: SolanaEventSource | null =
   tradeIngestMode === "transaction-subscribe"
     ? new HeliusTransactionEventSource({
@@ -398,6 +614,13 @@ const liveTradeSource: SolanaEventSource | null =
             process.env.SOLANA_TRANSACTION_REQUEST_INTERVAL_MS ?? 0
           ),
           transactionFetchDelayMs: Number(process.env.SOLANA_TRANSACTION_FETCH_DELAY_MS ?? 1_000),
+          transactionRequestTimeoutMs: Number(
+            process.env.SOLANA_TRANSACTION_REQUEST_TIMEOUT_MS ?? 10_000
+          ),
+          transactionRequestRetries: Number(process.env.SOLANA_TRANSACTION_REQUEST_RETRIES ?? 2),
+          providerLatencyWarningMs: Number(
+            process.env.SOLANA_PROVIDER_LATENCY_WARNING_MS ?? 30_000
+          ),
           transactionFetchMaxAttempts: Number(
             process.env.RPC_TRADE_TRANSACTION_FETCH_MAX_ATTEMPTS ?? 6
           ),
@@ -413,7 +636,8 @@ const liveTradeSource: SolanaEventSource | null =
           maxQueuedSignatures: Number(process.env.RPC_TRADE_MAX_QUEUED_SIGNATURES ?? 2_000),
           seenSignatureLimit: standardSeenSignatureLimit,
           queuePressureRatio: Number(process.env.RPC_TRADE_QUEUE_PRESSURE_RATIO ?? 0.8),
-          onQueuePressure: handleTradeQueuePressure
+          onQueuePressure: handleTradeQueuePressure,
+          onBackfillTruncated: handleTradeBackfillTruncation
         })
       : null;
 const webhookAddressClient =
@@ -479,6 +703,7 @@ let historicalSolUsdRateLimitStreak = 0;
 const buyDefinitions = buildBuyDefinitions();
 const canonicalWorkerId = `solana-parser:${process.pid}`;
 let canonicalDrainRunning = false;
+let finalityCycleRunning = false;
 let poolSamplingRunning = false;
 let webhookSyncRunning = false;
 let webhookDiagnostics = {
@@ -504,6 +729,7 @@ let storageGateDiagnostics = {
 };
 
 await repository.assertReady();
+await discoverySupervisor.initialize();
 await restoreRecentPools();
 await reconcileStorageGate();
 
@@ -517,6 +743,7 @@ async function processSolanaEvent(event: SolanaChainEvent) {
       createdAt: discovery.createdAt,
       tokenAddress: discovery.baseTokenAddress,
       ...(discovery.quoteTokenAddress ? { quoteTokenAddress: discovery.quoteTokenAddress } : {}),
+      ...(discovery.creatorAddress ? { creatorAddress: discovery.creatorAddress } : {}),
       programId: discovery.programId,
       signature: discovery.signature,
       slot: discovery.slot,
@@ -535,11 +762,13 @@ async function processSolanaEvent(event: SolanaChainEvent) {
       address: discovery.baseTokenAddress,
       symbol: shortAddress(discovery.baseTokenAddress),
       name: "On-chain discovered token",
+      ...(discovery.creatorAddress ? { creatorAddress: discovery.creatorAddress } : {}),
       firstSeenAt: discovery.createdAt,
       metadata: {
         discoveryProvider: "solana-rpc",
         discoveryProgramId: discovery.programId,
-        discoverySignature: discovery.signature
+        discoverySignature: discovery.signature,
+        creatorSource: discovery.creatorAddress ? "pump-create-instruction-data" : null
       }
     });
     await repository.upsertPool({
@@ -669,6 +898,10 @@ async function processSolanaEvent(event: SolanaChainEvent) {
 const canonicalTimer = setInterval(() => {
   void drainCanonicalInbox();
 }, 250);
+const finalityTimer = setInterval(() => {
+  void runFinalityCycle();
+}, finalityIntervalMs);
+void runFinalityCycle();
 const sampleTimer = setInterval(() => {
   void sampleDuePools();
 }, 5_000);
@@ -679,7 +912,24 @@ const healthTimer = setInterval(() => {
     JSON.stringify({
       type: "solana-ingestion-health",
       tradeIngestMode,
-      discovery: discoverySource.getDiagnostics(),
+      discovery: discoverySupervisor.getAggregateDiagnostics(),
+      discoveryPrograms: discoverySupervisor.getProgramDiagnostics(),
+      discoverySentinel: discoverySupervisor.getSentinelDiagnostics(),
+      discoveryBackfill,
+      discoveryGapRepair: {
+        heartbeatIntervalSeconds: discoveryHeartbeatIntervalMs / 1_000,
+        heartbeatTimeoutMs: discoveryHeartbeatTimeoutMs,
+        replayLimit: discoveryGapRepairReplayLimit,
+        maximumStagedSignatures: discoveryGapRepairMaxSignatures
+      },
+      discoveryTransport: {
+        rpcProvider: rpcProviderLabel(rpcUrl),
+        routes: discoveryWebSocketRoutes.map(({ programId, websocketProvider, route }) => ({
+          programId,
+          websocketProvider,
+          route
+        }))
+      },
       trade: tradeDiagnostics,
       tradeTransport:
         tradeIngestMode === "rpc" && liveTradeDiagnostics
@@ -706,6 +956,15 @@ const healthTimer = setInterval(() => {
         claimLimit: canonicalEventClaimLimit,
         leaseSeconds: canonicalEventLeaseSeconds
       },
+      finality: {
+        ...finalityDiagnostics,
+        intervalSeconds: finalityIntervalMs / 1_000,
+        batchSize: finalityBatchSize,
+        minimumAgeSeconds: finalityMinimumAgeSeconds,
+        unresolvedAfterSeconds: finalityUnresolvedAfterSeconds,
+        minimumRootDistanceSlots: finalityMinimumRootDistanceSlots
+      },
+      poolDiscoveryCoverage: poolDiscoveryCoverageHealth(),
       historicalSolUsd: {
         ...historicalSolUsdDiagnostics,
         cacheEntries: historicalSolUsdCache.size,
@@ -719,6 +978,31 @@ const healthTimer = setInterval(() => {
     })
   );
 }, 60_000);
+
+async function runFinalityCycle(): Promise<void> {
+  if (finalityCycleRunning) return;
+  finalityCycleRunning = true;
+  try {
+    await reconcileSolanaFinalityCycle(
+      {
+        repository,
+        rpcUrl,
+        batchSize: finalityBatchSize,
+        minimumAgeSeconds: finalityMinimumAgeSeconds,
+        unresolvedAfterSeconds: finalityUnresolvedAfterSeconds,
+        minimumRootDistanceSlots: finalityMinimumRootDistanceSlots,
+        requestTimeoutMs: finalityRequestTimeoutMs
+      },
+      finalityDiagnostics
+    );
+    void drainCanonicalInbox();
+  } catch {
+    // The diagnostics object records a bounded, secret-free error. Confirmed
+    // events remain durably pending and cannot reach downstream evidence.
+  } finally {
+    finalityCycleRunning = false;
+  }
+}
 
 function rpcTradeTransportHealth(diagnostics: SolanaEventSourceDiagnostics) {
   const websocketMessageBytes = diagnostics.websocketMessageBytes ?? 0;
@@ -747,6 +1031,29 @@ const webhookSyncTimer = webhookAddressClient
 const storageGateTimer = setInterval(() => {
   void reconcileStorageGate();
 }, 60_000);
+let discoverySentinelRunning = false;
+const discoverySentinelTimer = setInterval(() => {
+  void runDiscoverySentinel();
+}, discoverySentinelIntervalMs);
+void runDiscoverySentinel();
+
+async function runDiscoverySentinel(): Promise<void> {
+  if (discoverySentinelRunning || storageGateDiagnostics.paused) return;
+  discoverySentinelRunning = true;
+  try {
+    const clusterSlot = await fetchConfirmedSolanaSlot({
+      rpcUrl,
+      provider: discoveryProvider,
+      timeoutMs: discoverySentinelTimeoutMs,
+      retries: discoverySentinelRetries
+    });
+    await discoverySupervisor.sampleHead(clusterSlot);
+  } catch (error) {
+    discoverySupervisor.recordSentinelFailure(error);
+  } finally {
+    discoverySentinelRunning = false;
+  }
+}
 
 async function reconcileStorageGate(): Promise<void> {
   if (storageGateChecking) return;
@@ -769,11 +1076,11 @@ async function reconcileStorageGate(): Promise<void> {
       checkedAt: new Date().toISOString()
     };
     if (shouldPause) {
-      await discoverySource.stop();
+      await discoverySupervisor.stop();
       if (liveTradeSource) await liveTradeSource.stop();
       return;
     }
-    await discoverySource.start(enqueueSolanaEvent);
+    await discoverySupervisor.start(enqueueSolanaEvent);
     if (liveTradeSource) await liveTradeSource.start(enqueueSolanaEvent);
     if (webhookAddressClient) await syncWebhookAddresses();
     void drainCanonicalInbox();
@@ -784,7 +1091,7 @@ async function reconcileStorageGate(): Promise<void> {
       reason: `storage gate check failed: ${error instanceof Error ? error.message : String(error)}`,
       checkedAt: new Date().toISOString()
     };
-    await discoverySource.stop();
+    await discoverySupervisor.stop();
     if (liveTradeSource) await liveTradeSource.stop();
   } finally {
     storageGateChecking = false;
@@ -792,14 +1099,21 @@ async function reconcileStorageGate(): Promise<void> {
 }
 
 async function enqueueSolanaEvent(event: SolanaChainEvent): Promise<void> {
-  if (storageGateDiagnostics.paused) return;
-  const discovery = decodePoolDiscoveries(event, decoders)[0];
+  if (storageGateDiagnostics.paused) {
+    // The source interprets a fulfilled handler as durable admission and may
+    // then advance its cursor. Reject explicitly so an in-flight fetch that
+    // races the disk gate remains retryable after admission reopens.
+    throw new SolanaEventNotAcceptedError("Solana storage admission is paused.");
+  }
+  const discoveries = decodePoolDiscoveries(event, decoders);
+  const discovery = discoveries[0];
+  const isDiscoveryEvent = decoders.some((decoder) => decoder.programId === event.address);
   const eventType = discovery
     ? "pool_created"
     : activePools.has(event.address) || knownPoolsByAddress.has(event.address)
       ? "swap"
       : "solana_transaction";
-  await repository.insertChainEvent({
+  const inserted = await repository.insertChainEvent({
     idempotencyKey: createHash("sha256")
       .update(
         ["solana-chain-event", event.address, event.signature, event.transactionIndex ?? ""].join(
@@ -811,6 +1125,10 @@ async function enqueueSolanaEvent(event: SolanaChainEvent): Promise<void> {
     signature: event.signature,
     slot: event.slot,
     ...(event.transactionIndex !== undefined ? { transactionIndex: event.transactionIndex } : {}),
+    ...(discovery ? { instructionIndex: discovery.instructionIndex } : {}),
+    ...(discovery?.innerInstructionIndex !== undefined
+      ? { innerInstructionIndex: discovery.innerInstructionIndex }
+      : {}),
     eventType,
     ...(discovery?.baseTokenAddress ? { tokenAddress: discovery.baseTokenAddress } : {}),
     ...(discovery?.poolAddress ? { poolAddress: discovery.poolAddress } : {}),
@@ -821,17 +1139,82 @@ async function enqueueSolanaEvent(event: SolanaChainEvent): Promise<void> {
         : event.observedAt),
     receivedAt: new Date().toISOString(),
     commitment: event.commitment === "finalized" ? "finalized" : "confirmed",
+    requiresFinality: event.commitment !== "finalized" && Boolean(event.signature),
     source: event.source ?? "solana-rpc",
-    decoderVersion: "walletscaner-v2",
+    decoderVersion: POOL_DISCOVERY_DECODER_VERSION,
     payload: {
       address: event.address,
       ...(event.matchedAddresses ? { matchedAddresses: event.matchedAddresses } : {}),
       ...(event.transactionIndex !== undefined ? { transactionIndex: event.transactionIndex } : {}),
       observedAt: event.observedAt,
+      ...(event.providerTiming ? { providerTiming: event.providerTiming } : {}),
       transaction: event.transaction
     }
   });
+  if (inserted && isDiscoveryEvent) {
+    recordPoolDiscoveryCoverage(event.address, discoveries);
+  }
   void drainCanonicalInbox();
+}
+
+function recordPoolDiscoveryCoverage(programId: string, discoveries: PoolDiscovery[]): void {
+  const current = poolDiscoveryDiagnostics.byProgram.get(programId) ?? {
+    sourceEventCount: 0,
+    decodedEventCount: 0,
+    unmatchedEventCount: 0,
+    decodedPoolCount: 0,
+    topLevelInstructionPoolCount: 0,
+    innerInstructionPoolCount: 0
+  };
+  const decodedEventCount = discoveries.length > 0 ? 1 : 0;
+  const unmatchedEventCount = discoveries.length === 0 ? 1 : 0;
+  const innerInstructionPoolCount = discoveries.filter(
+    (candidate) => candidate.innerInstructionIndex !== undefined
+  ).length;
+  const topLevelInstructionPoolCount = discoveries.length - innerInstructionPoolCount;
+
+  poolDiscoveryDiagnostics.sourceEventCount += 1;
+  poolDiscoveryDiagnostics.decodedEventCount += decodedEventCount;
+  poolDiscoveryDiagnostics.unmatchedEventCount += unmatchedEventCount;
+  poolDiscoveryDiagnostics.decodedPoolCount += discoveries.length;
+  poolDiscoveryDiagnostics.topLevelInstructionPoolCount += topLevelInstructionPoolCount;
+  poolDiscoveryDiagnostics.innerInstructionPoolCount += innerInstructionPoolCount;
+  poolDiscoveryDiagnostics.byProgram.set(programId, {
+    sourceEventCount: current.sourceEventCount + 1,
+    decodedEventCount: current.decodedEventCount + decodedEventCount,
+    unmatchedEventCount: current.unmatchedEventCount + unmatchedEventCount,
+    decodedPoolCount: current.decodedPoolCount + discoveries.length,
+    topLevelInstructionPoolCount:
+      current.topLevelInstructionPoolCount + topLevelInstructionPoolCount,
+    innerInstructionPoolCount: current.innerInstructionPoolCount + innerInstructionPoolCount
+  });
+}
+
+function poolDiscoveryCoverageHealth() {
+  return {
+    startedAt: poolDiscoveryDiagnostics.startedAt,
+    sourceEventCount: poolDiscoveryDiagnostics.sourceEventCount,
+    decodedEventCount: poolDiscoveryDiagnostics.decodedEventCount,
+    unmatchedEventCount: poolDiscoveryDiagnostics.unmatchedEventCount,
+    decodedEventRatio: ratio(
+      poolDiscoveryDiagnostics.decodedEventCount,
+      poolDiscoveryDiagnostics.sourceEventCount
+    ),
+    decodedPoolCount: poolDiscoveryDiagnostics.decodedPoolCount,
+    topLevelInstructionPoolCount: poolDiscoveryDiagnostics.topLevelInstructionPoolCount,
+    innerInstructionPoolCount: poolDiscoveryDiagnostics.innerInstructionPoolCount,
+    programs: [...poolDiscoveryDiagnostics.byProgram.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([programId, metrics]) => ({
+        programId,
+        ...metrics,
+        decodedEventRatio: ratio(metrics.decodedEventCount, metrics.sourceEventCount)
+      }))
+  };
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(6)) : null;
 }
 
 async function drainCanonicalInbox(): Promise<void> {
@@ -913,6 +1296,13 @@ function canonicalToSolanaEvent(event: CanonicalChainEvent): SolanaChainEvent {
       typeof event.payload.observedAt === "string" ? event.payload.observedAt : event.receivedAt,
     commitment: event.commitment,
     source: event.source,
+    ...(typeof event.payload.providerTiming === "object" && event.payload.providerTiming !== null
+      ? {
+          providerTiming: event.payload.providerTiming as NonNullable<
+            SolanaChainEvent["providerTiming"]
+          >
+        }
+      : {}),
     transaction: transaction as SolanaChainEvent["transaction"]
   };
 }
@@ -1172,6 +1562,7 @@ async function sampleDuePoolsOnce() {
         },
         raw: {
           ...compactPair,
+          ...(pool.creatorAddress ? { creatorAddress: pool.creatorAddress } : {}),
           tradeCoverage: {
             complete: pool.tradeCoverageComplete,
             ...(pool.tradeCoverageGapAt ? { gapAt: pool.tradeCoverageGapAt } : {}),
@@ -1667,6 +2058,16 @@ async function refreshTokenRisk(pool: TrackedPool, now: Date): Promise<SolanaTok
 
   try {
     let risk = await fetchTokenRiskWithFallback(pool.tokenAddress);
+    if (pool.creatorAddress && !risk.creatorAddress) {
+      risk = {
+        ...risk,
+        creatorAddress: pool.creatorAddress,
+        evidence: {
+          ...risk.evidence,
+          creatorSource: "pump-create-instruction-data"
+        }
+      };
+    }
     risk = await enrichPassedTokenCreator(pool.tokenAddress, risk);
     if (!risk.known) tokenRiskDiagnostics.unknownCount += 1;
     else if (risk.passed) tokenRiskDiagnostics.knownPassedCount += 1;
@@ -1686,6 +2087,10 @@ async function refreshTokenRisk(pool: TrackedPool, now: Date): Promise<SolanaTok
         top10HolderPercent: risk.top10HolderPercent,
         tokenRiskKnown: risk.known,
         tokenRiskPassed: risk.passed,
+        tokenProgram: risk.tokenProgram,
+        tokenExtensionEvidenceKnown: risk.tokenExtensionEvidenceKnown,
+        tokenExtensions: risk.tokenExtensions,
+        blockingTokenExtensions: risk.blockingTokenExtensions,
         tokenRiskAssessedAt: assessedAt,
         raydiumIdlCommit: process.env.RAYDIUM_IDL_COMMIT ?? null
       }
@@ -1862,6 +2267,10 @@ function unknownTokenRisk(reason: string): SolanaTokenRiskAssessment {
     freezeAuthorityRevoked: false,
     topHolderPercent: 100,
     top10HolderPercent: 100,
+    tokenProgram: "unknown",
+    tokenExtensionEvidenceKnown: false,
+    tokenExtensions: [],
+    blockingTokenExtensions: [],
     warnings: ["Critical token safety evidence is incomplete.", reason],
     evidence: { source: "unavailable", reason }
   };
@@ -1934,8 +2343,9 @@ async function subscribePool(pool: TrackedPool, backfill = false, restored = fal
       tradeIngestMode === "transaction-subscribe" || backfill
     );
   }
-  pool.subscribedToBuys = true;
-  pool.everSubscribedToBuys = true;
+  if (!activateTradeSubscription(pool)) {
+    liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+  }
 }
 
 function handleTradeQueuePressure(pressure: {
@@ -1947,12 +2357,11 @@ function handleTradeQueuePressure(pressure: {
   const pool = activePools.get(pressure.address);
   if (!pool || !pool.tradeCoverageComplete) return;
   if (pool.subscribedToBuys) liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-  pool.subscribedToBuys = false;
-  pool.controlledFlow = false;
-  pool.tradeCoverageComplete = false;
-  pool.tradeCoveragePersisted = false;
-  pool.tradeCoverageGapAt = new Date().toISOString();
-  pool.tradeCoverageGapReason = `rpc-trade-queue-${pressure.reason}`;
+  excludeTradeCoverage(
+    pool,
+    `rpc-trade-queue-${pressure.reason}`,
+    new Date().toISOString()
+  );
   poolSamplingDiagnostics.tradeQueuePressureCount += 1;
   poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
   console.warn(
@@ -1964,6 +2373,52 @@ function handleTradeQueuePressure(pressure: {
       maxQueuedSignatures: pressure.maxQueuedSignatures
     })
   );
+}
+
+async function handleTradeBackfillTruncation(
+  truncation: SolanaBackfillTruncation
+): Promise<void> {
+  const pool = activePools.get(truncation.address);
+  liveTradeSource?.unsubscribeAddress(truncation.address);
+  if (!pool) {
+    throw new Error(
+      `Trade backfill truncated for unknown active pool ${truncation.address}; subscription rejected.`
+    );
+  }
+  const reason = `rpc-trade-backfill-${truncation.reason}`;
+  const changed = excludeTradeCoverage(pool, reason, new Date().toISOString());
+  if (changed) {
+    poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
+  }
+  await persistTradeCoverageState(pool);
+  console.warn(
+    JSON.stringify({
+      type: "solana-trade-coverage-excluded",
+      poolAddress: pool.poolAddress,
+      reason,
+      fetchedSignatureCount: truncation.fetchedSignatureCount,
+      limit: truncation.limit
+    })
+  );
+}
+
+async function persistTradeCoverageState(pool: TrackedPool): Promise<void> {
+  const stored = await repository.getPool("solana", pool.poolAddress);
+  if (!stored) {
+    throw new Error(`Cannot persist trade coverage for missing pool ${pool.poolAddress}.`);
+  }
+  await repository.upsertPool({
+    ...stored,
+    raw: {
+      ...(stored.raw ?? {}),
+      tradeCoverage: {
+        complete: pool.tradeCoverageComplete,
+        ...(pool.tradeCoverageGapAt ? { gapAt: pool.tradeCoverageGapAt } : {}),
+        ...(pool.tradeCoverageGapReason ? { gapReason: pool.tradeCoverageGapReason } : {})
+      }
+    }
+  });
+  pool.tradeCoveragePersisted = true;
 }
 
 async function syncWebhookAddresses(): Promise<void> {
@@ -2080,6 +2535,9 @@ function trackedPoolFromSnapshot(stored: PoolSnapshot, now: Date): TrackedPool {
     createdAt: stored.createdAt ?? now.toISOString(),
     tokenAddress: stored.baseTokenAddress,
     ...(stored.quoteTokenAddress ? { quoteTokenAddress: stored.quoteTokenAddress } : {}),
+    ...(typeof stored.raw?.creatorAddress === "string"
+      ? { creatorAddress: stored.raw.creatorAddress }
+      : {}),
     programId: stored.dex,
     signature: `restored:${stored.poolAddress}`,
     slot: 0,
@@ -2193,11 +2651,13 @@ function numberValue(value: unknown): number {
 function createCursorStore(source: string, provider: string): SolanaCursorStore {
   return {
     async get(address) {
-      const watermark = await repository.getPipelineWatermark("solana-canonical-parser", address);
-      return watermark?.lastSignature
+      const cursor = await repository.getIngestionCursor(source, address);
+      return cursor
         ? {
-            signature: watermark.lastSignature,
-            slot: watermark.lastContiguousSlot
+            signature: cursor.lastSignature,
+            slot: cursor.lastSlot,
+            updatedAt: cursor.observedAt,
+            ...(cursor.lastEventOccurredAt ? { occurredAt: cursor.lastEventOccurredAt } : {})
           }
         : undefined;
     },
@@ -2214,7 +2674,8 @@ function createCursorStore(source: string, provider: string): SolanaCursorStore 
         slot: cursor.slot,
         provider,
         observedAt,
-        strategyVersion
+        strategyVersion,
+        ...(cursor.occurredAt ? { lastEventOccurredAt: cursor.occurredAt } : {})
       });
     }
   };
@@ -2257,11 +2718,13 @@ function isPublicSolanaWs(url: string): boolean {
 
 async function shutdown() {
   clearInterval(canonicalTimer);
+  clearInterval(finalityTimer);
   clearInterval(sampleTimer);
   clearInterval(healthTimer);
   clearInterval(storageGateTimer);
+  clearInterval(discoverySentinelTimer);
   if (webhookSyncTimer) clearInterval(webhookSyncTimer);
-  await discoverySource.stop();
+  await discoverySupervisor.stop();
   if (liveTradeSource) await liveTradeSource.stop();
 }
 
@@ -2286,7 +2749,40 @@ function parsePrograms(raw: string | undefined): ProgramConfig[] {
   ) {
     throw new Error("SOLANA_POOL_PROGRAMS_JSON has an invalid shape.");
   }
-  return programs;
+  const configured = programs.map((program) => ({
+    ...program,
+    ...(program.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" &&
+    program.rawInstructions
+      ? {
+          rawInstructions: program.rawInstructions.map((instruction) =>
+            instruction.discriminatorHex === "181ec828051c0777" ||
+            instruction.discriminatorHex === "d6904cec5f8b31b4"
+              ? { ...instruction, creatorDataEncoding: "pump-borsh-after-3-strings" as const }
+              : instruction
+          )
+        }
+      : {})
+  }));
+  if (!parseBooleanEnv(process.env.SOLANA_ENABLE_EXTENDED_VENUES, false)) return configured;
+  const merged = new Map(configured.map((program) => [program.programId, program]));
+  for (const venue of REVIEWED_SOLANA_VENUE_PROGRAMS) {
+    const existing = merged.get(venue.programId);
+    const instructions = [
+      ...(existing?.rawInstructions ?? []),
+      ...venue.instructions.filter(
+        (candidate) =>
+          !existing?.rawInstructions?.some(
+            (current) => current.discriminatorHex === candidate.discriminatorHex
+          )
+      )
+    ];
+    merged.set(venue.programId, {
+      programId: venue.programId,
+      ...(existing?.instructionTypes ? { instructionTypes: existing.instructionTypes } : {}),
+      rawInstructions: instructions
+    });
+  }
+  return [...merged.values()];
 }
 
 function requiredEnv(key: string): string {

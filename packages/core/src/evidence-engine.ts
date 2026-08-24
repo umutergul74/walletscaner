@@ -213,6 +213,16 @@ export function calculateWalletSignalOutcome(
     .filter(
       (observation) =>
         observation.tokenAddress === entry.tokenAddress &&
+        // Followability is an execution claim about the exact pool observed at
+        // entry. A same-mint price from another pool can have different
+        // liquidity, transfer restrictions, or no executable route at all.
+        // Missing exact-pool evidence must therefore remain unresolved instead
+        // of being silently replaced with a more liquid pair.
+        (!entry.poolAddress || observation.poolAddress === entry.poolAddress) &&
+        // A provider-confirmed missing pair is durable availability evidence,
+        // not an executable zero-price fill. It becomes a terminal observation
+        // only after the sampler's repeated-miss policy marks it rugged.
+        (observation.rugged || observation.raw.marketExecutable !== false) &&
         new Date(observation.observedAt).getTime() >= entryTime &&
         new Date(observation.observedAt).getTime() <= currentTime
     )

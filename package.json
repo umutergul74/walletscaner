@@ -26,6 +26,7 @@
     "research:evidence-report": "tsx scripts/research/evidence-report.ts",
     "research:evidence-replay": "tsx scripts/research/evidence-replay.ts",
     "research:strategy-search": "tsx scripts/research/evidence-strategy-search.ts",
+    "research:token-alpha-v4-audit": "tsx scripts/research/token-alpha-v4-audit.ts",
     "research:backfill-status": "tsx scripts/research/backfill-status.ts",
     "research:historical-data-quality": "tsx scripts/research/historical-data-quality.ts",
     "research:wallet-alpha": "tsx scripts/research/wallet-alpha.ts",
@@ -35,6 +36,14 @@
     "benchmark:wallet-alpha-worker": "node --max-old-space-size=112 --import tsx scripts/research/wallet-alpha-worker-benchmark.ts",
     "maintenance:prune": "tsx scripts/maintenance/prune-operational-data.ts",
     "maintenance:health": "tsx scripts/maintenance/check-operational-health.ts",
+    "maintenance:backfill-discovery-cursor-time": "tsx scripts/maintenance/backfill-ingestion-cursor-chain-time.ts",
+    "maintenance:reclaim-derived-ledger": "tsx scripts/maintenance/reclaim-derived-ledger-cache.ts",
+    "archive:writer": "tsx scripts/archive/archive-writer.ts",
+    "archive:verifier": "tsx scripts/archive/archive-verifier.ts",
+    "archive:database-backup-writer": "tsx scripts/archive/database-backup-writer.ts",
+    "archive:database-backup-verifier": "tsx scripts/archive/database-backup-verifier.ts",
+    "archive:approve-future-canary": "tsx scripts/archive/approve-future-canary.ts",
+    "test:agent-tooling": "node --test .codex/hooks/pre-tool-use-guard.test.mjs && node scripts/test/validate-agent-tooling.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
@@ -77,13 +86,13 @@
   },
   "overrides": {
     "body-parser": "1.20.6",
-    "postcss": "8.5.18",
+    "postcss": "8.5.26",
     "sharp": "0.35.0",
     "minimatch@3.1.5": {
-      "brace-expansion": "1.1.17"
+      "brace-expansion": "1.1.18"
     },
     "minimatch@10.2.5": {
-      "brace-expansion": "5.0.8"
+      "brace-expansion": "5.0.9"
     }
   }
 }

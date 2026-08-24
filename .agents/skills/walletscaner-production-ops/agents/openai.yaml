@@ -1,0 +1,4 @@
+interface:
+  display_name: "Walletscaner Production Ops"
+  short_description: "Operate the shared host safely"
+  default_prompt: "Use $walletscaner-production-ops to plan and verify a scoped Walletscaner server operation safely."

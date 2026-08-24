@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import pg from "pg";
 import type {
   BacktestRun,
@@ -27,7 +28,16 @@ import type {
   CanonicalEventFailureOptions,
   CanonicalEventFailureResult,
   CanonicalRepository,
+  DurableSolanaSignature,
+  DurableSolanaSignatureQueueSummary,
   EvidenceRepository,
+  IngestionGapRepair,
+  IngestionGapRepairCreateInput,
+  IngestionGapRepairPageInput,
+  IngestionGapRepairSignature,
+  IngestionCoverageIncident,
+  IngestionCoverageIncidentCloseInput,
+  IngestionCoverageIncidentOpenInput,
   IntelligenceRepository,
   PipelineHealthSummary,
   PipelineWatermark,
@@ -35,21 +45,27 @@ import type {
   SignalOutboxClaimOptions,
   SignalOutboxFailureOptions,
   SignalOutboxMessage,
+  SolanaFinalityBatchResult,
+  SolanaFinalityResult,
+  SolanaFinalityWorkItem,
   TokenRiskReport,
   WalletAlphaCoverageSummary,
+  WalletAlphaAdmissionProbe,
   WalletAlphaDetail,
   WalletAlphaRankingQuery,
   WalletAlphaSignalQuery,
   WalletAlphaStatusCounts,
   WalletAlphaWorkClaimOptions,
+  WalletAlphaWorkCandidate,
   WalletAlphaWorkItem,
+  WalletAlphaWorkPriority,
   WalletAlphaWorkSummary,
   WalletPositionEpisode,
   WalletPositionLedgerSnapshot,
   WalletPositionLedgerWriteResult,
   WalletPositionLot
 } from "./repository";
-import { assertWalletPositionLedgerSnapshot } from "./repository";
+import { assertWalletPositionLedgerSnapshot, classifyWalletAlphaEntryWork } from "./repository";
 
 const { Pool } = pg;
 
@@ -61,6 +77,65 @@ interface Queryable {
 interface TransactionClient {
   query: pg.Pool["query"];
   release: () => void;
+}
+
+const POSTGRES_JSON_NUL_MARKER = "_walletscanerPayloadEncoding";
+
+function encodePostgresJsonPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!containsPostgresJsonNul(payload)) return payload;
+  const originalJson = JSON.stringify(payload);
+  const sanitized = sanitizePostgresJsonValue(payload);
+  return {
+    ...(sanitized.value as Record<string, unknown>),
+    [POSTGRES_JSON_NUL_MARKER]: {
+      version: "postgres-json-nul-v1",
+      replacement: "literal-\\u0000",
+      occurrenceCount: sanitized.nulCount,
+      originalPayloadSha256: createHash("sha256").update(originalJson).digest("hex")
+    }
+  };
+}
+
+function containsPostgresJsonNul(value: unknown): boolean {
+  if (typeof value === "string") return value.includes("\u0000");
+  if (Array.isArray(value)) return value.some(containsPostgresJsonNul);
+  if (value && typeof value === "object") {
+    return Object.entries(value).some(
+      ([key, item]) => key.includes("\u0000") || containsPostgresJsonNul(item)
+    );
+  }
+  return false;
+}
+
+function sanitizePostgresJsonValue(value: unknown): { value: unknown; nulCount: number } {
+  if (typeof value === "string") {
+    const parts = value.split("\u0000");
+    return {
+      value: parts.join("\\u0000"),
+      nulCount: parts.length - 1
+    };
+  }
+  if (Array.isArray(value)) {
+    let nulCount = 0;
+    const sanitized = value.map((item) => {
+      const result = sanitizePostgresJsonValue(item);
+      nulCount += result.nulCount;
+      return result.value;
+    });
+    return { value: sanitized, nulCount };
+  }
+  if (value && typeof value === "object") {
+    let nulCount = 0;
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const result = sanitizePostgresJsonValue(item);
+      const keyParts = key.split("\u0000");
+      sanitized[keyParts.join("\\u0000")] = result.value;
+      nulCount += result.nulCount + keyParts.length - 1;
+    }
+    return { value: sanitized, nulCount };
+  }
+  return { value, nulCount: 0 };
 }
 
 export class PostgresRepository
@@ -471,28 +546,82 @@ export class PostgresRepository
   }
 
   async saveQuotePriceObservation(observation: QuotePriceObservation): Promise<boolean> {
+    const values = [
+      observation.idempotencyKey,
+      observation.chain,
+      observation.quoteTokenAddress,
+      observation.priceUsd,
+      observation.confidenceUsd,
+      observation.source,
+      observation.quality,
+      observation.publishTime,
+      observation.observedAt,
+      observation.stalenessSeconds,
+      observation.raw
+    ];
     const result = await this.pool.query(
       `INSERT INTO quote_price_observations (
         idempotency_key, chain, quote_token_address, price_usd, confidence_usd,
         source, quality, publish_time, observed_at, staleness_seconds, raw
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (idempotency_key) DO NOTHING`,
-      [
-        observation.idempotencyKey,
-        observation.chain,
-        observation.quoteTokenAddress,
-        observation.priceUsd,
-        observation.confidenceUsd,
-        observation.source,
-        observation.quality,
-        observation.publishTime,
-        observation.observedAt,
-        observation.stalenessSeconds,
-        observation.raw
-      ]
+      ON CONFLICT DO NOTHING`,
+      values
     );
-    return (result.rowCount ?? 0) > 0;
+    if ((result.rowCount ?? 0) > 0) return true;
+
+    // ON CONFLICT may have waited for another transaction. Use a separate statement so its
+    // snapshot can see that winner, then distinguish a replay from conflicting oracle evidence.
+    // observed_at, staleness_seconds and raw are request/trade context and may legitimately differ
+    // when concurrent swaps reuse one source/token/publish-time observation.
+    const conflicts = await this.pool.query(
+      `SELECT
+         idempotency_key = $1 AS idempotency_key_match,
+         chain = $2 AS chain_match,
+         quote_token_address = $3 AS quote_token_address_match,
+         price_usd = $4::numeric AS price_usd_match,
+         confidence_usd IS NOT DISTINCT FROM $5::numeric AS confidence_usd_match,
+         source = $6 AS source_match,
+         quality = $7 AS quality_match,
+         publish_time = $8::timestamptz AS publish_time_match
+       FROM quote_price_observations
+       WHERE idempotency_key = $1
+          OR (
+            source = $6
+            AND quote_token_address = $3
+            AND publish_time = $8::timestamptz
+          )`,
+      values.slice(0, 8)
+    );
+    const immutableFields = [
+      "chain",
+      "quote_token_address",
+      "price_usd",
+      "confidence_usd",
+      "source",
+      "quality",
+      "publish_time"
+    ] as const;
+    if (
+      conflicts.rows.length === 1 &&
+      immutableFields.every((field) => conflicts.rows[0]?.[`${field}_match`] === true)
+    ) {
+      return false;
+    }
+
+    const mismatches = new Set<string>();
+    for (const row of conflicts.rows) {
+      for (const field of immutableFields) {
+        if (row[`${field}_match`] !== true) mismatches.add(field);
+      }
+    }
+    throw new Error(
+      conflicts.rows.length === 0
+        ? "Quote price observation conflict could not be reconciled after insert."
+        : `Quote price observation conflicts with stored immutable evidence: ${[...mismatches].join(
+            ", "
+          )}.`
+    );
   }
 
   async findQuotePriceObservationNear(
@@ -599,19 +728,19 @@ export class PostgresRepository
              AND EXCLUDED.quote_value_usd IS NOT NULL)
          OR NOT (wallet_trade_events.raw @> EXCLUDED.raw)
       RETURNING chain, wallet_address, strategy_version
-      ), queued AS (
-        INSERT INTO wallet_alpha_work_queue (
-          chain, wallet_address, strategy_version, revision, updated_at, not_before
-        )
-        SELECT chain, wallet_address, strategy_version, 1, NOW(), NOW()
+      ), queued AS MATERIALIZED (
+        SELECT enqueue_wallet_alpha_work(
+          chain,
+          wallet_address,
+          strategy_version,
+          $21::smallint,
+          $22
+        ) AS queued
         FROM changed
-        ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-          revision = wallet_alpha_work_queue.revision + 1,
-          updated_at = NOW(),
-          not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-        RETURNING 1
       )
-      SELECT EXISTS(SELECT 1 FROM changed) AS changed`,
+      SELECT
+        EXISTS(SELECT 1 FROM changed) AS changed,
+        (SELECT COUNT(*) FROM queued) AS queued_count`,
       [
         trade.idempotencyKey,
         trade.chain,
@@ -632,7 +761,9 @@ export class PostgresRepository
         trade.provider,
         trade.observedAt,
         trade.strategyVersion,
-        trade.raw
+        trade.raw,
+        trade.side === "sell" ? 1 : 0,
+        trade.side === "sell" ? "sell-trade" : "buy-trade"
       ]
     );
     return Boolean(result.rows[0]?.changed);
@@ -664,19 +795,23 @@ export class PostgresRepository
          AND observed_at <= $5
          AND observed_at >= $5::timestamptz - INTERVAL '5 minutes'
        RETURNING chain, wallet_address, strategy_version
-      ), queued AS (
-        INSERT INTO wallet_alpha_work_queue (
-          chain, wallet_address, strategy_version, revision, updated_at, not_before
-        )
-        SELECT DISTINCT chain, wallet_address, strategy_version, 1, NOW(), NOW()
+      ), changed_wallets AS (
+        SELECT DISTINCT chain, wallet_address, strategy_version
         FROM changed
-        ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-          revision = wallet_alpha_work_queue.revision + 1,
-          updated_at = NOW(),
-          not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-        RETURNING 1
+      ), queued AS MATERIALIZED (
+        SELECT enqueue_wallet_alpha_work(
+          chain,
+          wallet_address,
+          strategy_version,
+          0::smallint,
+          'price-enrichment'
+        ) AS queued
+        FROM changed_wallets
       )
-      SELECT COUNT(*)::int AS changed_count FROM changed`,
+      SELECT
+        COUNT(*)::int AS changed_count,
+        (SELECT COUNT(*) FROM queued) AS queued_count
+      FROM changed`,
       [
         observation.tokenAddress,
         observation.poolAddress ?? null,
@@ -765,19 +900,23 @@ export class PostgresRepository
          OR (wallet_trade_events.pool_age_minutes IS NULL AND EXCLUDED.pool_age_minutes IS NOT NULL)
          OR wallet_trade_events.data_quality IS DISTINCT FROM EXCLUDED.data_quality
       RETURNING chain, wallet_address, strategy_version
-      ), queued AS (
-        INSERT INTO wallet_alpha_work_queue (
-          chain, wallet_address, strategy_version, revision, updated_at, not_before
-        )
-        SELECT DISTINCT chain, wallet_address, strategy_version, 1, NOW(), NOW()
+      ), changed_wallets AS (
+        SELECT DISTINCT chain, wallet_address, strategy_version
         FROM changed
-        ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-          revision = wallet_alpha_work_queue.revision + 1,
-          updated_at = NOW(),
-          not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-        RETURNING 1
+      ), queued AS MATERIALIZED (
+        SELECT enqueue_wallet_alpha_work(
+          chain,
+          wallet_address,
+          strategy_version,
+          0::smallint,
+          'historical-materialization'
+        ) AS queued
+        FROM changed_wallets
       )
-      SELECT COUNT(*)::int AS changed_count FROM changed`,
+      SELECT
+        COUNT(*)::int AS changed_count,
+        (SELECT COUNT(*) FROM queued) AS queued_count
+      FROM changed`,
       [strategyVersion]
     );
     return Number(result.rows[0]?.changed_count ?? 0);
@@ -785,7 +924,7 @@ export class PostgresRepository
 
   async saveWalletAlphaScore(score: WalletAlphaScoreSnapshot): Promise<void> {
     await this.pool.query(
-      `WITH latest AS (
+      `WITH latest AS MATERIALIZED (
         SELECT *
         FROM wallet_alpha_scores
         WHERE chain = $1
@@ -793,7 +932,7 @@ export class PostgresRepository
           AND strategy_version = $3
         ORDER BY calculated_at DESC
         LIMIT 1
-      )
+      ), changed AS (
       INSERT INTO wallet_alpha_scores (
         chain, wallet_address, strategy_version, calculated_at, status,
         profitability_score, followability_score, overall_score,
@@ -816,7 +955,37 @@ export class PostgresRepository
             existing.reasons
           ) IS NOT DISTINCT FROM ROW($5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
       )
-      ON CONFLICT (chain, wallet_address, strategy_version, calculated_at) DO NOTHING`,
+      ON CONFLICT (chain, wallet_address, strategy_version, calculated_at) DO NOTHING
+      RETURNING chain, wallet_address, strategy_version, calculated_at
+      ), superseded AS (
+        INSERT INTO wallet_alpha_score_supersessions (
+          chain, wallet_address, strategy_version, calculated_at, superseded_at
+        )
+        SELECT
+          latest.chain,
+          latest.wallet_address,
+          latest.strategy_version,
+          latest.calculated_at,
+          changed.calculated_at
+        FROM latest
+        CROSS JOIN changed
+        WHERE latest.calculated_at < changed.calculated_at
+        UNION ALL
+        SELECT
+          changed.chain,
+          changed.wallet_address,
+          changed.strategy_version,
+          changed.calculated_at,
+          latest.calculated_at
+        FROM latest
+        CROSS JOIN changed
+        WHERE changed.calculated_at < latest.calculated_at
+        ON CONFLICT (chain, wallet_address, strategy_version, calculated_at) DO NOTHING
+        RETURNING 1
+      )
+      SELECT
+        (SELECT COUNT(*)::int FROM changed) AS changed_count,
+        (SELECT COUNT(*)::int FROM superseded) AS superseded_count`,
       [
         score.chain,
         score.walletAddress,
@@ -1028,6 +1197,9 @@ export class PostgresRepository
   async claimWalletAlphaWork(options: WalletAlphaWorkClaimOptions): Promise<WalletAlphaWorkItem[]> {
     const limit = clampLimit(options.limit, 100, 1_000);
     const leaseSeconds = clampLimit(options.leaseSeconds, 300, 3_600);
+    const minimumPriority = options.minimumPriority ?? 0;
+    const maximumPriority = options.maximumPriority ?? 2;
+    assertWalletAlphaPriorityRange(minimumPriority, maximumPriority);
     const result = await this.pool.query(
       `WITH candidates AS (
          SELECT chain, wallet_address, strategy_version
@@ -1036,7 +1208,10 @@ export class PostgresRepository
            AND revision > completed_revision
            AND not_before <= NOW()
            AND (lock_expires_at IS NULL OR lock_expires_at <= NOW())
-         ORDER BY updated_at, wallet_address
+           AND priority BETWEEN $5 AND $6
+         -- Signal-relevant work preempts historical catch-up. Within a lane,
+         -- retry readiness and age preserve deterministic fairness.
+         ORDER BY priority DESC, not_before, updated_at, wallet_address
          LIMIT $4
          FOR UPDATE SKIP LOCKED
        ), claimed AS (
@@ -1051,8 +1226,15 @@ export class PostgresRepository
            AND work.strategy_version = candidates.strategy_version
          RETURNING work.*
        )
-       SELECT * FROM claimed ORDER BY updated_at, wallet_address`,
-      [options.strategyVersion, options.workerId, leaseSeconds, limit]
+       SELECT * FROM claimed ORDER BY priority DESC, not_before, updated_at, wallet_address`,
+      [
+        options.strategyVersion,
+        options.workerId,
+        leaseSeconds,
+        limit,
+        minimumPriority,
+        maximumPriority
+      ]
     );
     return result.rows.map((row) => ({
       chain: row.chain as ChainId,
@@ -1061,14 +1243,146 @@ export class PostgresRepository
       revision: Number(row.revision),
       attemptCount: Number(row.attempt_count),
       lockedBy: String(row.locked_by),
-      lockExpiresAt: new Date(row.lock_expires_at).toISOString()
+      lockExpiresAt: new Date(row.lock_expires_at).toISOString(),
+      priority: Number(row.priority) as WalletAlphaWorkPriority,
+      ...(row.priority_reason ? { priorityReason: String(row.priority_reason) } : {}),
+      pendingSince: new Date(row.pending_since ?? row.updated_at).toISOString()
     }));
+  }
+
+  async listWalletAlphaWorkCandidates(
+    strategyVersion: string,
+    limit = 100,
+    priorities: Pick<WalletAlphaWorkClaimOptions, "minimumPriority" | "maximumPriority"> = {}
+  ): Promise<WalletAlphaWorkCandidate[]> {
+    const boundedLimit = clampLimit(limit, 100, 100);
+    const minimumPriority = priorities.minimumPriority ?? 0;
+    const maximumPriority = priorities.maximumPriority ?? 2;
+    assertWalletAlphaPriorityRange(minimumPriority, maximumPriority);
+    const result = await this.pool.query(
+      `SELECT chain, wallet_address, strategy_version, revision, priority, pending_since, updated_at
+       FROM wallet_alpha_work_queue
+       WHERE strategy_version = $1
+         AND revision > completed_revision
+         AND not_before <= NOW()
+         AND (lock_expires_at IS NULL OR lock_expires_at <= NOW())
+         AND priority BETWEEN $3 AND $4
+       -- Keep prefetch and claim order identical to the priority index.
+       ORDER BY priority DESC, not_before, updated_at, wallet_address
+       LIMIT $2`,
+      [strategyVersion, boundedLimit, minimumPriority, maximumPriority]
+    );
+    return result.rows.map((row) => ({
+      chain: row.chain as ChainId,
+      walletAddress: String(row.wallet_address),
+      strategyVersion: String(row.strategy_version),
+      revision: Number(row.revision),
+      priority: Number(row.priority) as WalletAlphaWorkPriority,
+      pendingSince: new Date(row.pending_since ?? row.updated_at).toISOString()
+    }));
+  }
+
+  async probeWalletAlphaAdmission(
+    candidates: WalletAlphaWorkCandidate[],
+    minEntryObservedAt: string,
+    minimumTradeEvents: number,
+    minimumEntries: number
+  ): Promise<WalletAlphaAdmissionProbe[]> {
+    if (candidates.length === 0) return [];
+    if (candidates.length > 100) {
+      throw new Error("Wallet-alpha admission probe exceeds the 100-wallet ceiling.");
+    }
+    const tradeThreshold = clampLimit(minimumTradeEvents, 1, 100);
+    const entryThreshold = clampLimit(minimumEntries, 1, 100);
+    const uniqueKeys = new Set<string>();
+    const records = candidates.map((candidate, ordinal) => {
+      const key = walletAlphaWorkRevisionKey(candidate);
+      if (uniqueKeys.has(key)) {
+        throw new Error(`Duplicate wallet-alpha admission candidate: ${key}`);
+      }
+      uniqueKeys.add(key);
+      return {
+        ordinal,
+        chain: candidate.chain,
+        wallet_address: candidate.walletAddress,
+        strategy_version: candidate.strategyVersion,
+        revision: candidate.revision,
+        priority: candidate.priority,
+        pending_since: candidate.pendingSince
+      };
+    });
+
+    return this.withTransaction(async (client) => {
+      // This prefetch is an optimization only. It is separate from the ordered
+      // claim statement, hard-bounded to 100 wallets and cannot hold a queue lease.
+      await client.query("SET LOCAL statement_timeout = '5s'");
+      const result = await client.query(
+        `WITH input AS (
+           SELECT *
+           FROM jsonb_to_recordset($1::jsonb) AS candidate(
+             ordinal integer,
+             chain text,
+             wallet_address text,
+             strategy_version text,
+             revision bigint,
+             priority smallint,
+             pending_since timestamptz
+           )
+         )
+         SELECT
+           input.chain,
+           input.wallet_address,
+           input.strategy_version,
+           input.revision,
+           input.priority,
+           input.pending_since,
+           bounded_trades.trade_event_count,
+           bounded_entries.entry_count
+         FROM input
+         CROSS JOIN LATERAL (
+           SELECT COUNT(*)::integer AS trade_event_count
+           FROM (
+             SELECT 1
+             FROM wallet_trade_events trade
+             WHERE trade.strategy_version = input.strategy_version
+               AND trade.wallet_address = input.wallet_address
+             LIMIT $2
+           ) rows
+         ) bounded_trades
+         CROSS JOIN LATERAL (
+           SELECT COUNT(*)::integer AS entry_count
+           FROM (
+             SELECT 1
+             FROM wallet_entry_signals entry
+             WHERE entry.strategy_version = input.strategy_version
+               AND entry.wallet_address = input.wallet_address
+               AND entry.observed_at >= $4
+             LIMIT $3
+           ) rows
+         ) bounded_entries
+         ORDER BY input.ordinal`,
+        [JSON.stringify(records), tradeThreshold, entryThreshold, minEntryObservedAt]
+      );
+      return result.rows.map((row) => ({
+        chain: row.chain as ChainId,
+        walletAddress: String(row.wallet_address),
+        strategyVersion: String(row.strategy_version),
+        revision: Number(row.revision),
+        priority: Number(row.priority) as WalletAlphaWorkPriority,
+        pendingSince: new Date(row.pending_since).toISOString(),
+        tradeEventCount: Number(row.trade_event_count),
+        entryCount: Number(row.entry_count)
+      }));
+    });
   }
 
   async completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE wallet_alpha_work_queue
        SET completed_revision = GREATEST(completed_revision, $4),
+           priority = CASE WHEN revision <= $4 THEN 0 ELSE priority END,
+           priority_reason = CASE WHEN revision <= $4 THEN NULL ELSE priority_reason END,
+           pending_since = CASE WHEN revision <= $4 THEN NULL ELSE pending_since END,
            locked_by = NULL,
            locked_at = NULL,
            lock_expires_at = NULL,
@@ -1120,7 +1434,22 @@ export class PostgresRepository
          )::int AS processing,
          COUNT(*) FILTER (
            WHERE revision > completed_revision AND last_error IS NOT NULL
-         )::int AS failed
+         )::int AS failed,
+         COUNT(*) FILTER (
+           WHERE revision > completed_revision AND priority = 0
+         )::int AS background_pending,
+         COUNT(*) FILTER (
+           WHERE revision > completed_revision AND priority = 1
+         )::int AS elevated_pending,
+         COUNT(*) FILTER (
+           WHERE revision > completed_revision AND priority = 2
+         )::int AS signal_pending,
+         MIN(pending_since) FILTER (
+           WHERE revision > completed_revision
+         ) AS oldest_pending_at,
+         MIN(pending_since) FILTER (
+           WHERE revision > completed_revision AND priority = 2
+         ) AS oldest_signal_pending_at
        FROM wallet_alpha_work_queue
        WHERE strategy_version = $1`,
       [strategyVersion]
@@ -1128,7 +1457,16 @@ export class PostgresRepository
     return {
       pending: Number(result.rows[0]?.pending ?? 0),
       processing: Number(result.rows[0]?.processing ?? 0),
-      failed: Number(result.rows[0]?.failed ?? 0)
+      failed: Number(result.rows[0]?.failed ?? 0),
+      backgroundPending: Number(result.rows[0]?.background_pending ?? 0),
+      elevatedPending: Number(result.rows[0]?.elevated_pending ?? 0),
+      signalPending: Number(result.rows[0]?.signal_pending ?? 0),
+      ...(result.rows[0]?.oldest_pending_at
+        ? { oldestPendingAt: new Date(result.rows[0].oldest_pending_at).toISOString() }
+        : {}),
+      ...(result.rows[0]?.oldest_signal_pending_at
+        ? { oldestSignalPendingAt: new Date(result.rows[0].oldest_signal_pending_at).toISOString() }
+        : {})
     };
   }
 
@@ -1663,6 +2001,7 @@ export class PostgresRepository
   }
 
   async saveWalletEntrySignal(signal: WalletEntrySignalEvidence): Promise<boolean> {
+    const work = classifyWalletAlphaEntryWork(signal);
     const result = await this.pool.query(
       `WITH stale_exploratory_entry AS (
         SELECT idempotency_key
@@ -1702,19 +2041,19 @@ export class PostgresRepository
       WHERE wallet_entry_signals.source_swap_idempotency_key IS NULL
         AND EXCLUDED.source_swap_idempotency_key IS NOT NULL
       RETURNING chain, wallet_address, strategy_version
-      ), queued AS (
-        INSERT INTO wallet_alpha_work_queue (
-          chain, wallet_address, strategy_version, revision, updated_at, not_before
-        )
-        SELECT chain, wallet_address, strategy_version, 1, NOW(), NOW()
+      ), queued AS MATERIALIZED (
+        SELECT enqueue_wallet_alpha_work(
+          chain,
+          wallet_address,
+          strategy_version,
+          $17::smallint,
+          $18
+        ) AS queued
         FROM changed
-        ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-          revision = wallet_alpha_work_queue.revision + 1,
-          updated_at = NOW(),
-          not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-        RETURNING 1
       )
-      SELECT EXISTS(SELECT 1 FROM changed) AS changed`,
+      SELECT
+        EXISTS(SELECT 1 FROM changed) AS changed,
+        (SELECT COUNT(*) FROM queued) AS queued_count`,
       [
         signal.idempotencyKey,
         signal.chain,
@@ -1731,22 +2070,92 @@ export class PostgresRepository
         signal.slot,
         signal.provider,
         signal.observedAt,
-        signal.strategyVersion
+        signal.strategyVersion,
+        work.priority,
+        work.reason
       ]
     );
     return Boolean(result.rows[0]?.changed);
   }
 
   async saveWalletSignalOutcome(outcome: WalletSignalOutcomeEvidence): Promise<boolean> {
-    const result = await this.pool.query(
-      `WITH changed AS (
+    return (await this.saveWalletSignalOutcomes([outcome])) === 1;
+  }
+
+  async saveWalletSignalOutcomes(outcomes: WalletSignalOutcomeEvidence[]): Promise<number> {
+    if (outcomes.length === 0) return 0;
+    if (outcomes.length > 500) {
+      throw new Error("Wallet outcome batch exceeds the 500-row repository ceiling.");
+    }
+    const conflictKeys = new Set<string>();
+    const records = outcomes.map((outcome) => {
+      const conflictKey = [
+        outcome.entryIdempotencyKey,
+        outcome.horizonMinutes,
+        outcome.exitStrategy,
+        outcome.strategyVersion
+      ].join(":");
+      if (conflictKeys.has(conflictKey)) {
+        throw new Error(`Duplicate wallet outcome conflict key in batch: ${conflictKey}`);
+      }
+      conflictKeys.add(conflictKey);
+      return {
+        idempotency_key: outcome.idempotencyKey,
+        entry_idempotency_key: outcome.entryIdempotencyKey,
+        chain: outcome.chain,
+        horizon_minutes: outcome.horizonMinutes,
+        status: outcome.status,
+        outcome_price_usd: outcome.outcomePriceUsd ?? null,
+        frozen_at: outcome.frozenAt ?? null,
+        gross_return_pct: outcome.grossReturnPct ?? null,
+        net_return_pct: outcome.netReturnPct ?? null,
+        estimated_round_trip_cost_pct: outcome.estimatedRoundTripCostPct,
+        exit_strategy: outcome.exitStrategy,
+        rugged: outcome.rugged,
+        signature: outcome.signature,
+        slot: outcome.slot,
+        provider: outcome.provider,
+        observed_at: outcome.observedAt,
+        strategy_version: outcome.strategyVersion,
+        raw: outcome.raw
+      };
+    });
+    const result = await this.pool.query<{ changed_count: number }>(
+      `WITH input AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS outcome(
+           idempotency_key text,
+           entry_idempotency_key text,
+           chain text,
+           horizon_minutes integer,
+           status text,
+           outcome_price_usd numeric,
+           frozen_at timestamptz,
+           gross_return_pct numeric,
+           net_return_pct numeric,
+           estimated_round_trip_cost_pct numeric,
+           exit_strategy text,
+           rugged boolean,
+           signature text,
+           slot bigint,
+           provider text,
+           observed_at timestamptz,
+           strategy_version text,
+           raw jsonb
+         )
+       ), changed AS (
        INSERT INTO wallet_signal_outcomes (
         idempotency_key, entry_idempotency_key, chain, horizon_minutes, status,
         outcome_price_usd, frozen_at, gross_return_pct, net_return_pct,
         estimated_round_trip_cost_pct, exit_strategy, rugged, signature, slot,
         provider, observed_at, strategy_version, raw
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      SELECT
+        idempotency_key, entry_idempotency_key, chain, horizon_minutes, status,
+        outcome_price_usd, frozen_at, gross_return_pct, net_return_pct,
+        estimated_round_trip_cost_pct, exit_strategy, rugged, signature, slot,
+        provider, observed_at, strategy_version, raw
+      FROM input
       ON CONFLICT (entry_idempotency_key, horizon_minutes, exit_strategy, strategy_version)
       DO UPDATE SET
         status = CASE
@@ -1824,44 +2233,29 @@ export class PostgresRepository
           EXCLUDED.observed_at,
           EXCLUDED.raw
         )
-      RETURNING entry_idempotency_key, strategy_version
-      ), queued AS (
-        INSERT INTO wallet_alpha_work_queue (
-          chain, wallet_address, strategy_version, revision, updated_at, not_before
-        )
-        SELECT entry.chain, entry.wallet_address, changed.strategy_version, 1, NOW(), NOW()
+      RETURNING entry_idempotency_key, chain, strategy_version
+      ), changed_wallets AS (
+        SELECT DISTINCT entry.chain, entry.wallet_address, changed.strategy_version
         FROM changed
         JOIN wallet_entry_signals entry
           ON entry.idempotency_key = changed.entry_idempotency_key
-        ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-          revision = wallet_alpha_work_queue.revision + 1,
-          updated_at = NOW(),
-          not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-        RETURNING 1
+      ), queued AS MATERIALIZED (
+        SELECT enqueue_wallet_alpha_work(
+          chain,
+          wallet_address,
+          strategy_version,
+          1::smallint,
+          'signal-outcome'
+        ) AS queued
+        FROM changed_wallets
       )
-      SELECT EXISTS(SELECT 1 FROM changed) AS changed`,
-      [
-        outcome.idempotencyKey,
-        outcome.entryIdempotencyKey,
-        outcome.chain,
-        outcome.horizonMinutes,
-        outcome.status,
-        outcome.outcomePriceUsd ?? null,
-        outcome.frozenAt ?? null,
-        outcome.grossReturnPct ?? null,
-        outcome.netReturnPct ?? null,
-        outcome.estimatedRoundTripCostPct,
-        outcome.exitStrategy,
-        outcome.rugged,
-        outcome.signature,
-        outcome.slot,
-        outcome.provider,
-        outcome.observedAt,
-        outcome.strategyVersion,
-        outcome.raw
-      ]
+      SELECT
+        COUNT(*)::integer AS changed_count,
+        (SELECT COUNT(*) FROM queued) AS queued_count
+      FROM changed`,
+      [JSON.stringify(records)]
     );
-    return Boolean(result.rows[0]?.changed);
+    return Number(result.rows[0]?.changed_count ?? 0);
   }
 
   async saveHypothesisRun(run: HypothesisRunEvidence): Promise<boolean> {
@@ -1897,9 +2291,9 @@ export class PostgresRepository
     await this.pool.query(
       `INSERT INTO ingestion_cursors (
         source, address, chain, last_signature, last_slot, idempotency_key,
-        signature, slot, provider, observed_at, strategy_version
+        signature, slot, provider, observed_at, strategy_version, last_event_occurred_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (source, address) DO UPDATE SET
         last_signature = EXCLUDED.last_signature,
         last_slot = EXCLUDED.last_slot,
@@ -1908,7 +2302,8 @@ export class PostgresRepository
         slot = EXCLUDED.slot,
         provider = EXCLUDED.provider,
         observed_at = EXCLUDED.observed_at,
-        strategy_version = EXCLUDED.strategy_version
+        strategy_version = EXCLUDED.strategy_version,
+        last_event_occurred_at = EXCLUDED.last_event_occurred_at
       WHERE ingestion_cursors.last_slot <= EXCLUDED.last_slot`,
       [
         cursor.source,
@@ -1921,7 +2316,8 @@ export class PostgresRepository
         cursor.slot,
         cursor.provider,
         cursor.observedAt,
-        cursor.strategyVersion
+        cursor.strategyVersion,
+        cursor.lastEventOccurredAt ?? null
       ]
     );
   }
@@ -2221,6 +2617,7 @@ export class PostgresRepository
        JOIN wallet_entry_signals entry
          ON entry.idempotency_key = outcome.entry_idempotency_key
        WHERE entry.wallet_address = ANY($1::text[])
+         AND entry.strategy_version = $2
          AND outcome.strategy_version = $2
          AND ($3::timestamptz IS NULL OR outcome.observed_at >= $3)
        ORDER BY entry.wallet_address, outcome.observed_at, outcome.idempotency_key
@@ -2244,6 +2641,262 @@ export class PostgresRepository
     await this.pool.query("SELECT 1");
   }
 
+  async admitSolanaSignature(item: DurableSolanaSignature): Promise<boolean> {
+    const result = await this.pool.query(
+      `INSERT INTO solana_signature_queue (
+         provider, address, signature, slot, notified_at
+       )
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (provider, address, signature) DO UPDATE SET
+         slot = GREATEST(solana_signature_queue.slot, EXCLUDED.slot),
+         notified_at = LEAST(solana_signature_queue.notified_at, EXCLUDED.notified_at),
+         updated_at = NOW()
+       WHERE solana_signature_queue.status = 'pending'
+       RETURNING status = 'pending' AS pending`,
+      [item.provider, item.address, item.signature, item.slot, item.notifiedAt]
+    );
+    return Boolean(result.rows[0]?.pending);
+  }
+
+  async listPendingSolanaSignatures(
+    provider: string,
+    address: string,
+    limit: number
+  ): Promise<DurableSolanaSignature[]> {
+    const result = await this.pool.query(
+      `SELECT provider, address, signature, slot, notified_at
+       FROM solana_signature_queue
+       WHERE provider = $1 AND address = $2 AND status = 'pending'
+       ORDER BY slot, notified_at, signature
+       LIMIT $3`,
+      [provider, address, clampLimit(limit, 500, 5_000)]
+    );
+    return result.rows.map((row) => ({
+      provider: String(row.provider),
+      address: String(row.address),
+      signature: String(row.signature),
+      slot: Number(row.slot),
+      notifiedAt: new Date(String(row.notified_at)).toISOString()
+    }));
+  }
+
+  async completeSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    completedAt = new Date().toISOString()
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE solana_signature_queue
+       SET status = 'completed', completed_at = $4, updated_at = NOW()
+       WHERE provider = $1 AND address = $2 AND signature = $3 AND status = 'pending'`,
+      [provider, address, signature, completedAt]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async getSolanaSignatureQueueSummary(
+    provider?: string
+  ): Promise<DurableSolanaSignatureQueueSummary> {
+    const result = await this.pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'pending')::integer AS pending_count,
+         COUNT(*) FILTER (WHERE status = 'completed')::integer AS completed_count,
+         MIN(notified_at) FILTER (WHERE status = 'pending') AS oldest_pending_at
+       FROM solana_signature_queue
+       WHERE ($1::text IS NULL OR provider = $1)`,
+      [provider ?? null]
+    );
+    const row = result.rows[0];
+    return {
+      pendingCount: Number(row?.pending_count ?? 0),
+      completedCount: Number(row?.completed_count ?? 0),
+      ...(row?.oldest_pending_at
+        ? { oldestPendingAt: new Date(String(row.oldest_pending_at)).toISOString() }
+        : {})
+    };
+  }
+
+  async listPendingSolanaFinalities(
+    limit: number,
+    minimumAgeSeconds: number
+  ): Promise<SolanaFinalityWorkItem[]> {
+    const result = await this.pool.query(
+      `SELECT chain, signature, slot, first_seen_at, attempt_count
+       FROM solana_transaction_finality
+       WHERE status = 'pending'
+         AND first_seen_at <= NOW() - ($2 * INTERVAL '1 second')
+       ORDER BY slot, first_seen_at, signature
+       LIMIT $1`,
+      [clampLimit(limit, 256, 256), Math.max(0, Math.trunc(minimumAgeSeconds))]
+    );
+    return result.rows.map((row) => ({
+      chain: "solana",
+      signature: String(row.signature),
+      slot: Number(row.slot),
+      firstSeenAt: new Date(String(row.first_seen_at)).toISOString(),
+      attemptCount: Number(row.attempt_count)
+    }));
+  }
+
+  async reconcileTerminalSolanaFinalityEvents(limit: number): Promise<SolanaFinalityBatchResult> {
+    const result = await this.pool.query(
+      `WITH candidates AS (
+         SELECT event.idempotency_key,
+                finality.status AS finality_status,
+                finality.finalized_at,
+                finality.last_error
+         FROM chain_event_inbox AS event
+         JOIN solana_transaction_finality AS finality
+           ON finality.chain = event.chain
+          AND finality.signature = event.signature
+         WHERE event.chain = 'solana'
+           AND event.finality_required = TRUE
+           AND event.status IN ('pending', 'retry')
+           AND finality.status IN ('finalized', 'failed', 'unresolved')
+           AND (
+             (finality.status = 'finalized' AND event.commitment <> 'finalized')
+             OR finality.status IN ('failed', 'unresolved')
+           )
+         ORDER BY event.received_at, event.signature, event.idempotency_key
+         FOR UPDATE OF event SKIP LOCKED
+         LIMIT $1
+       ), affected AS (
+         UPDATE chain_event_inbox AS event
+         SET commitment = CASE
+               WHEN candidates.finality_status = 'finalized' THEN 'finalized'
+               ELSE event.commitment
+             END,
+             finalized_at = CASE
+               WHEN candidates.finality_status = 'finalized'
+                 THEN candidates.finalized_at
+               ELSE event.finalized_at
+             END,
+             status = CASE
+               WHEN candidates.finality_status IN ('failed', 'unresolved') THEN 'rolled_back'
+               ELSE event.status
+             END,
+             last_error = CASE
+               WHEN candidates.finality_status IN ('failed', 'unresolved')
+                 THEN COALESCE(candidates.last_error, 'Solana finality failed closed.')
+               ELSE event.last_error
+             END,
+             locked_by = NULL,
+             locked_at = NULL,
+             lock_expires_at = NULL
+         FROM candidates
+         WHERE event.idempotency_key = candidates.idempotency_key
+         RETURNING candidates.finality_status
+       )
+       SELECT
+         0::integer AS checked_signatures,
+         COUNT(*) FILTER (WHERE finality_status = 'finalized')::integer AS finalized_events,
+         COUNT(*) FILTER (WHERE finality_status IN ('failed', 'unresolved'))::integer
+           AS rolled_back_events
+       FROM affected`,
+      [clampLimit(limit, 256, 256)]
+    );
+    const row = result.rows[0];
+    return {
+      checkedSignatures: 0,
+      finalizedEvents: Number(row?.finalized_events ?? 0),
+      rolledBackEvents: Number(row?.rolled_back_events ?? 0)
+    };
+  }
+
+  async recordSolanaFinalities(
+    results: Array<{ signature: string; result: SolanaFinalityResult }>
+  ): Promise<SolanaFinalityBatchResult> {
+    if (results.length === 0) {
+      return { checkedSignatures: 0, finalizedEvents: 0, rolledBackEvents: 0 };
+    }
+    const records = results.map(({ signature, result }) => ({
+      signature,
+      status: result.status,
+      checked_at: result.checkedAt,
+      confirmation_status: result.confirmationStatus ?? null,
+      root_slot: result.rootSlot ?? null,
+      error: result.error ?? null
+    }));
+    const query = await this.pool.query(
+      `WITH input AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS item(
+           signature text,
+           status text,
+           checked_at timestamptz,
+           confirmation_status text,
+           root_slot bigint,
+           error text
+         )
+       ), updated AS (
+         UPDATE solana_transaction_finality AS finality
+         SET status = input.status,
+             attempt_count = finality.attempt_count + 1,
+             last_checked_at = input.checked_at,
+             finalized_at = CASE
+               WHEN input.status = 'finalized' THEN input.checked_at
+               ELSE finality.finalized_at
+             END,
+             confirmation_status = COALESCE(
+               input.confirmation_status,
+               finality.confirmation_status
+             ),
+             root_slot = COALESCE(input.root_slot, finality.root_slot),
+             last_error = input.error,
+             updated_at = NOW()
+         FROM input
+         WHERE finality.chain = 'solana'
+           AND finality.signature = input.signature
+           AND finality.status = 'pending'
+         RETURNING finality.signature, finality.status, finality.finalized_at,
+                   finality.last_error
+       ), affected AS (
+         UPDATE chain_event_inbox AS event
+         SET commitment = CASE
+               WHEN updated.status = 'finalized' THEN 'finalized'
+               ELSE event.commitment
+             END,
+             finalized_at = CASE
+               WHEN updated.status = 'finalized' THEN updated.finalized_at
+               ELSE event.finalized_at
+             END,
+             status = CASE
+               WHEN updated.status IN ('failed', 'unresolved') THEN 'rolled_back'
+               ELSE event.status
+             END,
+             last_error = CASE
+               WHEN updated.status IN ('failed', 'unresolved')
+                 THEN COALESCE(updated.last_error, 'Solana finality failed closed.')
+               ELSE event.last_error
+             END,
+             locked_by = NULL,
+             locked_at = NULL,
+             lock_expires_at = NULL
+         FROM updated
+         WHERE event.chain = 'solana'
+           AND event.signature = updated.signature
+           AND event.finality_required = TRUE
+           AND event.status IN ('pending', 'retry')
+           AND updated.status <> 'pending'
+         RETURNING updated.status
+       )
+       SELECT
+         (SELECT COUNT(*)::integer FROM updated) AS checked_signatures,
+         COUNT(*) FILTER (WHERE status = 'finalized')::integer AS finalized_events,
+         COUNT(*) FILTER (WHERE status IN ('failed', 'unresolved'))::integer
+           AS rolled_back_events
+       FROM affected`,
+      [JSON.stringify(records)]
+    );
+    const row = query.rows[0];
+    return {
+      checkedSignatures: Number(row?.checked_signatures ?? 0),
+      finalizedEvents: Number(row?.finalized_events ?? 0),
+      rolledBackEvents: Number(row?.rolled_back_events ?? 0)
+    };
+  }
+
   async insertChainEvent(event: CanonicalChainEventInput): Promise<boolean> {
     const result = await this.insertChainEvents([event]);
     return result.inserted === 1;
@@ -2253,24 +2906,28 @@ export class PostgresRepository
     events: CanonicalChainEventInput[]
   ): Promise<{ inserted: number; duplicates: number }> {
     if (events.length === 0) return { inserted: 0, duplicates: 0 };
-    const records = events.map((event) => ({
-      idempotency_key: event.idempotencyKey,
-      chain: event.chain,
-      signature: event.signature ?? null,
-      slot: event.slot ?? null,
-      transaction_index: event.transactionIndex ?? null,
-      instruction_index: event.instructionIndex ?? null,
-      inner_instruction_index: event.innerInstructionIndex ?? null,
-      event_type: event.eventType,
-      token_address: event.tokenAddress ?? null,
-      pool_address: event.poolAddress ?? null,
-      occurred_at: event.occurredAt,
-      received_at: event.receivedAt,
-      commitment: event.commitment,
-      source: event.source,
-      decoder_version: event.decoderVersion,
-      payload: event.payload
-    }));
+    const records = events.map((event) => {
+      const payload = encodePostgresJsonPayload(event.payload);
+      return {
+        idempotency_key: event.idempotencyKey,
+        chain: event.chain,
+        signature: event.signature ?? null,
+        slot: event.slot ?? null,
+        transaction_index: event.transactionIndex ?? null,
+        instruction_index: event.instructionIndex ?? null,
+        inner_instruction_index: event.innerInstructionIndex ?? null,
+        event_type: event.eventType,
+        token_address: event.tokenAddress ?? null,
+        pool_address: event.poolAddress ?? null,
+        occurred_at: event.occurredAt,
+        received_at: event.receivedAt,
+        commitment: event.commitment,
+        finality_required: event.requiresFinality ?? false,
+        source: event.source,
+        decoder_version: event.decoderVersion,
+        payload
+      };
+    });
     const result = await this.pool.query(
       `WITH input AS (
         SELECT *
@@ -2288,6 +2945,7 @@ export class PostgresRepository
           occurred_at timestamptz,
           received_at timestamptz,
           commitment text,
+          finality_required boolean,
           source text,
           decoder_version text,
           payload jsonb
@@ -2297,7 +2955,7 @@ export class PostgresRepository
           idempotency_key, chain, signature, slot, transaction_index, instruction_index,
           inner_instruction_index, event_type, token_address, pool_address, occurred_at,
           received_at, commitment, source, decoder_version, partition_key, payload,
-          payload_sha256
+          payload_sha256, finality_required
         )
         SELECT
           event.idempotency_key, event.chain, event.signature, event.slot,
@@ -2305,10 +2963,11 @@ export class PostgresRepository
           event.event_type, event.token_address, event.pool_address, event.occurred_at,
           event.received_at, event.commitment, event.source, event.decoder_version,
           COALESCE(NULLIF(event.payload->>'address', ''), event.source), '{}'::jsonb,
-          encode(digest(event.payload::text, 'sha256'), 'hex')
+          encode(digest(event.payload::text, 'sha256'), 'hex'), event.finality_required
         FROM input AS event
         ON CONFLICT (idempotency_key) DO NOTHING
-        RETURNING idempotency_key, received_at, payload_sha256
+        RETURNING idempotency_key, chain, signature, slot, received_at,
+                  payload_sha256, finality_required
       ), payloads AS (
         INSERT INTO chain_event_payloads (
           event_idempotency_key, received_at, payload, payload_sha256
@@ -2318,6 +2977,18 @@ export class PostgresRepository
         FROM inserted
         JOIN input ON input.idempotency_key = inserted.idempotency_key
         RETURNING event_idempotency_key
+      ), finalities AS (
+        INSERT INTO solana_transaction_finality (
+          chain, signature, slot, first_seen_at
+        )
+        SELECT DISTINCT chain, signature, slot, received_at
+        FROM inserted
+        WHERE chain = 'solana'
+          AND finality_required = TRUE
+          AND signature IS NOT NULL
+          AND slot IS NOT NULL
+        ON CONFLICT (chain, signature) DO NOTHING
+        RETURNING signature
       )
       SELECT COUNT(*)::integer AS inserted FROM inserted`,
       [JSON.stringify(records)]
@@ -2420,6 +3091,7 @@ export class PostgresRepository
             (head.status IN ('pending', 'retry') AND head.next_attempt_at <= NOW())
             OR (head.status = 'processing' AND head.lock_expires_at <= NOW())
           )
+          AND (NOT event.finality_required OR event.commitment = 'finalized')
         ORDER BY
           event.slot ASC NULLS LAST,
           event.transaction_index ASC NULLS LAST,
@@ -2478,9 +3150,10 @@ export class PostgresRepository
         claimed.occurred_at,
         claimed.received_at,
         claimed.processed_at,
-        claimed.finalized_at,
-        claimed.commitment,
-        claimed.source,
+         claimed.finalized_at,
+         claimed.commitment,
+         claimed.finality_required,
+         claimed.source,
         claimed.decoder_version,
         claimed.status,
         claimed.attempt_count,
@@ -2622,6 +3295,378 @@ export class PostgresRepository
     );
     const row = result.rows[0];
     return row ? rowToPipelineWatermark(row) : undefined;
+  }
+
+  async openIngestionCoverageIncident(
+    incident: IngestionCoverageIncidentOpenInput
+  ): Promise<IngestionCoverageIncident> {
+    const values = [
+      incident.idempotencyKey,
+      incident.chain,
+      incident.provider,
+      incident.programAddress,
+      incident.reason,
+      incident.gapStartedAt,
+      incident.openedAt,
+      incident.clusterSlot ?? null,
+      incident.sourceSlot ?? null,
+      incident.slotLag ?? null,
+      incident.lastWebsocketMessageAt ?? null,
+      incident.silenceMs ?? null,
+      incident.subscriptionAckTimeoutCount,
+      incident.successfulSubscriptionAckCount,
+      incident.metadata
+    ];
+    return this.withTransaction(async (client) => {
+      // Paper admission takes the same per-program transaction lock immediately
+      // before recording an opening fill. This serializes a known incident with
+      // that final side effect without increasing worker or provider concurrency.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('walletscaner:discovery-coverage:' || $1::text, 0)
+         )`,
+        [incident.programAddress]
+      );
+      const inserted = await client.query(
+        `INSERT INTO ingestion_coverage_incidents (
+           idempotency_key, chain, provider, program_address, reason,
+           gap_started_at, opened_at, cluster_slot, source_slot, slot_lag,
+           last_websocket_message_at, silence_ms,
+           subscription_ack_timeout_count, successful_subscription_ack_count,
+           open_metadata
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+           $11, $12, $13, $14, $15
+         )
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        values
+      );
+      const existingById = inserted.rows[0]
+        ? undefined
+        : (
+            await client.query(
+              `SELECT * FROM ingestion_coverage_incidents
+               WHERE idempotency_key = $1`,
+              [incident.idempotencyKey]
+            )
+          ).rows[0];
+      const conflictingOpen =
+        inserted.rows[0] || existingById
+          ? undefined
+          : (
+              await client.query(
+                `SELECT * FROM ingestion_coverage_incidents
+                 WHERE provider = $1 AND program_address = $2 AND closed_at IS NULL
+                 ORDER BY opened_at DESC
+                 LIMIT 1`,
+                [incident.provider, incident.programAddress]
+              )
+            ).rows[0];
+      const row = inserted.rows[0] ?? existingById ?? conflictingOpen;
+      if (!row) throw new Error("Coverage incident could not be opened or recovered.");
+      return rowToIngestionCoverageIncident(row);
+    });
+  }
+
+  async listOpenIngestionCoverageIncidents(
+    provider?: string
+  ): Promise<IngestionCoverageIncident[]> {
+    const result = provider
+      ? await this.pool.query(
+          `SELECT * FROM ingestion_coverage_incidents
+           WHERE provider = $1 AND closed_at IS NULL
+           ORDER BY opened_at, program_address`,
+          [provider]
+        )
+      : await this.pool.query(
+          `SELECT * FROM ingestion_coverage_incidents
+           WHERE closed_at IS NULL
+           ORDER BY opened_at, program_address`
+        );
+    return result.rows.map((row) => rowToIngestionCoverageIncident(row));
+  }
+
+  async markIngestionCoverageIncidentRestart(
+    idempotencyKey: string,
+    phase: "attempted" | "completed" | "failed",
+    at: string,
+    error?: string
+  ): Promise<boolean> {
+    const assignment =
+      phase === "attempted"
+        ? `restart_attempted_at = COALESCE(restart_attempted_at, $2::timestamptz),
+           restart_attempt_count = restart_attempt_count + 1,
+           last_restart_attempted_at = $2::timestamptz,
+           last_restart_error = NULL`
+        : phase === "completed"
+          ? `restart_completed_at = COALESCE(restart_completed_at, $2::timestamptz),
+             last_restart_completed_at = $2::timestamptz,
+             last_restart_error = NULL`
+          : `last_restart_attempted_at = COALESCE(last_restart_attempted_at, $2::timestamptz),
+             last_restart_error = $3::text`;
+    const result = await this.pool.query(
+      `UPDATE ingestion_coverage_incidents
+       SET ${assignment}
+       WHERE idempotency_key = $1 AND closed_at IS NULL
+       RETURNING idempotency_key`,
+      phase === "failed"
+        ? [idempotencyKey, at, error?.slice(0, 500) ?? "unknown error"]
+        : [idempotencyKey, at]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async closeIngestionCoverageIncident(
+    idempotencyKey: string,
+    input: IngestionCoverageIncidentCloseInput
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ingestion_coverage_incidents
+       SET closed_at = $2,
+           close_cluster_slot = $3,
+           close_source_slot = $4,
+           resolution = 'transport_recovered_gap_unreconciled',
+           close_metadata = $5,
+           coverage_reconciled_at = $6,
+           coverage_repair_id = $7
+       WHERE idempotency_key = $1
+         AND closed_at IS NULL
+         AND (
+           ($6::timestamptz IS NULL AND $7::text IS NULL)
+           OR (
+             $6::timestamptz IS NOT NULL
+             AND $7::text IS NOT NULL
+             AND EXISTS (
+               SELECT 1
+               FROM ingestion_gap_repairs repair
+               WHERE repair.repair_id = $7
+               AND repair.incident_id = $1
+               AND repair.status = 'completed'
+               AND repair.boundary_source = 'truncation_cursor'
+             )
+           )
+         )
+       RETURNING idempotency_key`,
+      [
+        idempotencyKey,
+        input.closedAt,
+        input.clusterSlot ?? null,
+        input.sourceSlot ?? null,
+        input.metadata,
+        input.coverageReconciledAt ?? null,
+        input.coverageRepairId ?? null
+      ]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async getOrCreateIngestionGapRepair(
+    input: IngestionGapRepairCreateInput
+  ): Promise<IngestionGapRepair> {
+    return this.withTransaction(async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended('walletscaner:discovery-gap-repair:' || $1::text, 0)
+         )`,
+        [input.incidentId]
+      );
+      const active = await client.query(
+        `SELECT *
+         FROM ingestion_gap_repairs
+         WHERE incident_id = $1 AND status IN ('collecting', 'replaying')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [input.incidentId]
+      );
+      if (active.rows[0]) return rowToIngestionGapRepair(active.rows[0]);
+      const inserted = await client.query(
+        `INSERT INTO ingestion_gap_repairs (
+           repair_id, incident_id, provider, program_address,
+           cursor_signature, cursor_slot, cursor_occurred_at, boundary_source
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (repair_id) DO NOTHING
+         RETURNING *`,
+        [
+          input.repairId,
+          input.incidentId,
+          input.provider,
+          input.programAddress,
+          input.cursorSignature,
+          input.cursorSlot,
+          input.cursorOccurredAt ?? null,
+          input.boundarySource
+        ]
+      );
+      const row =
+        inserted.rows[0] ??
+        (
+          await client.query(`SELECT * FROM ingestion_gap_repairs WHERE repair_id = $1`, [
+            input.repairId
+          ])
+        ).rows[0];
+      if (!row) throw new Error("Gap repair could not be created or recovered.");
+      return rowToIngestionGapRepair(row);
+    });
+  }
+
+  async stageIngestionGapRepairPage(
+    input: IngestionGapRepairPageInput
+  ): Promise<IngestionGapRepair> {
+    return this.withTransaction(async (client) => {
+      const locked = await client.query(
+        `SELECT * FROM ingestion_gap_repairs WHERE repair_id = $1 FOR UPDATE`,
+        [input.repairId]
+      );
+      if (!locked.rows[0] || locked.rows[0].status !== "collecting") {
+        throw new Error("Gap repair is not collecting signatures.");
+      }
+      if (input.signatures.length > 0) {
+        await client.query(
+          `INSERT INTO ingestion_gap_repair_signatures (
+             repair_id, signature, slot, position_from_head
+           )
+           SELECT $1, item.signature, item.slot, item.position_from_head
+           FROM jsonb_to_recordset($2::jsonb) AS item(
+             signature TEXT, slot BIGINT, position_from_head INTEGER
+           )
+           ON CONFLICT (repair_id, signature) DO NOTHING`,
+          [
+            input.repairId,
+            JSON.stringify(
+              input.signatures.map((item) => ({
+                signature: item.signature,
+                slot: item.slot,
+                position_from_head: item.positionFromHead
+              }))
+            )
+          ]
+        );
+      }
+      const updated = await client.query(
+        `UPDATE ingestion_gap_repairs AS repair
+         SET target_signature = COALESCE(repair.target_signature, $2),
+             target_slot = COALESCE(repair.target_slot, $3),
+             before_signature = COALESCE($4, repair.before_signature),
+             status = CASE WHEN $5::boolean THEN 'replaying' ELSE 'collecting' END,
+             boundary_reached = $5,
+             fetched_signature_count = (
+               SELECT COUNT(*)::integer
+               FROM ingestion_gap_repair_signatures staged
+               WHERE staged.repair_id = repair.repair_id
+             ),
+             collection_attempt_count = repair.collection_attempt_count + 1,
+             last_error = NULL,
+             updated_at = NOW()
+         WHERE repair.repair_id = $1
+         RETURNING repair.*`,
+        [
+          input.repairId,
+          input.targetSignature ?? null,
+          input.targetSlot ?? null,
+          input.beforeSignature ?? null,
+          input.boundaryReached
+        ]
+      );
+      return rowToIngestionGapRepair(updated.rows[0]);
+    });
+  }
+
+  async listPendingIngestionGapRepairSignatures(
+    repairId: string,
+    limit: number
+  ): Promise<IngestionGapRepairSignature[]> {
+    const result = await this.pool.query(
+      `SELECT repair_id, signature, slot, position_from_head
+       FROM ingestion_gap_repair_signatures
+       WHERE repair_id = $1 AND status = 'pending'
+       ORDER BY position_from_head DESC
+       LIMIT $2`,
+      [repairId, clampLimit(limit, 50, 200)]
+    );
+    return result.rows.map((row) => ({
+      repairId: String(row.repair_id),
+      signature: String(row.signature),
+      slot: Number(row.slot),
+      positionFromHead: Number(row.position_from_head)
+    }));
+  }
+
+  async completeIngestionGapRepairSignature(
+    repairId: string,
+    signature: string,
+    completedAt = new Date().toISOString()
+  ): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const completed = await client.query(
+        `UPDATE ingestion_gap_repair_signatures
+         SET status = 'completed', completed_at = $3
+         WHERE repair_id = $1 AND signature = $2 AND status = 'pending'
+         RETURNING signature`,
+        [repairId, signature, completedAt]
+      );
+      if ((completed.rowCount ?? 0) === 0) return false;
+      await client.query(
+        `UPDATE ingestion_gap_repairs
+         SET completed_signature_count = completed_signature_count + 1,
+             replay_attempt_count = replay_attempt_count + 1,
+             last_error = NULL,
+             updated_at = $2
+         WHERE repair_id = $1 AND status = 'replaying'`,
+        [repairId, completedAt]
+      );
+      return true;
+    });
+  }
+
+  async recordIngestionGapRepairError(
+    repairId: string,
+    phase: "collection" | "replay",
+    error: string
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ingestion_gap_repairs
+       SET collection_attempt_count = collection_attempt_count +
+             CASE WHEN $2 = 'collection' THEN 1 ELSE 0 END,
+           replay_attempt_count = replay_attempt_count +
+             CASE WHEN $2 = 'replay' THEN 1 ELSE 0 END,
+           status = CASE
+             WHEN $3 LIKE 'gap-repair-signature-cap-%' THEN 'failed'
+             ELSE status
+           END,
+           last_error = $3,
+           updated_at = NOW()
+       WHERE repair_id = $1 AND status <> 'completed'`,
+      [repairId, phase, error.slice(0, 500)]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async completeIngestionGapRepair(
+    repairId: string,
+    coveredThrough: { signature: string; slot: number; completedAt?: string }
+  ): Promise<boolean> {
+    const completedAt = coveredThrough.completedAt ?? new Date().toISOString();
+    const result = await this.pool.query(
+      `UPDATE ingestion_gap_repairs repair
+       SET status = 'completed',
+           covered_through_signature = $2,
+           covered_through_slot = $3,
+           completed_at = $4,
+           updated_at = $4,
+           last_error = NULL
+       WHERE repair.repair_id = $1
+         AND repair.status = 'replaying'
+         AND repair.boundary_reached
+         AND repair.boundary_source = 'truncation_cursor'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM ingestion_gap_repair_signatures staged
+           WHERE staged.repair_id = repair.repair_id AND staged.status = 'pending'
+         )`,
+      [repairId, coveredThrough.signature, coveredThrough.slot, completedAt]
+    );
+    return (result.rowCount ?? 0) === 1;
   }
 
   async getPipelineHealth(): Promise<PipelineHealthSummary> {
@@ -3202,7 +4247,10 @@ function rowToIngestionCursor(row: Record<string, unknown>): IngestionCursorEvid
     source: String(row.source),
     address: String(row.address),
     lastSignature: String(row.last_signature),
-    lastSlot: Number(row.last_slot)
+    lastSlot: Number(row.last_slot),
+    ...(row.last_event_occurred_at
+      ? { lastEventOccurredAt: new Date(String(row.last_event_occurred_at)).toISOString() }
+      : {})
   };
 }
 
@@ -3223,6 +4271,7 @@ function rowToCanonicalChainEvent(row: Record<string, unknown>): CanonicalChainE
     occurredAt: new Date(String(row.occurred_at)).toISOString(),
     receivedAt: new Date(String(row.received_at)).toISOString(),
     commitment: row.commitment as CanonicalChainEvent["commitment"],
+    requiresFinality: Boolean(row.finality_required),
     source: String(row.source),
     decoderVersion: String(row.decoder_version),
     payload: (row.payload as Record<string, unknown>) ?? {},
@@ -3250,6 +4299,104 @@ function rowToPipelineWatermark(row: Record<string, unknown>): PipelineWatermark
     status: row.status as PipelineWatermark["status"],
     updatedAt: new Date(String(row.updated_at)).toISOString(),
     metadata: (row.metadata as Record<string, unknown>) ?? {}
+  };
+}
+
+function rowToIngestionCoverageIncident(row: Record<string, unknown>): IngestionCoverageIncident {
+  return {
+    idempotencyKey: String(row.idempotency_key),
+    chain: "solana",
+    provider: String(row.provider),
+    programAddress: String(row.program_address),
+    reason: String(row.reason) as IngestionCoverageIncident["reason"],
+    gapStartedAt: new Date(String(row.gap_started_at)).toISOString(),
+    openedAt: new Date(String(row.opened_at)).toISOString(),
+    ...(row.cluster_slot !== null ? { clusterSlot: Number(row.cluster_slot) } : {}),
+    ...(row.source_slot !== null ? { sourceSlot: Number(row.source_slot) } : {}),
+    ...(row.slot_lag !== null ? { slotLag: Number(row.slot_lag) } : {}),
+    ...(row.last_websocket_message_at !== null
+      ? { lastWebsocketMessageAt: new Date(String(row.last_websocket_message_at)).toISOString() }
+      : {}),
+    ...(row.silence_ms !== null ? { silenceMs: Number(row.silence_ms) } : {}),
+    subscriptionAckTimeoutCount: Number(row.subscription_ack_timeout_count),
+    successfulSubscriptionAckCount: Number(row.successful_subscription_ack_count),
+    metadata: (row.open_metadata ?? {}) as Record<string, unknown>,
+    ...(row.restart_attempted_at !== null
+      ? { restartAttemptedAt: new Date(String(row.restart_attempted_at)).toISOString() }
+      : {}),
+    ...(row.restart_completed_at !== null
+      ? { restartCompletedAt: new Date(String(row.restart_completed_at)).toISOString() }
+      : {}),
+    restartAttemptCount: Number(row.restart_attempt_count ?? 0),
+    ...(row.last_restart_attempted_at !== null
+      ? { lastRestartAttemptedAt: new Date(String(row.last_restart_attempted_at)).toISOString() }
+      : {}),
+    ...(row.last_restart_completed_at !== null
+      ? { lastRestartCompletedAt: new Date(String(row.last_restart_completed_at)).toISOString() }
+      : {}),
+    ...(row.last_restart_error !== null
+      ? { lastRestartError: String(row.last_restart_error) }
+      : {}),
+    ...(row.closed_at !== null ? { closedAt: new Date(String(row.closed_at)).toISOString() } : {}),
+    ...(row.close_cluster_slot !== null
+      ? { closeClusterSlot: Number(row.close_cluster_slot) }
+      : {}),
+    ...(row.close_source_slot !== null ? { closeSourceSlot: Number(row.close_source_slot) } : {}),
+    ...(row.resolution !== null
+      ? {
+          resolution: String(row.resolution) as "transport_recovered_gap_unreconciled"
+        }
+      : {}),
+    ...(row.close_metadata !== null
+      ? { closeMetadata: row.close_metadata as Record<string, unknown> }
+      : {}),
+    ...(row.coverage_reconciled_at !== null && row.coverage_reconciled_at !== undefined
+      ? {
+          coverageReconciledAt: new Date(String(row.coverage_reconciled_at)).toISOString()
+        }
+      : {}),
+    ...(row.coverage_repair_id !== null && row.coverage_repair_id !== undefined
+      ? { coverageRepairId: String(row.coverage_repair_id) }
+      : {}),
+    createdAt: new Date(String(row.created_at)).toISOString()
+  };
+}
+
+function rowToIngestionGapRepair(row: Record<string, unknown>): IngestionGapRepair {
+  return {
+    repairId: String(row.repair_id),
+    incidentId: String(row.incident_id),
+    provider: String(row.provider),
+    programAddress: String(row.program_address),
+    cursorSignature: String(row.cursor_signature),
+    cursorSlot: Number(row.cursor_slot),
+    ...(row.cursor_occurred_at
+      ? { cursorOccurredAt: new Date(String(row.cursor_occurred_at)).toISOString() }
+      : {}),
+    boundarySource: String(row.boundary_source) as IngestionGapRepair["boundarySource"],
+    ...(row.target_signature ? { targetSignature: String(row.target_signature) } : {}),
+    ...(row.target_slot !== null && row.target_slot !== undefined
+      ? { targetSlot: Number(row.target_slot) }
+      : {}),
+    ...(row.before_signature ? { beforeSignature: String(row.before_signature) } : {}),
+    status: String(row.status) as IngestionGapRepair["status"],
+    boundaryReached: row.boundary_reached === true,
+    fetchedSignatureCount: Number(row.fetched_signature_count ?? 0),
+    completedSignatureCount: Number(row.completed_signature_count ?? 0),
+    collectionAttemptCount: Number(row.collection_attempt_count ?? 0),
+    replayAttemptCount: Number(row.replay_attempt_count ?? 0),
+    ...(row.last_error ? { lastError: String(row.last_error) } : {}),
+    ...(row.covered_through_signature
+      ? { coveredThroughSignature: String(row.covered_through_signature) }
+      : {}),
+    ...(row.covered_through_slot !== null && row.covered_through_slot !== undefined
+      ? { coveredThroughSlot: Number(row.covered_through_slot) }
+      : {}),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+    ...(row.completed_at
+      ? { completedAt: new Date(String(row.completed_at)).toISOString() }
+      : {})
   };
 }
 
@@ -3319,6 +4466,30 @@ function rowToSignalOutboxMessage(row: Record<string, unknown>): SignalOutboxMes
 
 function clampLimit(value: number | undefined, defaultValue: number, maximum: number): number {
   return Math.min(maximum, Math.max(1, Math.trunc(value ?? defaultValue)));
+}
+
+function assertWalletAlphaPriorityRange(
+  minimumPriority: WalletAlphaWorkPriority,
+  maximumPriority: WalletAlphaWorkPriority
+): void {
+  if (
+    !Number.isInteger(minimumPriority) ||
+    !Number.isInteger(maximumPriority) ||
+    minimumPriority < 0 ||
+    maximumPriority > 2 ||
+    minimumPriority > maximumPriority
+  ) {
+    throw new Error("Wallet-alpha priority range must be ordered within 0..2.");
+  }
+}
+
+function walletAlphaWorkRevisionKey(candidate: WalletAlphaWorkCandidate): string {
+  return [
+    candidate.chain,
+    candidate.walletAddress,
+    candidate.strategyVersion,
+    candidate.revision
+  ].join(":");
 }
 
 function nullableNumber(value: unknown): number | undefined {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Walletscaner Data Pipeline"
+  short_description: "Engineer reliable Solana data flows"
+  default_prompt: "Use $walletscaner-data-pipeline to implement or review a bounded, replay-safe Walletscaner data pipeline change."

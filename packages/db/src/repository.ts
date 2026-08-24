@@ -51,6 +51,8 @@ export interface CanonicalChainEventInput {
   occurredAt: string;
   receivedAt: string;
   commitment: CanonicalEventCommitment;
+  /** Future-only gate: parser admission waits for durable finalized evidence. */
+  requiresFinality?: boolean;
   source: string;
   decoderVersion: string;
   payload: Record<string, unknown>;
@@ -66,6 +68,28 @@ export interface CanonicalChainEvent extends CanonicalChainEventInput {
   lockedAt?: string;
   lockExpiresAt?: string;
   lastError?: string;
+}
+
+export interface SolanaFinalityWorkItem {
+  chain: "solana";
+  signature: string;
+  slot: number;
+  firstSeenAt: string;
+  attemptCount: number;
+}
+
+export interface SolanaFinalityResult {
+  status: "pending" | "finalized" | "failed" | "unresolved";
+  checkedAt: string;
+  confirmationStatus?: "processed" | "confirmed" | "finalized";
+  rootSlot?: number;
+  error?: string;
+}
+
+export interface SolanaFinalityBatchResult {
+  checkedSignatures: number;
+  finalizedEvents: number;
+  rolledBackEvents: number;
 }
 
 export interface CanonicalEventClaimOptions {
@@ -94,6 +118,131 @@ export interface PipelineWatermark {
   status: "healthy" | "stalled" | "reconciling";
   updatedAt: string;
   metadata: Record<string, unknown>;
+}
+
+export interface DurableSolanaSignature {
+  provider: string;
+  address: string;
+  signature: string;
+  slot: number;
+  notifiedAt: string;
+}
+
+export interface DurableSolanaSignatureQueueSummary {
+  pendingCount: number;
+  completedCount: number;
+  oldestPendingAt?: string;
+}
+
+export type IngestionCoverageIncidentReason =
+  | "head_slot_lag"
+  | "raw_websocket_silence"
+  | "subscription_ack_timeout"
+  | "stale_live_notification"
+  | "backfill_truncated"
+  | "source_start_failed"
+  | "combined";
+
+export interface IngestionCoverageIncidentOpenInput {
+  idempotencyKey: string;
+  chain: "solana";
+  provider: string;
+  programAddress: string;
+  reason: IngestionCoverageIncidentReason;
+  gapStartedAt: string;
+  openedAt: string;
+  clusterSlot?: number;
+  sourceSlot?: number;
+  slotLag?: number;
+  lastWebsocketMessageAt?: string;
+  silenceMs?: number;
+  subscriptionAckTimeoutCount: number;
+  successfulSubscriptionAckCount: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface IngestionCoverageIncident extends IngestionCoverageIncidentOpenInput {
+  restartAttemptedAt?: string;
+  restartCompletedAt?: string;
+  restartAttemptCount: number;
+  lastRestartAttemptedAt?: string;
+  lastRestartCompletedAt?: string;
+  lastRestartError?: string;
+  closedAt?: string;
+  closeClusterSlot?: number;
+  closeSourceSlot?: number;
+  resolution?: "transport_recovered_gap_unreconciled";
+  closeMetadata?: Record<string, unknown>;
+  coverageReconciledAt?: string;
+  coverageRepairId?: string;
+  createdAt: string;
+}
+
+export interface IngestionCoverageIncidentCloseInput {
+  closedAt: string;
+  clusterSlot?: number;
+  sourceSlot?: number;
+  coverageReconciledAt?: string;
+  coverageRepairId?: string;
+  metadata: Record<string, unknown>;
+}
+
+export type IngestionGapRepairStatus = "collecting" | "replaying" | "completed" | "failed";
+export type IngestionGapRepairBoundarySource =
+  | "unsafe_legacy_current_cursor"
+  | "truncation_cursor";
+
+export interface IngestionGapRepair {
+  repairId: string;
+  incidentId: string;
+  provider: string;
+  programAddress: string;
+  cursorSignature: string;
+  cursorSlot: number;
+  cursorOccurredAt?: string;
+  boundarySource: IngestionGapRepairBoundarySource;
+  targetSignature?: string;
+  targetSlot?: number;
+  beforeSignature?: string;
+  status: IngestionGapRepairStatus;
+  boundaryReached: boolean;
+  fetchedSignatureCount: number;
+  completedSignatureCount: number;
+  collectionAttemptCount: number;
+  replayAttemptCount: number;
+  lastError?: string;
+  coveredThroughSignature?: string;
+  coveredThroughSlot?: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface IngestionGapRepairSignature {
+  repairId: string;
+  signature: string;
+  slot: number;
+  positionFromHead: number;
+}
+
+export interface IngestionGapRepairCreateInput {
+  repairId: string;
+  incidentId: string;
+  provider: string;
+  programAddress: string;
+  cursorSignature: string;
+  cursorSlot: number;
+  cursorOccurredAt?: string;
+  boundarySource: IngestionGapRepairBoundarySource;
+}
+
+export interface IngestionGapRepairPageInput {
+  repairId: string;
+  signatures: Array<{ signature: string; slot: number; positionFromHead: number }>;
+  beforeSignature?: string;
+  boundaryReached: boolean;
+  targetSignature?: string;
+  targetSlot?: number;
 }
 
 export interface PipelineHealthSummary {
@@ -326,6 +475,52 @@ export interface WalletAlphaWorkItem {
   attemptCount: number;
   lockedBy: string;
   lockExpiresAt: string;
+  priority: WalletAlphaWorkPriority;
+  priorityReason?: string;
+  pendingSince: string;
+}
+
+export type WalletAlphaWorkPriority = 0 | 1 | 2;
+
+export interface WalletAlphaWorkClassification {
+  priority: WalletAlphaWorkPriority;
+  reason: string;
+}
+
+/**
+ * Keep the latency lane fail closed: only a source-linked, controlled-flow entry
+ * whose critical token-risk evidence is both known and passed may enter it.
+ * Everything else is still durable, but remains in the elevated research lane.
+ */
+export function classifyWalletAlphaEntryWork(
+  signal: WalletEntrySignalEvidence
+): WalletAlphaWorkClassification {
+  const isSignalRelevant =
+    Boolean(signal.sourceSwapIdempotencyKey?.trim()) &&
+    signal.cohort !== "excluded-uncontrolled-flow" &&
+    signal.flowEvidence.controlledFlow === true &&
+    signal.flowEvidence.tokenRiskKnown === true &&
+    signal.flowEvidence.tokenRiskPassed === true;
+  return isSignalRelevant
+    ? { priority: 2, reason: "risk-passed-source-entry" }
+    : { priority: 1, reason: "entry-evidence" };
+}
+
+/** Read-only queue identity used to prefetch bounded admission evidence before leasing work. */
+export interface WalletAlphaWorkCandidate {
+  chain: ChainId;
+  walletAddress: string;
+  strategyVersion: string;
+  revision: number;
+  priority: WalletAlphaWorkPriority;
+  pendingSince: string;
+}
+
+export interface WalletAlphaAdmissionProbe extends WalletAlphaWorkCandidate {
+  /** Counts are capped at the configured admission threshold. */
+  tradeEventCount: number;
+  /** Counts are capped at the configured admission threshold. */
+  entryCount: number;
 }
 
 export interface WalletAlphaWorkClaimOptions {
@@ -333,12 +528,19 @@ export interface WalletAlphaWorkClaimOptions {
   workerId: string;
   limit?: number;
   leaseSeconds?: number;
+  minimumPriority?: WalletAlphaWorkPriority;
+  maximumPriority?: WalletAlphaWorkPriority;
 }
 
 export interface WalletAlphaWorkSummary {
   pending: number;
   processing: number;
   failed: number;
+  backgroundPending: number;
+  elevatedPending: number;
+  signalPending: number;
+  oldestPendingAt?: string;
+  oldestSignalPendingAt?: string;
 }
 
 export type WalletAlphaStatusCounts = Record<WalletAlphaScoreSnapshot["status"], number>;
@@ -488,6 +690,17 @@ export interface EvidenceRepository {
     snapshot: WalletPositionLedgerSnapshot
   ): Promise<WalletPositionLedgerWriteResult>;
   claimWalletAlphaWork(options: WalletAlphaWorkClaimOptions): Promise<WalletAlphaWorkItem[]>;
+  listWalletAlphaWorkCandidates(
+    strategyVersion: string,
+    limit?: number,
+    priorities?: Pick<WalletAlphaWorkClaimOptions, "minimumPriority" | "maximumPriority">
+  ): Promise<WalletAlphaWorkCandidate[]>;
+  probeWalletAlphaAdmission(
+    candidates: WalletAlphaWorkCandidate[],
+    minEntryObservedAt: string,
+    minimumTradeEvents: number,
+    minimumEntries: number
+  ): Promise<WalletAlphaAdmissionProbe[]>;
   completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean>;
   failWalletAlphaWork(
     item: WalletAlphaWorkItem,
@@ -502,6 +715,7 @@ export interface EvidenceRepository {
   ): Promise<WalletAlphaCoverageSummary>;
   saveWalletAlphaSignal(signal: WalletAlphaSignalEvidence): Promise<boolean>;
   saveWalletSignalOutcome(outcome: WalletSignalOutcomeEvidence): Promise<boolean>;
+  saveWalletSignalOutcomes(outcomes: WalletSignalOutcomeEvidence[]): Promise<number>;
   saveHypothesisRun(run: HypothesisRunEvidence): Promise<boolean>;
   upsertIngestionCursor(cursor: IngestionCursorEvidence): Promise<void>;
   getIngestionCursor(source: string, address: string): Promise<IngestionCursorEvidence | undefined>;
@@ -562,6 +776,27 @@ export interface EvidenceRepository {
 
 export interface CanonicalRepository {
   assertReady(): Promise<void>;
+  admitSolanaSignature(item: DurableSolanaSignature): Promise<boolean>;
+  listPendingSolanaSignatures(
+    provider: string,
+    address: string,
+    limit: number
+  ): Promise<DurableSolanaSignature[]>;
+  completeSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    completedAt?: string
+  ): Promise<boolean>;
+  getSolanaSignatureQueueSummary(provider?: string): Promise<DurableSolanaSignatureQueueSummary>;
+  listPendingSolanaFinalities(
+    limit: number,
+    minimumAgeSeconds: number
+  ): Promise<SolanaFinalityWorkItem[]>;
+  reconcileTerminalSolanaFinalityEvents(limit: number): Promise<SolanaFinalityBatchResult>;
+  recordSolanaFinalities(
+    results: Array<{ signature: string; result: SolanaFinalityResult }>
+  ): Promise<SolanaFinalityBatchResult>;
   insertChainEvent(event: CanonicalChainEventInput): Promise<boolean>;
   insertChainEvents(
     events: CanonicalChainEventInput[]
@@ -583,6 +818,40 @@ export interface CanonicalRepository {
     pipeline: string,
     partitionKey?: string
   ): Promise<PipelineWatermark | undefined>;
+  openIngestionCoverageIncident(
+    incident: IngestionCoverageIncidentOpenInput
+  ): Promise<IngestionCoverageIncident>;
+  listOpenIngestionCoverageIncidents(provider?: string): Promise<IngestionCoverageIncident[]>;
+  markIngestionCoverageIncidentRestart(
+    idempotencyKey: string,
+    phase: "attempted" | "completed" | "failed",
+    at: string,
+    error?: string
+  ): Promise<boolean>;
+  closeIngestionCoverageIncident(
+    idempotencyKey: string,
+    input: IngestionCoverageIncidentCloseInput
+  ): Promise<boolean>;
+  getOrCreateIngestionGapRepair(input: IngestionGapRepairCreateInput): Promise<IngestionGapRepair>;
+  stageIngestionGapRepairPage(input: IngestionGapRepairPageInput): Promise<IngestionGapRepair>;
+  listPendingIngestionGapRepairSignatures(
+    repairId: string,
+    limit: number
+  ): Promise<IngestionGapRepairSignature[]>;
+  completeIngestionGapRepairSignature(
+    repairId: string,
+    signature: string,
+    completedAt?: string
+  ): Promise<boolean>;
+  recordIngestionGapRepairError(
+    repairId: string,
+    phase: "collection" | "replay",
+    error: string
+  ): Promise<boolean>;
+  completeIngestionGapRepair(
+    repairId: string,
+    coveredThrough: { signature: string; slot: number; completedAt?: string }
+  ): Promise<boolean>;
   getPipelineHealth(): Promise<PipelineHealthSummary>;
   listWalletAlphaRankings(query?: WalletAlphaRankingQuery): Promise<WalletAlphaScoreSnapshot[]>;
   getWalletAlphaDetail(

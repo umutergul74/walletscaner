@@ -18,13 +18,22 @@
       "@memecoin-alpha/config": ["packages/config/src/index.ts"],
       "@memecoin-alpha/core": ["packages/core/src/index.ts"],
       "@memecoin-alpha/providers": ["packages/providers/src/index.ts"],
+      "@memecoin-alpha/providers/object-storage": ["packages/providers/src/object-storage.ts"],
       "@memecoin-alpha/scoring": ["packages/scoring/src/index.ts"],
       "@memecoin-alpha/backtesting": ["packages/backtesting/src/index.ts"],
       "@memecoin-alpha/paper-trading": ["packages/paper-trading/src/index.ts"],
-      "@memecoin-alpha/db": ["packages/db/src/index.ts"]
+      "@memecoin-alpha/db": ["packages/db/src/index.ts"],
+      "@memecoin-alpha/db/archive-store": ["packages/db/src/archive-store.ts"],
+      "@memecoin-alpha/db/archive-artifact": ["packages/db/src/archive-artifact.ts"],
+      "@memecoin-alpha/db/archive-retention": ["packages/db/src/archive-retention.ts"]
     }
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "scripts/**/*.ts", "vitest.config.ts"],
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "vitest.config.ts"
+  ],
   "exclude": ["node_modules", ".next", "dist"]
 }
-

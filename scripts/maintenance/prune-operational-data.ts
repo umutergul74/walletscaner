@@ -1,5 +1,9 @@
 import "dotenv/config";
 import pg from "pg";
+import {
+  archiveRetirementPolicyStatus,
+  retireVerifiedPayloadPartitions
+} from "@memecoin-alpha/db/archive-retention";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for operational maintenance.");
@@ -7,20 +11,27 @@ if (!databaseUrl) throw new Error("DATABASE_URL is required for operational main
 const priceRetentionDays = positiveInt(process.env.PRICE_OBSERVATION_RETENTION_DAYS, 2);
 const inboxRetentionDays = positiveInt(process.env.CHAIN_EVENT_RETENTION_DAYS, 3);
 const swapRetentionDays = positiveInt(process.env.SWAP_RETENTION_DAYS, 3);
+const signatureQueueRetentionDays = positiveInt(
+  process.env.SOLANA_SIGNATURE_QUEUE_RETENTION_DAYS,
+  3
+);
+const gapRepairSignatureRetentionDays = positiveInt(
+  process.env.SOLANA_GAP_REPAIR_SIGNATURE_RETENTION_DAYS,
+  3
+);
+const finalityRetentionDays = positiveInt(process.env.SOLANA_FINALITY_RETENTION_DAYS, 95);
 const rawPayloadRetentionHours = positiveInt(
   process.env.CHAIN_EVENT_RAW_PAYLOAD_RETENTION_HOURS,
   48
 );
 const scoreRetentionDays = positiveInt(process.env.WALLET_ALPHA_SCORE_RETENTION_DAYS, 7);
-const walletEvidenceRetentionDays = positiveInt(
-  process.env.WALLET_EVIDENCE_RETENTION_DAYS,
-  95
-);
+const walletEvidenceRetentionDays = positiveInt(process.env.WALLET_EVIDENCE_RETENTION_DAYS, 95);
 const rejectedWalletEvidenceRetentionDays = positiveInt(
   process.env.REJECTED_WALLET_EVIDENCE_RETENTION_DAYS,
   3
 );
 const batchSize = positiveInt(process.env.MAINTENANCE_DELETE_BATCH_SIZE, 5_000);
+const inboxBatchSize = positiveInt(process.env.MAINTENANCE_INBOX_DELETE_BATCH_SIZE, 500);
 const compactBatchSize = positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 500);
 const maxBatches = positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50);
 const maxRunSeconds = positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 30);
@@ -34,19 +45,32 @@ const payloadPartitionFutureDays = positiveInt(
   8
 );
 const dryRun = parseBoolean(process.env.MAINTENANCE_DRY_RUN, false);
+const archiveRetirementEnabled = parseBoolean(process.env.ARCHIVE_RETIREMENT_ENABLED, false);
+const archiveMinimumRemainingDays = positiveInt(
+  process.env.ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS,
+  7
+);
 const pool = new pg.Pool({
   connectionString: databaseUrl,
-  max: 1,
+  // One pinned session owns the advisory lock while the second connection
+  // performs bounded maintenance work. Session-level advisory locks must be
+  // released by the same PostgreSQL backend that acquired them.
+  max: 2,
   statement_timeout: inventoryTimeoutMs
 });
 let queryTimeoutCount = 0;
+const queryTimeoutsByStage: Record<string, number> = {};
+let lockClient: pg.PoolClient | undefined;
+let lockAcquired = false;
 
 try {
-  const lock = await pool.query<{ locked: boolean }>(
+  lockClient = await pool.connect();
+  const lock = await lockClient.query<{ locked: boolean }>(
     "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
     ["walletscaner-operational-maintenance"]
   );
-  if (!lock.rows[0]?.locked) {
+  lockAcquired = Boolean(lock.rows[0]?.locked);
+  if (!lockAcquired) {
     console.log(JSON.stringify({ type: "operational-maintenance", status: "skipped-lock-held" }));
     process.exitCode = 0;
   } else {
@@ -55,6 +79,9 @@ try {
       chain_event_payloads: boolean;
       chain_events: boolean;
       swaps: boolean;
+      solana_signature_queue: boolean;
+      ingestion_gap_repair_signatures: boolean;
+      solana_transaction_finality: boolean;
       wallet_alpha_scores: boolean;
       database_bytes: string;
     }>(
@@ -76,24 +103,43 @@ try {
          EXISTS(SELECT 1 FROM swaps
           WHERE observed_at < NOW() - make_interval(days => $5::integer))
            AS swaps,
-         EXISTS(SELECT 1 FROM wallet_alpha_scores score
-          WHERE score.calculated_at < NOW() - make_interval(days => $3::integer)
-            AND EXISTS (
-              SELECT 1 FROM wallet_alpha_scores newer
-              WHERE newer.chain = score.chain
-                AND newer.wallet_address = score.wallet_address
-                AND newer.strategy_version = score.strategy_version
-                AND newer.calculated_at > score.calculated_at
-            )) AS wallet_alpha_scores,
+         EXISTS(SELECT 1 FROM solana_signature_queue
+          WHERE status = 'completed'
+            AND completed_at < NOW() - make_interval(days => $7::integer))
+           AS solana_signature_queue,
+         EXISTS(
+           SELECT 1
+           FROM ingestion_gap_repair_signatures signature
+           JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
+           WHERE repair.status = 'completed'
+             AND signature.completed_at < NOW() - make_interval(days => $9::integer)
+         ) AS ingestion_gap_repair_signatures,
+         EXISTS(SELECT 1 FROM solana_transaction_finality
+          WHERE status <> 'pending'
+            AND updated_at < NOW() - make_interval(days => $8::integer))
+           AS solana_transaction_finality,
+         (
+           EXISTS(SELECT 1 FROM wallet_alpha_scores score
+            WHERE score.calculated_at < NOW() - make_interval(days => $6::integer))
+           OR EXISTS(SELECT 1 FROM wallet_alpha_score_supersessions supersession
+            WHERE supersession.calculated_at <
+                  NOW() - make_interval(days => $3::integer))
+         ) AS wallet_alpha_scores,
          pg_database_size(current_database())::text AS database_bytes`,
       [
         priceRetentionDays,
         inboxRetentionDays,
         scoreRetentionDays,
         rawPayloadRetentionHours,
-        swapRetentionDays
+        swapRetentionDays,
+        walletEvidenceRetentionDays,
+        signatureQueueRetentionDays,
+        finalityRetentionDays,
+        gapRepairSignatureRetentionDays
       ]
     );
+    const archivePolicy = await archiveRetirementPolicyStatus(pool, archiveMinimumRemainingDays);
+    const archiveMutationsEnabled = archiveRetirementEnabled && archivePolicy.ready;
     await pool.query("SELECT set_config('statement_timeout', $1, false)", [
       `${statementTimeoutMs}ms`
     ]);
@@ -102,7 +148,12 @@ try {
     let compactedChainEventPayloads = 0;
     let deletedChainEvents = 0;
     let deletedSwaps = 0;
+    let deletedSolanaSignatures = 0;
+    let deletedGapRepairSignatures = 0;
+    let deletedSolanaFinalities = 0;
     let deletedWalletAlphaScores = 0;
+    let deletedExpiredWalletAlphaScores = 0;
+    let deletedSupersededWalletAlphaScores = 0;
     let deletedRejectedWalletOutcomes = 0;
     let deletedRejectedWalletEntries = 0;
     let deletedWalletOutcomes = 0;
@@ -110,15 +161,22 @@ try {
     let deletedWalletTrades = 0;
     let deletedWalletEpisodes = 0;
     let retiredPayloadPartitions = 0;
+    let archiveBlockedPayloadPartitions = 0;
     let heldUnresolvedPayloads = 0;
     let retiredPricePartitions = 0;
     const maintenanceStartedAt = Date.now();
     const totalBudgetMs = maxRunSeconds * 1_000;
     if (!dryRun) {
       await ensurePayloadPartitions(payloadPartitionFutureDays);
-      const retired = await retirePayloadPartitions(inboxRetentionDays);
+      const retired = await retireVerifiedPayloadPartitions(
+        pool,
+        rawPayloadRetentionHours,
+        archiveRetirementEnabled,
+        archiveMinimumRemainingDays
+      );
       retiredPayloadPartitions = retired.partitions;
       heldUnresolvedPayloads = retired.heldPayloads;
+      archiveBlockedPayloadPartitions = retired.blockedPartitions;
       await ensurePricePartitions(payloadPartitionFutureDays);
       retiredPricePartitions = await retirePricePartitions(priceRetentionDays);
       deletedPriceObservations = await pruneInBatches(
@@ -133,7 +191,10 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         priceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.3
+        maintenanceStartedAt + totalBudgetMs * 0.3,
+        batchSize,
+        [],
+        "price-observations"
       );
       await pruneInBatches(
         `WITH doomed AS (
@@ -147,7 +208,10 @@ try {
          USING doomed
          WHERE target.idempotency_key = doomed.idempotency_key`,
         priceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.32
+        maintenanceStartedAt + totalBudgetMs * 0.32,
+        batchSize,
+        [],
+        "price-observation-keys"
       );
       deletedSwaps = await pruneInBatches(
         `WITH doomed AS (
@@ -161,47 +225,185 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         swapRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.45
+        maintenanceStartedAt + totalBudgetMs * 0.45,
+        batchSize,
+        [],
+        "swaps"
       );
-      deletedChainEvents = await pruneInBatches(
+      deletedSolanaSignatures = await pruneInBatches(
         `WITH doomed AS (
-           SELECT ctid FROM chain_event_inbox
-           WHERE status IN ('processed', 'rolled_back')
-             AND COALESCE(processed_at, received_at) <
-                 NOW() - make_interval(days => $1::integer)
-           ORDER BY COALESCE(processed_at, received_at)
+           SELECT provider, address, signature
+           FROM solana_signature_queue
+           WHERE status = 'completed'
+             AND completed_at < NOW() - make_interval(days => $1::integer)
+           ORDER BY completed_at, provider, address, signature
            LIMIT $2
            FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM solana_signature_queue AS target
+         USING doomed
+         WHERE target.provider = doomed.provider
+           AND target.address = doomed.address
+           AND target.signature = doomed.signature`,
+        signatureQueueRetentionDays,
+        maintenanceStartedAt + totalBudgetMs * 0.5,
+        batchSize,
+        [],
+        "solana-signature-queue"
+      );
+      deletedGapRepairSignatures = await pruneInBatches(
+        `WITH doomed AS (
+           SELECT signature.repair_id, signature.signature
+           FROM ingestion_gap_repair_signatures signature
+           JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
+           WHERE repair.status = 'completed'
+             AND signature.completed_at < NOW() - make_interval(days => $1::integer)
+           ORDER BY signature.completed_at, signature.repair_id, signature.signature
+           LIMIT $2
+           FOR UPDATE OF signature SKIP LOCKED
+         )
+         DELETE FROM ingestion_gap_repair_signatures AS target
+         USING doomed
+         WHERE target.repair_id = doomed.repair_id
+           AND target.signature = doomed.signature`,
+        gapRepairSignatureRetentionDays,
+        maintenanceStartedAt + totalBudgetMs * 0.51,
+        batchSize,
+        [],
+        "ingestion-gap-repair-signatures"
+      );
+      deletedSolanaFinalities = await pruneInBatches(
+        `WITH doomed AS (
+           SELECT chain, signature
+           FROM solana_transaction_finality
+           WHERE status <> 'pending'
+             AND updated_at < NOW() - make_interval(days => $1::integer)
+           ORDER BY updated_at, signature
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM solana_transaction_finality AS target
+         USING doomed
+         WHERE target.chain = doomed.chain
+           AND target.signature = doomed.signature`,
+        finalityRetentionDays,
+        maintenanceStartedAt + totalBudgetMs * 0.52,
+        batchSize,
+        [],
+        "solana-finality"
+      );
+      if (archiveMutationsEnabled) {
+        deletedChainEvents = await pruneInBatches(
+          `WITH eligible_archive AS MATERIALIZED (
+           SELECT archive.range_start, archive.range_end
+           FROM archive_segments AS archive
+           WHERE archive.source_kind = 'chain-event-payloads'
+             AND archive.status = 'verified'
+             AND archive.object_lock_evidence IN (
+               'api-verified', 'attested-default-policy'
+             )
+             AND archive.retain_until >
+                 NOW() + make_interval(days => $3::integer)
+             AND EXISTS (
+               SELECT 1
+               FROM chain_event_inbox AS candidate
+               WHERE candidate.status IN ('processed', 'rolled_back')
+                 AND candidate.received_at >= archive.range_start
+                 AND candidate.received_at < archive.range_end
+                 AND COALESCE(candidate.processed_at, candidate.received_at) <
+                     NOW() - make_interval(days => $1::integer)
+             )
+           ORDER BY archive.range_start
+           LIMIT 1
+         ), doomed AS (
+           SELECT candidate.ctid
+           FROM eligible_archive AS archive
+           CROSS JOIN LATERAL (
+             SELECT target.ctid
+             FROM chain_event_inbox AS target
+             WHERE target.status IN ('processed', 'rolled_back')
+               AND target.received_at >= archive.range_start
+               AND target.received_at < archive.range_end
+               AND COALESCE(target.processed_at, target.received_at) <
+                   NOW() - make_interval(days => $1::integer)
+             ORDER BY target.received_at, target.idempotency_key
+             LIMIT $2
+             FOR UPDATE OF target SKIP LOCKED
+           ) AS candidate
         )
          DELETE FROM chain_event_inbox AS target
          USING doomed
          WHERE target.ctid = doomed.ctid`,
-        inboxRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.52
-      );
-      compactedChainEventPayloads = await pruneInBatches(
-        `WITH candidates AS (
-           SELECT ctid, idempotency_key, payload_sha256
-           FROM chain_event_inbox
-           WHERE status = 'processed'
-             AND payload_compacted_at IS NULL
-             AND payload_sha256 IS NOT NULL
-             AND COALESCE(processed_at, received_at) <
+          inboxRetentionDays,
+          maintenanceStartedAt + totalBudgetMs * 0.52,
+          inboxBatchSize,
+          [archiveMinimumRemainingDays],
+          "chain-event-inbox"
+        );
+        compactedChainEventPayloads = await pruneInBatches(
+          `WITH eligible_archive AS MATERIALIZED (
+           SELECT archive.range_start, archive.range_end
+           FROM archive_segments AS archive
+           WHERE archive.source_kind = 'chain-event-payloads'
+             AND archive.status = 'verified'
+             AND archive.object_lock_evidence IN (
+               'api-verified', 'attested-default-policy'
+             )
+             AND archive.retain_until >
+                 NOW() + make_interval(days => $4::integer)
+             AND archive.range_start <
                  NOW() - make_interval(hours => $1::integer)
-             AND COALESCE(processed_at, received_at) >=
+             AND archive.range_end >
                  NOW() - make_interval(days => $3::integer)
-           ORDER BY COALESCE(processed_at, received_at), idempotency_key
-           LIMIT $2
-           FOR UPDATE SKIP LOCKED
+             AND EXISTS (
+               SELECT 1
+               FROM chain_event_inbox AS candidate
+               WHERE candidate.status = 'processed'
+                 AND candidate.payload_compacted_at IS NULL
+                 AND candidate.payload_sha256 IS NOT NULL
+                 AND candidate.received_at >= archive.range_start
+                 AND candidate.received_at < archive.range_end
+                 AND COALESCE(candidate.processed_at, candidate.received_at) <
+                     NOW() - make_interval(hours => $1::integer)
+                 AND COALESCE(candidate.processed_at, candidate.received_at) >=
+                     NOW() - make_interval(days => $3::integer)
+             )
+           ORDER BY archive.range_start
+           LIMIT 1
+         ), candidates AS MATERIALIZED (
+           SELECT candidate.ctid, candidate.idempotency_key,
+                  candidate.received_at, candidate.payload_sha256
+           FROM eligible_archive AS archive
+           CROSS JOIN LATERAL (
+             SELECT target.ctid, target.idempotency_key,
+                    target.received_at, target.payload_sha256,
+                    target.processed_at
+             FROM chain_event_inbox AS target
+             WHERE target.status = 'processed'
+               AND target.payload_compacted_at IS NULL
+               AND target.payload_sha256 IS NOT NULL
+               AND target.received_at >= archive.range_start
+               AND target.received_at < archive.range_end
+               AND COALESCE(target.processed_at, target.received_at) <
+                   NOW() - make_interval(hours => $1::integer)
+               AND COALESCE(target.processed_at, target.received_at) >=
+                   NOW() - make_interval(days => $3::integer)
+             ORDER BY COALESCE(target.processed_at, target.received_at),
+                      target.idempotency_key
+             LIMIT $2
+             FOR UPDATE OF target SKIP LOCKED
+           ) AS candidate
          ), retired_hot_payload AS (
            DELETE FROM chain_event_payloads AS payload
            USING candidates
-           WHERE payload.event_idempotency_key = candidates.idempotency_key
+           WHERE payload.received_at = candidates.received_at
+             AND payload.event_idempotency_key = candidates.idempotency_key
            RETURNING payload.event_idempotency_key
          ), retired_held_payload AS (
            DELETE FROM chain_event_payload_holds AS payload
            USING candidates
-           WHERE payload.event_idempotency_key = candidates.idempotency_key
+           WHERE payload.received_at = candidates.received_at
+             AND payload.event_idempotency_key = candidates.idempotency_key
            RETURNING payload.event_idempotency_key
          )
          UPDATE chain_event_inbox AS target
@@ -214,61 +416,18 @@ try {
          )
          FROM candidates
          WHERE target.ctid = candidates.ctid`,
-        rawPayloadRetentionHours,
-        maintenanceStartedAt + totalBudgetMs * 0.6,
-        compactBatchSize,
-        [inboxRetentionDays]
-      );
-      deletedRejectedWalletOutcomes = await pruneInBatches(
-        `WITH doomed AS (
-           SELECT outcome.ctid
-           FROM wallet_signal_outcomes AS outcome
-           JOIN wallet_entry_signals AS entry
-             ON entry.idempotency_key = outcome.entry_idempotency_key
-           WHERE entry.observed_at < NOW() - make_interval(days => $1::integer)
-             AND (
-               entry.cohort = 'excluded-uncontrolled-flow'
-               OR (
-                 entry.flow_evidence @> '{"tokenRiskKnown":true}'::jsonb
-                 AND NOT (entry.flow_evidence @> '{"tokenRiskPassed":true}'::jsonb)
-               )
-             )
-           ORDER BY entry.observed_at, outcome.idempotency_key
-           LIMIT $2
-           FOR UPDATE OF outcome SKIP LOCKED
-         )
-         DELETE FROM wallet_signal_outcomes AS target
-         USING doomed
-         WHERE target.ctid = doomed.ctid`,
-        rejectedWalletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.64
-      );
-      deletedRejectedWalletEntries = await pruneInBatches(
-        `WITH doomed AS (
-           SELECT entry.ctid
-           FROM wallet_entry_signals AS entry
-           WHERE entry.observed_at < NOW() - make_interval(days => $1::integer)
-             AND (
-               entry.cohort = 'excluded-uncontrolled-flow'
-               OR (
-                 entry.flow_evidence @> '{"tokenRiskKnown":true}'::jsonb
-                 AND NOT (entry.flow_evidence @> '{"tokenRiskPassed":true}'::jsonb)
-               )
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM wallet_signal_outcomes AS outcome
-               WHERE outcome.entry_idempotency_key = entry.idempotency_key
-             )
-           ORDER BY entry.observed_at, entry.idempotency_key
-           LIMIT $2
-           FOR UPDATE OF entry SKIP LOCKED
-         )
-         DELETE FROM wallet_entry_signals AS target
-         USING doomed
-         WHERE target.ctid = doomed.ctid`,
-        rejectedWalletEvidenceRetentionDays,
+          rawPayloadRetentionHours,
+          maintenanceStartedAt + totalBudgetMs * 0.6,
+          compactBatchSize,
+          [inboxRetentionDays, archiveMinimumRemainingDays],
+          "chain-event-payloads"
+        );
+      }
+      const rejectedEvidence = await pruneRejectedWalletEvidence(
         maintenanceStartedAt + totalBudgetMs * 0.68
       );
+      deletedRejectedWalletOutcomes = rejectedEvidence.outcomes;
+      deletedRejectedWalletEntries = rejectedEvidence.entries;
       deletedWalletOutcomes = await pruneInBatches(
         `WITH doomed AS (
            SELECT ctid
@@ -282,7 +441,10 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.72
+        maintenanceStartedAt + totalBudgetMs * 0.72,
+        batchSize,
+        [],
+        "wallet-outcomes"
       );
       deletedWalletEntries = await pruneInBatches(
         `WITH doomed AS (
@@ -301,7 +463,10 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.76
+        maintenanceStartedAt + totalBudgetMs * 0.76,
+        batchSize,
+        [],
+        "wallet-entries"
       );
       deletedWalletTrades = await pruneInBatches(
         `WITH doomed AS (
@@ -327,7 +492,10 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.88
+        maintenanceStartedAt + totalBudgetMs * 0.88,
+        batchSize,
+        [],
+        "wallet-trades"
       );
       deletedWalletEpisodes = await pruneInBatches(
         `WITH doomed AS (
@@ -344,25 +512,16 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.94
+        maintenanceStartedAt + totalBudgetMs * 0.94,
+        batchSize,
+        [],
+        "wallet-episodes"
       );
-      deletedWalletAlphaScores = await pruneInBatches(
+      deletedExpiredWalletAlphaScores = await pruneInBatches(
         `WITH doomed AS (
            SELECT score.ctid
-           FROM wallet_alpha_scores score
-           WHERE (
-               score.calculated_at < NOW() - make_interval(days => $3::integer)
-               OR (
-                 score.calculated_at < NOW() - make_interval(days => $1::integer)
-                 AND EXISTS (
-                   SELECT 1 FROM wallet_alpha_scores newer
-                   WHERE newer.chain = score.chain
-                     AND newer.wallet_address = score.wallet_address
-                     AND newer.strategy_version = score.strategy_version
-                     AND newer.calculated_at > score.calculated_at
-                 )
-               )
-             )
+           FROM wallet_alpha_scores AS score
+           WHERE score.calculated_at < NOW() - make_interval(days => $1::integer)
            ORDER BY score.calculated_at
            LIMIT $2
            FOR UPDATE SKIP LOCKED
@@ -370,11 +529,46 @@ try {
          DELETE FROM wallet_alpha_scores AS target
          USING doomed
          WHERE target.ctid = doomed.ctid`,
+        walletEvidenceRetentionDays,
+        maintenanceStartedAt + totalBudgetMs,
+        inboxBatchSize,
+        [],
+        "wallet-alpha-scores-hard-expiry"
+      );
+      deletedSupersededWalletAlphaScores = await pruneInBatches(
+        `WITH doomed AS (
+           SELECT
+             supersession.chain,
+             supersession.wallet_address,
+             supersession.strategy_version,
+             supersession.calculated_at
+           FROM wallet_alpha_score_supersessions AS supersession
+           JOIN wallet_alpha_scores AS score
+             ON score.chain = supersession.chain
+            AND score.wallet_address = supersession.wallet_address
+            AND score.strategy_version = supersession.strategy_version
+            AND score.calculated_at = supersession.calculated_at
+           WHERE supersession.calculated_at <
+                 NOW() - make_interval(days => $1::integer)
+           ORDER BY supersession.calculated_at, supersession.chain,
+                    supersession.wallet_address, supersession.strategy_version
+           LIMIT $2
+           FOR UPDATE OF score SKIP LOCKED
+         )
+         DELETE FROM wallet_alpha_scores AS target
+         USING doomed
+         WHERE target.chain = doomed.chain
+           AND target.wallet_address = doomed.wallet_address
+           AND target.strategy_version = doomed.strategy_version
+           AND target.calculated_at = doomed.calculated_at`,
         scoreRetentionDays,
         maintenanceStartedAt + totalBudgetMs,
-        batchSize,
-        [walletEvidenceRetentionDays]
+        inboxBatchSize,
+        [],
+        "wallet-alpha-scores-superseded"
       );
+      deletedWalletAlphaScores =
+        deletedExpiredWalletAlphaScores + deletedSupersededWalletAlphaScores;
     }
 
     const priceRetentionState = await pool.query<{
@@ -429,6 +623,9 @@ try {
           priceObservations: priceRetentionDays,
           processedChainEvents: inboxRetentionDays,
           entryCandidateSwaps: swapRetentionDays,
+          completedSolanaSignatures: signatureQueueRetentionDays,
+          completedGapRepairSignatures: gapRepairSignatureRetentionDays,
+          solanaFinality: finalityRetentionDays,
           rawChainEventPayloadHours: rawPayloadRetentionHours,
           walletAlphaScores: scoreRetentionDays,
           walletEvidence: walletEvidenceRetentionDays,
@@ -439,14 +636,32 @@ try {
           chainEventPayloads: Boolean(eligible.rows[0]?.chain_event_payloads),
           chainEvents: Boolean(eligible.rows[0]?.chain_events),
           swaps: Boolean(eligible.rows[0]?.swaps),
+          solanaSignatureQueue: Boolean(eligible.rows[0]?.solana_signature_queue),
+          gapRepairSignatures: Boolean(
+            eligible.rows[0]?.ingestion_gap_repair_signatures
+          ),
+          solanaFinality: Boolean(eligible.rows[0]?.solana_transaction_finality),
           walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores)
+        },
+        archiveRetirement: {
+          runtimeEnabled: archiveRetirementEnabled,
+          policyReady: archivePolicy.ready,
+          mutationsEnabled: archiveMutationsEnabled,
+          activatedAt: archivePolicy.activatedAt ?? null,
+          futureCanaryRangeStart: archivePolicy.futureCanaryRangeStart ?? null,
+          retirementEnabledAt: archivePolicy.retirementEnabledAt ?? null
         },
         deleted: {
           priceObservations: deletedPriceObservations,
           compactedChainEventPayloads,
           chainEvents: deletedChainEvents,
           swaps: deletedSwaps,
+          solanaSignatures: deletedSolanaSignatures,
+          gapRepairSignatures: deletedGapRepairSignatures,
+          solanaFinalities: deletedSolanaFinalities,
           walletAlphaScores: deletedWalletAlphaScores,
+          walletAlphaScoresHardExpiry: deletedExpiredWalletAlphaScores,
+          walletAlphaScoresSuperseded: deletedSupersededWalletAlphaScores,
           rejectedWalletOutcomes: deletedRejectedWalletOutcomes,
           rejectedWalletEntries: deletedRejectedWalletEntries,
           walletOutcomes: deletedWalletOutcomes,
@@ -455,7 +670,8 @@ try {
           walletEpisodes: deletedWalletEpisodes,
           retiredPricePartitions,
           retiredPayloadPartitions,
-          heldUnresolvedPayloads
+          heldUnresolvedPayloads,
+          archiveBlockedPayloadPartitions
         },
         databaseBytes: Number(eligible.rows[0]?.database_bytes ?? 0),
         priceRetention: {
@@ -468,20 +684,104 @@ try {
           lagSeconds: Number(chainPayloadState.rows[0]?.compaction_lag_seconds ?? 0)
         },
         batchSize,
+        inboxBatchSize,
         compactBatchSize,
         maxBatches,
         maxRunSeconds,
         statementTimeoutMs,
         inventoryTimeoutMs,
-        queryTimeoutCount
+        queryTimeoutCount,
+        queryTimeoutsByStage
       })
     );
-    await pool.query("SELECT pg_advisory_unlock(hashtext($1))", [
-      "walletscaner-operational-maintenance"
-    ]);
   }
 } finally {
-  await pool.end();
+  try {
+    if (lockClient && lockAcquired) {
+      await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        "walletscaner-operational-maintenance"
+      ]);
+    }
+  } finally {
+    lockClient?.release();
+    await pool.end();
+  }
+}
+
+async function pruneRejectedWalletEvidence(
+  deadline: number
+): Promise<{ outcomes: number; entries: number }> {
+  let deletedOutcomes = 0;
+  let deletedEntries = 0;
+  const client = await pool.connect();
+  let destroyClient = false;
+  try {
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      if (Date.now() >= deadline) break;
+      let stage = "rejected-wallet-selection";
+      try {
+        await client.query("BEGIN");
+        const selected = await client.query<{ idempotency_key: string }>(
+          `SELECT entry.idempotency_key
+           FROM wallet_entry_signals AS entry
+           WHERE entry.observed_at < NOW() - make_interval(days => $1::integer)
+             AND (
+               entry.cohort = 'excluded-uncontrolled-flow'
+               OR (
+                 entry.flow_evidence @> '{"tokenRiskKnown":true}'::jsonb
+                 AND NOT (entry.flow_evidence @> '{"tokenRiskPassed":true}'::jsonb)
+               )
+             )
+           ORDER BY entry.observed_at, entry.idempotency_key
+           LIMIT $2
+           FOR UPDATE OF entry SKIP LOCKED`,
+          [rejectedWalletEvidenceRetentionDays, inboxBatchSize]
+        );
+        const entryKeys = selected.rows.map((row) => row.idempotency_key);
+        if (entryKeys.length === 0) {
+          await client.query("COMMIT");
+          break;
+        }
+
+        stage = "rejected-wallet-outcomes";
+        const outcomes = await client.query(
+          `DELETE FROM wallet_signal_outcomes
+           WHERE entry_idempotency_key = ANY($1::text[])`,
+          [entryKeys]
+        );
+
+        stage = "rejected-wallet-entries";
+        const entries = await client.query(
+          `DELETE FROM wallet_entry_signals
+           WHERE idempotency_key = ANY($1::text[])`,
+          [entryKeys]
+        );
+        if ((entries.rowCount ?? 0) !== entryKeys.length) {
+          throw new Error(
+            `Rejected-evidence retention selected ${entryKeys.length} entries but deleted ${entries.rowCount ?? 0}.`
+          );
+        }
+        await client.query("COMMIT");
+        deletedOutcomes += outcomes.rowCount ?? 0;
+        deletedEntries += entries.rowCount ?? 0;
+        if (entryKeys.length < inboxBatchSize) break;
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          destroyClient = true;
+        }
+        if (isStatementTimeout(error)) {
+          recordStageTimeout(stage);
+          break;
+        }
+        throw error;
+      }
+    }
+  } finally {
+    client.release(destroyClient);
+  }
+  return { outcomes: deletedOutcomes, entries: deletedEntries };
 }
 
 async function pruneInBatches(
@@ -489,21 +789,18 @@ async function pruneInBatches(
   retentionValue: number,
   deadline: number,
   mutationBatchSize = batchSize,
-  additionalParameters: number[] = []
+  additionalParameters: number[] = [],
+  stage = "unknown"
 ): Promise<number> {
   let deleted = 0;
   for (let batch = 0; batch < maxBatches; batch += 1) {
     if (Date.now() >= deadline) break;
     let result: pg.QueryResult;
     try {
-      result = await pool.query(sql, [
-        retentionValue,
-        mutationBatchSize,
-        ...additionalParameters
-      ]);
+      result = await pool.query(sql, [retentionValue, mutationBatchSize, ...additionalParameters]);
     } catch (error) {
       if (isStatementTimeout(error)) {
-        queryTimeoutCount += 1;
+        recordStageTimeout(stage);
         break;
       }
       throw error;
@@ -513,6 +810,11 @@ async function pruneInBatches(
     if (rows < mutationBatchSize) break;
   }
   return deleted;
+}
+
+function recordStageTimeout(stage: string): void {
+  queryTimeoutCount += 1;
+  queryTimeoutsByStage[stage] = (queryTimeoutsByStage[stage] ?? 0) + 1;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -527,12 +829,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 }
 
 function isStatementTimeout(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "57014"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "57014";
 }
 
 async function ensurePayloadPartitions(futureDays: number): Promise<void> {
@@ -593,52 +890,6 @@ async function retirePricePartitions(retentionDays: number): Promise<number> {
   return partitions;
 }
 
-async function retirePayloadPartitions(
-  retentionDays: number
-): Promise<{ partitions: number; heldPayloads: number }> {
-  const result = await pool.query<{ relname: string }>(
-    `SELECT child.relname
-     FROM pg_inherits
-     JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
-     JOIN pg_class child ON child.oid = pg_inherits.inhrelid
-     WHERE parent.oid = 'chain_event_payloads'::regclass
-     ORDER BY child.relname`
-  );
-  const cutoff = addUtcDays(utcDayStart(new Date()), -Math.max(retentionDays, 1));
-  let partitions = 0;
-  let heldPayloads = 0;
-  for (const row of result.rows) {
-    const lower = payloadPartitionDate(row.relname);
-    if (!lower || addUtcDays(lower, 1).getTime() > cutoff.getTime()) continue;
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const held = await client.query(
-        `INSERT INTO chain_event_payload_holds (
-           event_idempotency_key, received_at, payload, payload_sha256
-         )
-         SELECT payload.event_idempotency_key, payload.received_at,
-                payload.payload, payload.payload_sha256
-         FROM ${row.relname} AS payload
-         JOIN chain_event_inbox AS event
-           ON event.idempotency_key = payload.event_idempotency_key
-         WHERE event.status NOT IN ('processed', 'rolled_back')
-         ON CONFLICT (event_idempotency_key) DO NOTHING`
-      );
-      await client.query(`DROP TABLE ${row.relname}`);
-      await client.query("COMMIT");
-      partitions += 1;
-      heldPayloads += held.rowCount ?? 0;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-  return { partitions, heldPayloads };
-}
-
 function payloadPartitionName(date: Date): string {
   return `chain_event_payloads_${date.toISOString().slice(0, 10).replaceAll("-", "")}`;
 }
@@ -649,13 +900,6 @@ function pricePartitionName(date: Date): string {
 
 function pricePartitionDate(name: string): Date | undefined {
   const match = /^price_observations_(\d{4})(\d{2})(\d{2})$/.exec(name);
-  if (!match) return undefined;
-  const date = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function payloadPartitionDate(name: string): Date | undefined {
-  const match = /^chain_event_payloads_(\d{4})(\d{2})(\d{2})$/.exec(name);
   if (!match) return undefined;
   const date = new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00.000Z`);
   return Number.isNaN(date.getTime()) ? undefined : date;

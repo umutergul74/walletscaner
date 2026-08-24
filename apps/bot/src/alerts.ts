@@ -56,34 +56,95 @@ export function formatWalletAlphaAlert(signal: WalletAlphaSignalEvidence): strin
 }
 
 export function formatQualifiedPoolAlert(pool: QualifiedPoolNotification): string {
+  const strict = pool.qualificationVersion !== undefined;
   return [
-    "🆕 Nitelikli yeni memtoken",
+    strict ? "🔬 Sıkı filtreyi geçen yeni token adayı" : "🆕 Yeni token araştırma adayı",
     `Token: ${pool.tokenSymbol} — ${pool.tokenName}`,
     `Mint: ${pool.tokenAddress}`,
     `Pool: ${pool.poolAddress}`,
     `DEX/Program: ${pool.dex}`,
     `Likidite: ${formatUsd(pool.liquidityUsd)}`,
     `5 dk hacim: ${formatUsd(pool.volume5mUsd)}`,
+    ...(pool.poolAgeMinutes !== undefined
+      ? [`Havuz yaşı: ${pool.poolAgeMinutes.toFixed(1)} dk`]
+      : []),
+    ...(pool.buys5m !== undefined && pool.sells5m !== undefined
+      ? [`5 dk akış: ${pool.buys5m} alış / ${pool.sells5m} satış`]
+      : []),
+    ...(pool.buyShare5m !== undefined && pool.volumeLiquidityRatio !== undefined
+      ? [
+          `Alış payı: ${formatPercent(pool.buyShare5m * 100)} | Hacim/likidite: ${pool.volumeLiquidityRatio.toFixed(2)}`
+        ]
+      : []),
+    ...(pool.top10HolderPercent !== undefined
+      ? [`Top-10 holder yoğunluğu: ${formatPercent(pool.top10HolderPercent)}`]
+      : []),
     ...(pool.priceUsd !== undefined ? [`Fiyat: ${formatUsd(pool.priceUsd, 8)}`] : []),
     ...(pool.marketCapUsd !== undefined ? [`Market cap: ${formatUsd(pool.marketCapUsd)}`] : []),
-    `Risk: geçti (skor ${pool.riskScore.toFixed(0)}, güven ${pool.riskConfidence.toFixed(0)})`,
+    `Token risk skoru: ${pool.riskScore.toFixed(0)}/100 (düşük daha iyi)`,
+    `Risk kanıt kapsamı: ${pool.riskConfidence.toFixed(0)}/100 (kâr olasılığı değildir)`,
+    ...(pool.qualificationVersion ? [`Filtre sürümü: ${pool.qualificationVersion}`] : []),
     `DexScreener: https://dexscreener.com/solana/${pool.poolAddress}`,
     "",
-    "Araştırma bildirimi; finansal tavsiye değildir. Canlı işlem kapalıdır."
+    strict
+      ? "Future-only araştırma/paper adayıdır; kanıtlanmış alpha veya alım tavsiyesi değildir."
+      : "Araştırma bildirimi; finansal tavsiye değildir. Canlı işlem kapalıdır."
   ].join("\n");
 }
 
 export function formatPipelineStatusAlert(status: PipelineStatusNotification): string {
+  if (status.coverageTransition) {
+    const incident = status.coverageTransition;
+    const reconciled = incident.transition === "coverage-reconciled";
+    const recovered = incident.transition !== "opened";
+    return [
+      recovered
+        ? reconciled
+          ? "✅ Solana discovery gap'i doğrulanarak onarıldı"
+          : "✅ Solana discovery transportu yeniden sağlıklı"
+        : "🚨 Solana discovery coverage incident",
+      `Pipeline: ${status.pipelineStatus.toUpperCase()}`,
+      `Program: ${incident.programAddress}`,
+      `Provider: ${incident.provider}`,
+      `Neden: ${incident.reason}`,
+      `Gap başlangıcı: ${incident.gapStartedAt}`,
+      `Geçiş zamanı: ${incident.transitionAt}`,
+      ...(incident.clusterSlot !== undefined
+        ? [
+            `Cluster/source slot: ${incident.clusterSlot.toLocaleString("en-US")} / ${
+              incident.sourceSlot?.toLocaleString("en-US") ?? "bilinmiyor"
+            }`
+          ]
+        : []),
+      ...(incident.slotLag !== undefined ? [`Head lag: ${incident.slotLag} slot`] : []),
+      ...(incident.silenceMs !== undefined
+        ? [`Ham WS sessizliği: ${(incident.silenceMs / 1_000).toFixed(1)} sn`]
+        : []),
+      "",
+      recovered
+        ? reconciled
+          ? "Dayanıklı oldest-first replay cursor sınırına ulaştı ve bağımsız chain head kontrolü eşleşti; bu aralık coverage açısından uzlaştırıldı."
+          : "Canlı taşıma düzeldi; kayıtlı gap complete sayılmadı ve bu aralık alpha coverage dışıdır."
+        : "Bu aralık alpha coverage dışıdır; eksik dönem complete sayılmayacaktır.",
+      "Observe-only mod; canlı işlem kapalıdır."
+    ].join("\n");
+  }
   const lastPool = formatAge(status.lastPoolAgeSeconds);
   const lastTrade = formatAge(status.lastWalletTradeAgeSeconds);
+  const coverageIncidents = status.openCoverageIncidents ?? [];
   return [
     `📊 Walletscaner durum: ${status.pipelineStatus.toUpperCase()}`,
     `Inbox backlog / dead-letter: ${status.inboxBacklog} / ${status.deadLetters}`,
     `Alpha iş kuyruğu: ${status.alphaQueuePending.toLocaleString("en-US")}`,
     `Son 24s sinyal: ${status.signals24h}`,
-    `Son 24s nitelikli token bildirimi: ${status.qualifiedPools24h}`,
+    `Son 24s sıkı filtre token adayı: ${status.qualifiedPools24h}`,
     `Son pool yaşı: ${lastPool}`,
     `Son wallet trade yaşı: ${lastTrade}`,
+    `Açık discovery coverage incident: ${status.openCoverageIncidentCount ?? 0}`,
+    ...coverageIncidents.map(
+      (incident) =>
+        `Coverage dışı: ${shortAddress(incident.programAddress)} | gap ${incident.gapStartedAt} | ${incident.reason}`
+    ),
     `Veritabanı: ${(status.databaseBytes / 1024 ** 3).toFixed(2)} GiB`,
     "",
     "Observe-only mod; canlı işlem kapalıdır."
@@ -175,6 +236,10 @@ function formatSignedUsd(value: number): string {
 
 function formatSignedPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
 }
 
 function shortAddress(address: string): string {

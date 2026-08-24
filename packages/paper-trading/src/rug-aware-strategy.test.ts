@@ -5,7 +5,10 @@ import {
   decidePaperPosition,
   defaultRugAwarePaperConfig,
   QUALIFIED_POOL_PAPER_V2_STRATEGY_VERSION,
+  QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION,
+  paperQualificationVersionForStrategy,
   rugAwarePaperConfigForVersion,
+  strictFlowRugAwarePaperConfig,
   validatePaperEntry,
   type PaperMarketSnapshot,
   type PaperPositionState
@@ -177,5 +180,44 @@ describe("rug-aware paper strategy", () => {
       closeAfterFill: false,
       reason: "capital_recovery"
     });
+  });
+
+  it("keeps strict-flow v3 isolated and rejects one-sided or overheated confirmation", () => {
+    const config = rugAwarePaperConfigForVersion(QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION);
+    expect(config).toBe(strictFlowRugAwarePaperConfig);
+    expect(paperQualificationVersionForStrategy(QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION)).toBe(
+      "strict-flow-v2-20260817"
+    );
+    const strictMarket = {
+      ...healthyMarket,
+      liquidityUsd: 20_000,
+      volume5mUsd: 8_000,
+      buys5m: 11,
+      sells5m: 9
+    };
+    expect(
+      validatePaperEntry({
+        signalObservedAt: "2026-07-16T12:00:00.000Z",
+        signalLiquidityUsd: 20_000,
+        snapshot: strictMarket,
+        config
+      })
+    ).toBeUndefined();
+    expect(
+      validatePaperEntry({
+        signalObservedAt: "2026-07-16T12:00:00.000Z",
+        signalLiquidityUsd: 20_000,
+        snapshot: { ...strictMarket, buys5m: 18, sells5m: 2 },
+        config
+      })
+    ).toBe("entry_buy_share_too_high");
+    expect(
+      validatePaperEntry({
+        signalObservedAt: "2026-07-16T12:00:00.000Z",
+        signalLiquidityUsd: 20_000,
+        snapshot: { ...strictMarket, volume5mUsd: 12_000 },
+        config
+      })
+    ).toBe("entry_turnover_too_high");
   });
 });

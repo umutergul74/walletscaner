@@ -1,0 +1,19 @@
+{
+  "description": "Walletscaner repository safety boundaries for shell and file-edit tools.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch|Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && node \"$root/.codex/hooks/pre-tool-use-guard.mjs\"",
+            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"$root = (git rev-parse --show-toplevel).Trim(); node (Join-Path $root '.codex/hooks/pre-tool-use-guard.mjs')\"",
+            "timeout": 5,
+            "statusMessage": "Checking Walletscaner safety boundaries"
+          }
+        ]
+      }
+    ]
+  }
+}

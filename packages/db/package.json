@@ -4,7 +4,13 @@
   "type": "module",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./archive-store": "./src/archive-store.ts",
+    "./archive-artifact": "./src/archive-artifact.ts",
+    "./archive-retention": "./src/archive-retention.ts",
+    "./immutable-file-archive": "./src/immutable-file-archive.ts"
+  },
+  "dependencies": {
+    "pg-query-stream": "4.17.0"
   }
 }
-

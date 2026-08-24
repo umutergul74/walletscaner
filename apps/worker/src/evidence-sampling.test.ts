@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   chunksOf,
+  classifyMissingExactPair,
   compactDexScreenerPair,
   dexScreenerObservationSignature,
-  sampleBucketStart
+  groupEvidenceMarkets,
+  sampleBucketStart,
+  selectEvidencePair,
+  shouldPersistOutcomeTransition,
+  walletOutcomeLifecycleKey
 } from "./evidence-sampling";
 
 describe("evidence sampling", () => {
@@ -59,5 +64,114 @@ describe("evidence sampling", () => {
         30
       ).map((part) => part.length)
     ).toEqual([30, 30, 1]);
+  });
+
+  it("fails closed when the entry's exact pool is absent", () => {
+    const pairs = [
+      {
+        pairAddress: "PoolOther",
+        baseToken: { address: "Token111" },
+        liquidity: { usd: 1_000_000 }
+      },
+      {
+        pairAddress: "PoolExact",
+        baseToken: { address: "Token111" },
+        liquidity: { usd: 10_000 }
+      }
+    ];
+
+    expect(selectEvidencePair(pairs, "PoolExact")?.pairAddress).toBe("PoolExact");
+    expect(selectEvidencePair(pairs, "PoolMissing")).toBeUndefined();
+    expect(selectEvidencePair(pairs)?.pairAddress).toBe("PoolOther");
+  });
+
+  it("keeps same-mint entries separated by exact execution pool", () => {
+    const groups = groupEvidenceMarkets([
+      { id: "a", tokenAddress: "Token111", poolAddress: "PoolA" },
+      { id: "b", tokenAddress: "Token111", poolAddress: "PoolB" },
+      { id: "c", tokenAddress: "Token111", poolAddress: "PoolA" },
+      { id: "d", tokenAddress: "Token222" }
+    ]);
+
+    expect(groups).toEqual([
+      {
+        tokenAddress: "Token111",
+        poolAddress: "PoolA",
+        entries: [
+          { id: "a", tokenAddress: "Token111", poolAddress: "PoolA" },
+          { id: "c", tokenAddress: "Token111", poolAddress: "PoolA" }
+        ]
+      },
+      {
+        tokenAddress: "Token111",
+        poolAddress: "PoolB",
+        entries: [{ id: "b", tokenAddress: "Token111", poolAddress: "PoolB" }]
+      },
+      {
+        tokenAddress: "Token222",
+        entries: [{ id: "d", tokenAddress: "Token222" }]
+      }
+    ]);
+  });
+
+  it("queues only monotonic outcome lifecycle transitions", () => {
+    expect(shouldPersistOutcomeTransition(undefined, "provisional")).toBe(true);
+    expect(shouldPersistOutcomeTransition("provisional", "provisional")).toBe(false);
+    expect(shouldPersistOutcomeTransition("provisional", "unresolved")).toBe(true);
+    expect(shouldPersistOutcomeTransition("provisional", "mature")).toBe(true);
+    expect(shouldPersistOutcomeTransition("unresolved", "mature")).toBe(true);
+    expect(shouldPersistOutcomeTransition("mature", "unresolved")).toBe(false);
+    expect(
+      walletOutcomeLifecycleKey({
+        entryIdempotencyKey: "entry",
+        horizonMinutes: 20,
+        exitStrategy: "fixed-horizon",
+        strategyVersion: "evidence-v1"
+      })
+    ).toBe("entry:20:fixed-horizon:evidence-v1");
+  });
+
+  it("requires repeated exact-pair absence after last-sellable evidence before a rug", () => {
+    const live = {
+      idempotencyKey: "live",
+      chain: "solana" as const,
+      tokenAddress: "Token111",
+      poolAddress: "Pool111",
+      priceUsd: 1,
+      liquidityUsd: 10_000,
+      rugged: false,
+      signature: "live",
+      slot: 1,
+      provider: "dexscreener",
+      observedAt: "2026-08-23T00:00:00.000Z",
+      strategyVersion: "evidence-v1",
+      raw: { marketState: "live", marketExecutable: true }
+    };
+    const missing = (index: number) => ({
+      ...live,
+      idempotencyKey: `missing-${index}`,
+      priceUsd: 0,
+      liquidityUsd: 0,
+      observedAt: `2026-08-23T00:0${index}:00.000Z`,
+      raw: { marketState: "pair-missing-confirmed", marketExecutable: false }
+    });
+
+    expect(classifyMissingExactPair([live], "Pool111", 3)).toMatchObject({
+      missingStreak: 1,
+      rugged: false,
+      lastSellablePriceUsd: 1
+    });
+    expect(classifyMissingExactPair([live, missing(1)], "Pool111", 3)).toMatchObject({
+      missingStreak: 2,
+      rugged: false
+    });
+    expect(classifyMissingExactPair([live, missing(1), missing(2)], "Pool111", 3)).toMatchObject({
+      missingStreak: 3,
+      rugged: true
+    });
+    expect(classifyMissingExactPair([], "Pool111", 3)).toMatchObject({
+      missingStreak: 1,
+      rugged: false
+    });
   });
 });

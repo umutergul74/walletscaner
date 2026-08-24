@@ -28,7 +28,8 @@ describe("Solana token risk", () => {
       },
       supplyRawAmount: "1000000",
       largestRawAmounts: ["200000", "100000", "50000"],
-      maximumTopHolderPercent: 35
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
     });
 
     expect(result).toMatchObject({
@@ -45,7 +46,8 @@ describe("Solana token risk", () => {
       asset: { id: "Mint111", token_info: {} },
       supplyRawAmount: "1000000",
       largestRawAmounts: ["100000"],
-      maximumTopHolderPercent: 35
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
     });
 
     expect(result.known).toBe(false);
@@ -58,7 +60,8 @@ describe("Solana token risk", () => {
       asset: { token_info: { mint_authority: null, freeze_authority: null } },
       supplyRawAmount: "18446744073709551615",
       largestRawAmounts: ["1844674407370955161"],
-      maximumTopHolderPercent: 35
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
     });
 
     expect(result.topHolderPercent).toBeCloseTo(10, 2);
@@ -94,6 +97,7 @@ describe("Solana token risk", () => {
             ? { value: { amount: "1000000" } }
             : {
                 value: {
+                  owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                   data: {
                     parsed: {
                       info: { mintAuthority: null, freezeAuthority: null, decimals: 6 }
@@ -116,5 +120,57 @@ describe("Solana token risk", () => {
 
     expect(methods.sort()).toEqual(["getAccountInfo", "getTokenLargestAccounts", "getTokenSupply"]);
     expect(result).toMatchObject({ known: true, passed: true, topHolderPercent: 20 });
+  });
+
+  it("fails closed on transfer-changing Token-2022 mint extensions", async () => {
+    const result = evaluateSolanaTokenRisk({
+      asset: { token_info: { mint_authority: null, freeze_authority: null } },
+      supplyRawAmount: "1000000",
+      largestRawAmounts: ["100000", "50000"],
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      tokenExtensions: [
+        { extension: "transferFeeConfig", transferFeeBasisPoints: 500 },
+        { extension: "permanentDelegate", delegate: "Delegate111" }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      known: true,
+      passed: false,
+      tokenProgram: "token-2022",
+      tokenExtensionEvidenceKnown: true,
+      blockingTokenExtensions: ["permanentdelegate", "transferfeeconfig"]
+    });
+  });
+
+  it("fails closed when a Token-2022 RPC omits extension evidence", () => {
+    const result = evaluateSolanaTokenRisk({
+      asset: { token_info: { mint_authority: null, freeze_authority: null } },
+      supplyRawAmount: "1000000",
+      largestRawAmounts: ["100000"],
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+    });
+
+    expect(result).toMatchObject({
+      known: false,
+      passed: false,
+      tokenProgram: "token-2022",
+      tokenExtensionEvidenceKnown: false
+    });
+  });
+
+  it("allows only reviewed non-transfer-changing Token-2022 extensions", () => {
+    const result = evaluateSolanaTokenRisk({
+      asset: { token_info: { mint_authority: null, freeze_authority: null } },
+      supplyRawAmount: "1000000",
+      largestRawAmounts: ["100000"],
+      maximumTopHolderPercent: 35,
+      tokenProgramOwner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      tokenExtensions: [{ extension: "metadataPointer" }, { extension: "tokenMetadata" }]
+    });
+
+    expect(result).toMatchObject({ known: true, passed: true, blockingTokenExtensions: [] });
   });
 });

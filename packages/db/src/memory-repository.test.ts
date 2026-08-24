@@ -48,6 +48,49 @@ describe("MemoryRepository", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("deduplicates quote observations by both identities and rejects immutable mismatches", async () => {
+    const repo = new MemoryRepository();
+    const observation = {
+      idempotencyKey: "memory-quote-primary",
+      chain: "solana" as const,
+      quoteTokenAddress: "So111",
+      priceUsd: 150,
+      confidenceUsd: 0.1,
+      source: "pyth-benchmarks",
+      quality: "oracle-historical" as const,
+      publishTime: "2026-07-16T09:00:15.000Z",
+      observedAt: "2026-07-16T09:00:16.000Z",
+      stalenessSeconds: 1,
+      raw: { feedId: "sol-usd", tradeSignature: "first" }
+    };
+
+    await expect(repo.saveQuotePriceObservation(observation)).resolves.toBe(true);
+    await expect(
+      repo.saveQuotePriceObservation({
+        ...observation,
+        observedAt: "2026-07-16T09:00:17.000Z",
+        stalenessSeconds: 2,
+        raw: { feedId: "sol-usd", tradeSignature: "primary-retry" }
+      })
+    ).resolves.toBe(false);
+    await expect(
+      repo.saveQuotePriceObservation({
+        ...observation,
+        idempotencyKey: "memory-quote-natural",
+        observedAt: "2026-07-16T09:00:18.000Z",
+        stalenessSeconds: 3,
+        raw: { feedId: "sol-usd", tradeSignature: "natural-retry" }
+      })
+    ).resolves.toBe(false);
+    await expect(
+      repo.saveQuotePriceObservation({
+        ...observation,
+        idempotencyKey: "memory-quote-conflict",
+        priceUsd: 151
+      })
+    ).rejects.toThrow("conflicts with stored immutable evidence");
+  });
+
   it("upserts tokens idempotently", async () => {
     const repo = MemoryRepository.seeded(thresholds);
     await repo.upsertToken(SAMPLE_TOKEN);
@@ -84,7 +127,8 @@ describe("MemoryRepository", () => {
       raw: {}
     };
 
-    await expect(repo.saveWalletSignalOutcome(provisional)).resolves.toBe(true);
+    await expect(repo.saveWalletSignalOutcomes([provisional])).resolves.toBe(1);
+    await expect(repo.saveWalletSignalOutcomes([provisional])).resolves.toBe(0);
     await expect(
       repo.saveWalletSignalOutcome({
         ...provisional,
@@ -368,5 +412,48 @@ describe("MemoryRepository", () => {
     await repo.failChainEvent("pool-a-1", "parser", "terminal", { maxAttempts: 2 });
 
     expect(await repo.claimChainEvents({ workerId: "parser", limit: 10 })).toEqual([]);
+  });
+
+  it("holds future-only canonical evidence until its signature is finalized", async () => {
+    const repo = new MemoryRepository();
+    const receivedAt = new Date(Date.now() - 10_000).toISOString();
+    await repo.insertChainEvent({
+      idempotencyKey: "finality-gated-event",
+      chain: "solana",
+      signature: "finality-gated-signature",
+      slot: 900,
+      eventType: "pool_created",
+      occurredAt: receivedAt,
+      receivedAt,
+      commitment: "confirmed",
+      requiresFinality: true,
+      source: "solana-rpc-discovery",
+      decoderVersion: "test-finality-v1",
+      payload: { address: "ProgramFinality111" }
+    });
+
+    expect(await repo.claimChainEvents({ workerId: "parser", limit: 10 })).toEqual([]);
+    expect(await repo.listPendingSolanaFinalities(10, 1)).toEqual([
+      expect.objectContaining({ signature: "finality-gated-signature", slot: 900 })
+    ]);
+    expect(
+      await repo.recordSolanaFinalities([
+        {
+          signature: "finality-gated-signature",
+          result: {
+            status: "finalized",
+            checkedAt: new Date().toISOString(),
+            confirmationStatus: "finalized"
+          }
+        }
+      ])
+    ).toMatchObject({ checkedSignatures: 1, finalizedEvents: 1, rolledBackEvents: 0 });
+    expect(
+      (await repo.claimChainEvents({ workerId: "parser", limit: 10 }))[0]
+    ).toMatchObject({
+      idempotencyKey: "finality-gated-event",
+      commitment: "finalized",
+      requiresFinality: true
+    });
   });
 });

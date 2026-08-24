@@ -1,0 +1,2 @@
+# Keep the always-on contract small. Detailed workflows live in repository skills and skills.md.
+project_doc_max_bytes = 32768

@@ -1,6 +1,6 @@
 import type { EvidenceRepository, IntelligenceRepository } from "@memecoin-alpha/db";
 import { buildWalletAlphaScores, MANAGED_EXIT_V2_POLICY } from "@memecoin-alpha/core";
-import type { WalletAlphaScoreSnapshot } from "@memecoin-alpha/shared";
+import type { WalletAlphaScoreSnapshot, WalletEntrySignalEvidence } from "@memecoin-alpha/shared";
 
 type ManagedShadowRepository = Pick<
   EvidenceRepository,
@@ -15,6 +15,8 @@ export interface ManagedShadowOptions {
   maximumWallets?: number;
   sourceScoreReadLimit?: number;
   sourceWindowDays?: number;
+  walletBatchSize?: number;
+  maximumEntryDetectionDelaySeconds?: number;
 }
 
 export interface ManagedShadowWalletComparison {
@@ -38,6 +40,8 @@ export interface ManagedShadowReport {
   selection: {
     maximumWallets: number;
     sourceScoreReadLimit: number;
+    walletBatchSize: number;
+    maximumEntryDetectionDelaySeconds: number;
     selectedWallets: number;
     topScoreWallets: number;
     boundedNegativeControls: number;
@@ -46,6 +50,8 @@ export interface ManagedShadowReport {
   inputs: {
     trades: number;
     entries: number;
+    followableEntries: number;
+    timingExcludedEntries: number;
     outcomes: number;
   };
   statusCounts: Record<WalletAlphaScoreSnapshot["status"], number>;
@@ -62,6 +68,13 @@ export async function buildManagedShadowReport(
   const maximumWallets = boundedInt(options.maximumWallets, 25, 1, 100);
   const sourceScoreReadLimit = boundedInt(options.sourceScoreReadLimit, 250, maximumWallets, 1_000);
   const sourceWindowDays = boundedInt(options.sourceWindowDays, 90, 90, 180);
+  const walletBatchSize = boundedInt(options.walletBatchSize, 5, 1, 10);
+  const maximumEntryDetectionDelaySeconds = boundedInt(
+    options.maximumEntryDetectionDelaySeconds,
+    60,
+    1,
+    300
+  );
   const minimumObservedAt = new Date(
     new Date(now).getTime() - sourceWindowDays * 24 * 60 * 60 * 1_000
   ).toISOString();
@@ -85,34 +98,62 @@ export async function buildManagedShadowReport(
       sourceStrategyVersion,
       maximumWallets,
       sourceScoreReadLimit,
+      walletBatchSize,
+      maximumEntryDetectionDelaySeconds,
       "No observed source wallets were available for the managed-exit shadow comparison."
     );
   }
 
-  const [trades, entries, outcomes, creatorAddresses] = await Promise.all([
-    repository.listWalletTradeEventsForWallets(walletAddresses, sourceStrategyVersion),
-    repository.listWalletEntrySignalsForWallets(
-      walletAddresses,
-      sourceStrategyVersion,
-      minimumObservedAt
-    ),
-    repository.listWalletSignalOutcomesForWallets(
-      walletAddresses,
-      sourceStrategyVersion,
-      minimumObservedAt
-    ),
-    repository.listTokenCreatorAddresses()
-  ]);
-  const scores = buildWalletAlphaScores({
-    trades,
-    entries,
-    outcomes,
-    strategyVersion: sourceStrategyVersion,
-    scoreStrategyVersion: MANAGED_EXIT_V2_POLICY.scoreStrategyVersion,
-    scoringPolicy: "managed-exit-v2",
-    calculatedAt: now,
-    creatorWallets: new Set(creatorAddresses)
-  });
+  const creatorAddresses = await repository.listTokenCreatorAddresses();
+  const creatorWallets = new Set(creatorAddresses);
+  const scores: WalletAlphaScoreSnapshot[] = [];
+  const inputCounts = {
+    trades: 0,
+    entries: 0,
+    followableEntries: 0,
+    timingExcludedEntries: 0,
+    outcomes: 0
+  };
+  for (let index = 0; index < walletAddresses.length; index += walletBatchSize) {
+    const walletBatch = walletAddresses.slice(index, index + walletBatchSize);
+    const [trades, entries, outcomes] = await Promise.all([
+      repository.listWalletTradeEventsForWallets(walletBatch, sourceStrategyVersion),
+      repository.listWalletEntrySignalsForWallets(
+        walletBatch,
+        sourceStrategyVersion,
+        minimumObservedAt
+      ),
+      repository.listWalletSignalOutcomesForWallets(
+        walletBatch,
+        sourceStrategyVersion,
+        minimumObservedAt
+      )
+    ]);
+    inputCounts.trades += trades.length;
+    inputCounts.entries += entries.length;
+    inputCounts.outcomes += outcomes.length;
+    const followableEntries = entries.filter((entry) =>
+      isEntryDetectionTimely(entry, maximumEntryDetectionDelaySeconds)
+    );
+    const followableEntryKeys = new Set(followableEntries.map((entry) => entry.idempotencyKey));
+    const followableOutcomes = outcomes.filter((outcome) =>
+      followableEntryKeys.has(outcome.entryIdempotencyKey)
+    );
+    inputCounts.followableEntries += followableEntries.length;
+    inputCounts.timingExcludedEntries += entries.length - followableEntries.length;
+    scores.push(
+      ...buildWalletAlphaScores({
+        trades,
+        entries: followableEntries,
+        outcomes: followableOutcomes,
+        strategyVersion: sourceStrategyVersion,
+        scoreStrategyVersion: MANAGED_EXIT_V2_POLICY.scoreStrategyVersion,
+        scoringPolicy: "managed-exit-v2",
+        calculatedAt: now,
+        creatorWallets
+      })
+    );
+  }
   const managedByWallet = new Map(scores.map((score) => [score.walletAddress, score]));
   const sourceByWallet = new Map(selectedScores.map((score) => [score.walletAddress, score]));
   const controlWallets = new Set(controlScores.map((score) => score.walletAddress));
@@ -155,13 +196,15 @@ export async function buildManagedShadowReport(
     selection: {
       maximumWallets,
       sourceScoreReadLimit,
+      walletBatchSize,
+      maximumEntryDetectionDelaySeconds,
       selectedWallets: walletAddresses.length,
       topScoreWallets: topScores.length,
       boundedNegativeControls: controlScores.length,
       warning:
         "This bounded top-score/control comparison is model-selection evidence, not an untouched chronological validation cohort."
     },
-    inputs: { trades: trades.length, entries: entries.length, outcomes: outcomes.length },
+    inputs: inputCounts,
     statusCounts,
     comparisons,
     decision:
@@ -190,8 +233,10 @@ export function renderManagedShadowMarkdown(report: ManagedShadowReport): string
     "## Bounded Inputs",
     "",
     `Wallets: ${report.selection.selectedWallets} (${report.selection.topScoreWallets} top-score, ${report.selection.boundedNegativeControls} controls)`,
+    `Wallet batch size: ${report.selection.walletBatchSize}`,
+    `Maximum entry-detection delay: ${report.selection.maximumEntryDetectionDelaySeconds} seconds`,
     `Trades: ${report.inputs.trades}`,
-    `Entries: ${report.inputs.entries}`,
+    `Entries: ${report.inputs.entries} (${report.inputs.followableEntries} timing-eligible, ${report.inputs.timingExcludedEntries} stale/unknown excluded)`,
     `Outcomes: ${report.inputs.outcomes}`,
     "",
     "## Managed Status",
@@ -219,6 +264,8 @@ function emptyReport(
   sourceStrategyVersion: string,
   maximumWallets: number,
   sourceScoreReadLimit: number,
+  walletBatchSize: number,
+  maximumEntryDetectionDelaySeconds: number,
   decision: string
 ): ManagedShadowReport {
   return {
@@ -231,17 +278,45 @@ function emptyReport(
     selection: {
       maximumWallets,
       sourceScoreReadLimit,
+      walletBatchSize,
+      maximumEntryDetectionDelaySeconds,
       selectedWallets: 0,
       topScoreWallets: 0,
       boundedNegativeControls: 0,
       warning:
         "This bounded top-score/control comparison is model-selection evidence, not an untouched chronological validation cohort."
     },
-    inputs: { trades: 0, entries: 0, outcomes: 0 },
+    inputs: {
+      trades: 0,
+      entries: 0,
+      followableEntries: 0,
+      timingExcludedEntries: 0,
+      outcomes: 0
+    },
     statusCounts: emptyStatusCounts(),
     comparisons: [],
     decision
   };
+}
+
+export function entryDetectionDelaySeconds(
+  entry: Pick<WalletEntrySignalEvidence, "observedAt" | "flowEvidence">
+): number | undefined {
+  const buyObservedAt = entry.flowEvidence.buyObservedAt;
+  if (typeof buyObservedAt !== "string" || buyObservedAt.trim() === "") return undefined;
+  const entryTime = new Date(entry.observedAt).getTime();
+  const buyTime = new Date(buyObservedAt).getTime();
+  if (!Number.isFinite(entryTime) || !Number.isFinite(buyTime)) return undefined;
+  const delaySeconds = (entryTime - buyTime) / 1_000;
+  return Number.isFinite(delaySeconds) && delaySeconds >= 0 ? delaySeconds : undefined;
+}
+
+function isEntryDetectionTimely(
+  entry: Pick<WalletEntrySignalEvidence, "observedAt" | "flowEvidence">,
+  maximumDelaySeconds: number
+): boolean {
+  const delaySeconds = entryDetectionDelaySeconds(entry);
+  return delaySeconds !== undefined && delaySeconds <= maximumDelaySeconds;
 }
 
 function emptyStatusCounts(): Record<WalletAlphaScoreSnapshot["status"], number> {

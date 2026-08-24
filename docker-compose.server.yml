@@ -1,5 +1,11 @@
 name: walletscaner
 
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-app: &app
   build:
     context: .
@@ -17,6 +23,7 @@ x-app: &app
   init: true
   pids_limit: 128
   cpu_shares: 128
+  logging: *json-logging
 
 services:
   postgres:
@@ -42,10 +49,27 @@ services:
       - max_connections=30
       - -c
       - autovacuum_max_workers=1
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - compute_query_id=on
+      - -c
+      - pg_stat_statements.max=5000
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=2000
+      - -c
+      - log_temp_files=1024
+      - -c
+      - log_lock_waits=on
     mem_limit: 256m
     cpus: "0.18"
     cpu_shares: 256
     pids_limit: 128
+    logging: *json-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:?POSTGRES_DB is required}"]
       interval: 10s
@@ -62,6 +86,7 @@ services:
     cpus: "0.04"
     cpu_shares: 64
     pids_limit: 64
+    logging: *json-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -80,10 +105,15 @@ services:
 
   solana-ingestion:
     <<: *app
-    command: ["npm", "run", "worker:solana"]
+    image: ${WALLETSCANER_INGEST_IMAGE:-walletscaner-worker:local}
+    command: ["node", "--import", "tsx", "apps/worker/src/watch-solana.ts"]
     restart: unless-stopped
     mem_limit: 160m
-    cpus: "0.15"
+    # A 15% hard CFS ceiling caused the high-volume discovery socket to be
+    # throttled during short bursts and fall behind without increasing the
+    # service's average CPU use. The measured 20% ceiling preserves host
+    # headroom while allowing those bursts to drain in real time.
+    cpus: "0.20"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -111,6 +141,7 @@ services:
     cpus: "0.06"
     cpu_shares: 128
     pids_limit: 128
+    logging: *json-logging
     restart: unless-stopped
     depends_on:
       migrate:
@@ -135,12 +166,14 @@ services:
     cpus: "0.05"
     cpu_shares: 128
     pids_limit: 128
+    logging: *json-logging
     restart: unless-stopped
     depends_on:
       - api
 
   evidence-sampler:
     <<: *app
+    image: ${WALLETSCANER_INGEST_IMAGE:-walletscaner-worker:local}
     profiles: ["research"]
     command: ["node", "--import", "tsx", "apps/worker/src/sample-evidence-prices.ts"]
     restart: unless-stopped
@@ -154,24 +187,9 @@ services:
 
   wallet-alpha:
     <<: *app
+    image: ${WALLETSCANER_RESEARCH_IMAGE:-walletscaner-worker:local}
     profiles: ["research", "paper"]
-    command:
-      - sh
-      - -lc
-      - |
-        failures=0
-        while true; do
-          if node --import tsx scripts/research/wallet-alpha-worker.ts; then
-            failures=0
-            sleep "$${WALLET_ALPHA_INTERVAL_SECONDS:-300}"
-          else
-            failures=$$((failures + 1))
-            delay=$$((60 * (1 << (failures > 5 ? 5 : failures))))
-            if [ "$$delay" -gt 3600 ]; then delay=3600; fi
-            echo "wallet-alpha failed; retrying in $${delay}s" >&2
-            sleep "$$delay"
-          fi
-        done
+    command: ["node", "--import", "tsx", "scripts/research/wallet-alpha-worker.ts"]
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
@@ -187,6 +205,7 @@ services:
 
   paper-alert:
     <<: *app
+    image: ${WALLETSCANER_SIGNAL_IMAGE:-walletscaner-worker:local}
     profiles: ["paper"]
     command: ["node", "--import", "tsx", "apps/worker/src/process-wallet-alpha-outbox.ts"]
     restart: unless-stopped
@@ -194,7 +213,7 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
       REDIS_URL: redis://redis:6379
       ENABLE_LIVE_EXECUTION: "false"
-      PAPER_STRATEGY_VERSION: "${PAPER_STRATEGY_VERSION:-qualified-pool-paper-v1}"
+      PAPER_STRATEGY_VERSION: "${PAPER_STRATEGY_VERSION:-qualified-pool-paper-v3-strict-flow}"
       NODE_OPTIONS: "--max-old-space-size=40"
     mem_limit: 80m
     cpus: "0.02"
@@ -206,6 +225,7 @@ services:
 
   telegram-notifier:
     <<: *app
+    image: ${WALLETSCANER_SIGNAL_IMAGE:-walletscaner-worker:local}
     profiles: ["notifications"]
     command: ["node", "--import", "tsx", "apps/worker/src/telegram-notifier.ts"]
     restart: unless-stopped
@@ -224,6 +244,7 @@ services:
 
   data-maintenance:
     <<: *app
+    image: ${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}
     profiles: ["operations"]
     command:
       - sh
@@ -244,6 +265,7 @@ services:
 
   operations-monitor:
     <<: *app
+    image: ${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}
     profiles: ["operations"]
     command:
       - sh
@@ -255,8 +277,213 @@ services:
           sleep "$${OPERATIONS_MONITOR_INTERVAL_SECONDS:-60}"
         done
     restart: unless-stopped
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./backups:/app/backups:ro
     mem_limit: 64m
     cpus: "0.03"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  archive-writer: &archive-writer
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    image: walletscaner-worker:local
+    profiles: ["archive"]
+    command: ["node", "--import", "tsx", "scripts/archive/archive-writer.ts"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      ENABLE_LIVE_EXECUTION: "false"
+      ARCHIVE_ENABLED: "${ARCHIVE_ENABLED:-false}"
+      ARCHIVE_PROVIDER: "${ARCHIVE_PROVIDER:-s3-compatible}"
+      ARCHIVE_ENDPOINT: "${ARCHIVE_ENDPOINT:-https://s3.eu-central-003.backblazeb2.com}"
+      ARCHIVE_REGION: "${ARCHIVE_REGION:-eu-central-003}"
+      ARCHIVE_BUCKET: "${ARCHIVE_BUCKET:-walletscaner}"
+      ARCHIVE_PREFIX: "${ARCHIVE_PREFIX:-walletscanner-prod}"
+      ARCHIVE_WRITE_ACCESS_KEY_ID: "${ARCHIVE_WRITE_ACCESS_KEY_ID:-}"
+      ARCHIVE_WRITE_SECRET_ACCESS_KEY: "${ARCHIVE_WRITE_SECRET_ACCESS_KEY:-}"
+      ARCHIVE_REQUEST_TIMEOUT_MS: "${ARCHIVE_REQUEST_TIMEOUT_MS:-600000}"
+      ARCHIVE_MAX_ATTEMPTS: "${ARCHIVE_MAX_ATTEMPTS:-5}"
+      ARCHIVE_DRY_RUN: "${ARCHIVE_DRY_RUN:-true}"
+      ARCHIVE_STAGING_DIR: /app/archive-staging
+      ARCHIVE_SETTLE_HOURS: "${ARCHIVE_SETTLE_HOURS:-6}"
+      ARCHIVE_LEASE_SECONDS: "${ARCHIVE_LEASE_SECONDS:-1800}"
+      ARCHIVE_RETRY_SECONDS: "${ARCHIVE_RETRY_SECONDS:-300}"
+      ARCHIVE_MAX_SEGMENTS_PER_RUN: "${ARCHIVE_MAX_SEGMENTS_PER_RUN:-1}"
+      ARCHIVE_MAX_RUN_SECONDS: "${ARCHIVE_MAX_RUN_SECONDS:-7200}"
+      ARCHIVE_MIN_FREE_BYTES: "${ARCHIVE_MIN_FREE_BYTES:-1073741824}"
+      ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS: "${ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS:-7}"
+      ARCHIVE_OBJECT_LOCK_EVIDENCE_MODE: "${ARCHIVE_OBJECT_LOCK_EVIDENCE_MODE:-api-verified}"
+      ARCHIVE_OBJECT_LOCK_DEFAULT_MODE: "${ARCHIVE_OBJECT_LOCK_DEFAULT_MODE:-GOVERNANCE}"
+      ARCHIVE_OBJECT_LOCK_DEFAULT_DAYS: "${ARCHIVE_OBJECT_LOCK_DEFAULT_DAYS:-30}"
+      ARCHIVE_ZSTD_COMMAND: zstd
+      ARCHIVE_WRITER_INTERVAL_SECONDS: "${ARCHIVE_WRITER_INTERVAL_SECONDS:-3600}"
+      ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS: "${ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS:-900}"
+      NODE_OPTIONS: "--max-old-space-size=48"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    volumes:
+      - ./archive-staging/writer:/app/archive-staging
+    init: true
+    mem_limit: 128m
+    cpus: "0.04"
+    cpu_shares: 32
+    pids_limit: 64
+    logging: *json-logging
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  archive-verifier: &archive-verifier
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    image: walletscaner-worker:local
+    profiles: ["archive"]
+    command: ["node", "--import", "tsx", "scripts/archive/archive-verifier.ts"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      ENABLE_LIVE_EXECUTION: "false"
+      ARCHIVE_ENABLED: "${ARCHIVE_ENABLED:-false}"
+      ARCHIVE_PROVIDER: "${ARCHIVE_PROVIDER:-s3-compatible}"
+      ARCHIVE_ENDPOINT: "${ARCHIVE_ENDPOINT:-https://s3.eu-central-003.backblazeb2.com}"
+      ARCHIVE_REGION: "${ARCHIVE_REGION:-eu-central-003}"
+      ARCHIVE_BUCKET: "${ARCHIVE_BUCKET:-walletscaner}"
+      ARCHIVE_PREFIX: "${ARCHIVE_PREFIX:-walletscanner-prod}"
+      ARCHIVE_READ_ACCESS_KEY_ID: "${ARCHIVE_READ_ACCESS_KEY_ID:-}"
+      ARCHIVE_READ_SECRET_ACCESS_KEY: "${ARCHIVE_READ_SECRET_ACCESS_KEY:-}"
+      ARCHIVE_REQUEST_TIMEOUT_MS: "${ARCHIVE_REQUEST_TIMEOUT_MS:-600000}"
+      ARCHIVE_MAX_ATTEMPTS: "${ARCHIVE_MAX_ATTEMPTS:-5}"
+      ARCHIVE_DRY_RUN: "${ARCHIVE_DRY_RUN:-true}"
+      ARCHIVE_STAGING_DIR: /app/archive-staging
+      ARCHIVE_SETTLE_HOURS: "${ARCHIVE_SETTLE_HOURS:-6}"
+      ARCHIVE_LEASE_SECONDS: "${ARCHIVE_LEASE_SECONDS:-1800}"
+      ARCHIVE_RETRY_SECONDS: "${ARCHIVE_RETRY_SECONDS:-300}"
+      ARCHIVE_MAX_SEGMENTS_PER_RUN: "${ARCHIVE_MAX_SEGMENTS_PER_RUN:-1}"
+      ARCHIVE_MAX_RUN_SECONDS: "${ARCHIVE_MAX_RUN_SECONDS:-7200}"
+      ARCHIVE_MIN_FREE_BYTES: "${ARCHIVE_MIN_FREE_BYTES:-1073741824}"
+      ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS: "${ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS:-7}"
+      ARCHIVE_OBJECT_LOCK_EVIDENCE_MODE: "${ARCHIVE_OBJECT_LOCK_EVIDENCE_MODE:-api-verified}"
+      ARCHIVE_OBJECT_LOCK_DEFAULT_MODE: "${ARCHIVE_OBJECT_LOCK_DEFAULT_MODE:-GOVERNANCE}"
+      ARCHIVE_OBJECT_LOCK_DEFAULT_DAYS: "${ARCHIVE_OBJECT_LOCK_DEFAULT_DAYS:-30}"
+      ARCHIVE_ZSTD_COMMAND: zstd
+      ARCHIVE_VERIFIER_INITIAL_DELAY_SECONDS: "${ARCHIVE_VERIFIER_INITIAL_DELAY_SECONDS:-300}"
+      ARCHIVE_VERIFIER_INTERVAL_SECONDS: "${ARCHIVE_VERIFIER_INTERVAL_SECONDS:-900}"
+      ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS: "${ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS:-900}"
+      NODE_OPTIONS: "--max-old-space-size=48"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    volumes:
+      - ./archive-staging/verifier:/app/archive-staging
+    init: true
+    mem_limit: 128m
+    cpus: "0.04"
+    cpu_shares: 32
+    pids_limit: 64
+    logging: *json-logging
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  archive-writer-scheduler:
+    <<: *archive-writer
+    profiles: ["archive-scheduled"]
+    command:
+      - sh
+      - -lc
+      - |
+        while true; do
+          if node --import tsx scripts/archive/archive-writer.ts; then
+            delay="$${ARCHIVE_WRITER_INTERVAL_SECONDS:-3600}"
+          else
+            delay="$${ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS:-900}"
+          fi
+          sleep "$${delay}"
+        done
+    restart: unless-stopped
+
+  archive-verifier-scheduler:
+    <<: *archive-verifier
+    profiles: ["archive-scheduled"]
+    command:
+      - sh
+      - -lc
+      - |
+        sleep "$${ARCHIVE_VERIFIER_INITIAL_DELAY_SECONDS:-300}"
+        while true; do
+          if node --import tsx scripts/archive/archive-verifier.ts; then
+            delay="$${ARCHIVE_VERIFIER_INTERVAL_SECONDS:-900}"
+          else
+            delay="$${ARCHIVE_SCHEDULER_FAILURE_DELAY_SECONDS:-900}"
+          fi
+          sleep "$${delay}"
+        done
+    restart: unless-stopped
+
+  archive-database-backup-writer:
+    <<: *archive-writer
+    profiles: ["archive-backup"]
+    command: ["node", "--import", "tsx", "scripts/archive/database-backup-writer.ts"]
+    volumes:
+      - ./backups:/app/backups:ro
+      - ./archive-staging/database-backup:/app/archive-staging
+
+  archive-database-backup-verifier:
+    <<: *archive-verifier
+    profiles: ["archive-backup"]
+    command: ["node", "--import", "tsx", "scripts/archive/database-backup-verifier.ts"]
+    volumes:
+      - ./archive-staging/database-backup:/app/archive-staging
+
+  derived-ledger-reclaim:
+    <<: *app
+    profiles: ["archive-admin"]
+    command: ["node", "--import", "tsx", "scripts/maintenance/reclaim-derived-ledger-cache.ts"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      ENABLE_LIVE_EXECUTION: "false"
+      ARCHIVE_DATABASE_BACKUP_SHA256: "${ARCHIVE_DATABASE_BACKUP_SHA256:-}"
+      ARCHIVE_DATABASE_BACKUP_VERIFICATION_PATH: "${ARCHIVE_DATABASE_BACKUP_VERIFICATION_PATH:-/app/archive-staging/postgres-backup-verified.json}"
+      DERIVED_LEDGER_RECLAIM_APPROVAL: "${DERIVED_LEDGER_RECLAIM_APPROVAL:-}"
+      NODE_OPTIONS: "--max-old-space-size=32"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    volumes:
+      - ./archive-staging/database-backup:/app/archive-staging:ro
+    init: true
+    mem_limit: 64m
+    cpus: "0.02"
+    cpu_shares: 16
+    pids_limit: 48
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  archive-retirement-approval:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    image: walletscaner-worker:local
+    profiles: ["archive-admin"]
+    command: ["node", "--import", "tsx", "scripts/archive/approve-future-canary.ts"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      ENABLE_LIVE_EXECUTION: "false"
+      ARCHIVE_FUTURE_CANARY_DAY: "${ARCHIVE_FUTURE_CANARY_DAY:-}"
+      ARCHIVE_RETIREMENT_APPROVAL: "${ARCHIVE_RETIREMENT_APPROVAL:-}"
+      ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS: "${ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS:-7}"
+      NODE_OPTIONS: "--max-old-space-size=32"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    init: true
+    mem_limit: 64m
+    cpus: "0.02"
+    cpu_shares: 16
+    pids_limit: 48
+    logging: *json-logging
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -279,12 +506,25 @@ services:
     cpus: "0.04"
     cpu_shares: 64
     pids_limit: 64
+    logging: *json-logging
     command:
       - sh
       - -ec
       - |
         sleep "$${POSTGRES_BACKUP_INITIAL_DELAY_SECONDS:-86400}"
+        sleep_until_next_cycle() {
+          interval="$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+          now=$$(date +%s)
+          elapsed=$$((now - cycle_started_at))
+          remaining=$$((interval - elapsed))
+          if [ "$${remaining}" -lt 60 ]; then
+            remaining=60
+          fi
+          echo "backup scheduler: next cycle in $${remaining}s"
+          sleep "$${remaining}"
+        }
         while true; do
+          cycle_started_at=$$(date +%s)
           # Interrupted dumps are not recovery artifacts. Remove only stale
           # temporary files so restarts cannot consume the fixed disk forever.
           find /backups -maxdepth 1 -type f \
@@ -295,7 +535,7 @@ services:
             -mmin -360 -print -quit)
           if [ -n "$${fresh_tmp}" ]; then
             echo "backup skipped: a recent interrupted generation is inside its safety window"
-            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            sleep_until_next_cycle
             continue
           fi
 
@@ -325,7 +565,7 @@ services:
           fi
           if [ -n "$${unacknowledged}" ]; then
             echo "backup skipped: one completed generation still awaits off-host verification"
-            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            sleep_until_next_cycle
             continue
           fi
 
@@ -355,7 +595,7 @@ services:
           required=$$((previous_size + minimum_free))
           if [ -z "$${available}" ] || [ "$${available}" -lt "$${required}" ]; then
             echo "backup skipped: insufficient free space for a bounded generation"
-            sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+            sleep_until_next_cycle
             continue
           fi
 
@@ -386,7 +626,7 @@ services:
               \( -name 'memecoin_alpha_*.dump' -o -name 'memecoin_alpha_*.dump.sha256' \) \
               -mtime +"$${POSTGRES_BACKUP_RETENTION_DAYS:-3}" -delete
           fi
-          sleep "$${POSTGRES_BACKUP_INTERVAL_SECONDS:-86400}"
+          sleep_until_next_cycle
         done
     depends_on:
       postgres:
@@ -446,6 +686,7 @@ services:
     cpus: "0.05"
     cpu_shares: 64
     pids_limit: 128
+    logging: *json-logging
     restart: unless-stopped
     depends_on:
       migrate:

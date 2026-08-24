@@ -1,0 +1,4 @@
+interface:
+  display_name: "Walletscaner Audit"
+  short_description: "Diagnose project state with evidence"
+  default_prompt: "Use $walletscaner-audit to inspect the current system and rank verified risks without changing production."

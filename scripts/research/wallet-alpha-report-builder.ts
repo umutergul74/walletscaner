@@ -2,6 +2,8 @@ import type {
   CanonicalRepository,
   EvidenceRepository,
   IntelligenceRepository,
+  WalletAlphaWorkItem,
+  WalletAlphaWorkPriority,
   WalletAlphaWorkSummary,
   WalletPositionLedgerSnapshot
 } from "@memecoin-alpha/db";
@@ -72,6 +74,9 @@ export interface WalletAlphaReportOptions {
   maximumRunSeconds?: number;
   minimumTradeEvents?: number;
   minimumEntries?: number;
+  minimumWorkPriority?: WalletAlphaWorkPriority;
+  maximumWorkPriority?: WalletAlphaWorkPriority;
+  onSignalRelevantWalletProcessed?: (item: WalletAlphaWorkItem) => void | Promise<void>;
 }
 
 export interface WalletAlphaQueueResult {
@@ -80,6 +85,8 @@ export interface WalletAlphaQueueResult {
   skippedLowEvidenceWallets: number;
   failedWallets: number;
   oversizedWallets: number;
+  signalRelevantWallets: number;
+  signalRefreshFailures: number;
   minimumObservedAt: string;
 }
 
@@ -214,12 +221,51 @@ export async function processWalletAlphaQueue(
   const maximumRunSeconds = boundedInt(options.maximumRunSeconds, 240, 30, 3_300);
   const minimumTradeEvents = boundedInt(options.minimumTradeEvents, 1, 1, 100);
   const minimumEntries = boundedInt(options.minimumEntries, 1, 1, 100);
+  const minimumWorkPriority = options.minimumWorkPriority ?? 0;
+  const maximumWorkPriority = options.maximumWorkPriority ?? 2;
+  if (minimumWorkPriority > maximumWorkPriority) {
+    throw new Error("Wallet-alpha minimum work priority cannot exceed its maximum.");
+  }
   const minimumObservedAtMs = new Date(minimumObservedAt).getTime();
   let processedWallets = 0;
   let skippedLowEvidenceWallets = 0;
   let failedWallets = 0;
   let oversizedWallets = 0;
+  let signalRelevantWallets = 0;
+  let signalRefreshFailures = 0;
   const maximumWorkItems = workBatchSize * maxWorkBatches;
+  const admissionCache = new Map<string, { tradeEventCount: number; entryCount: number }>();
+  try {
+    const candidates = await repository.listWalletAlphaWorkCandidates(
+      strategyVersion,
+      Math.min(maximumWorkItems, 100),
+      { minimumPriority: minimumWorkPriority, maximumPriority: maximumWorkPriority }
+    );
+    const probes = await repository.probeWalletAlphaAdmission(
+      candidates,
+      minimumObservedAt,
+      minimumTradeEvents,
+      minimumEntries
+    );
+    for (const probe of probes) {
+      admissionCache.set(walletAlphaWorkRevisionKey(probe), {
+        tradeEventCount: probe.tradeEventCount,
+        entryCount: probe.entryCount
+      });
+    }
+    progress("wallet-admission-prefetch", {
+      candidateWallets: candidates.length,
+      admittedWallets: probes.filter(
+        (probe) => probe.tradeEventCount >= minimumTradeEvents || probe.entryCount >= minimumEntries
+      ).length
+    });
+  } catch (error) {
+    // Admission prefetch is only an optimization. The one-wallet bounded probes
+    // below remain the correctness-preserving fallback on timeout or failure.
+    progress("wallet-admission-prefetch-fallback", {
+      reason: error instanceof Error ? error.message : "admission prefetch failed"
+    });
+  }
 
   for (let workIndex = 0; workIndex < maximumWorkItems; workIndex += 1) {
     if (Date.now() - startedAt >= maximumRunSeconds * 1_000) {
@@ -237,7 +283,9 @@ export async function processWalletAlphaQueue(
       workerId,
       // One lease at a time prevents a process-level failure from pinning an entire batch.
       limit: 1,
-      leaseSeconds: workLeaseSeconds
+      leaseSeconds: workLeaseSeconds,
+      minimumPriority: minimumWorkPriority,
+      maximumPriority: maximumWorkPriority
     });
     if (claimed.length === 0) break;
     const item = claimed[0]!;
@@ -251,24 +299,31 @@ export async function processWalletAlphaQueue(
     }
 
     try {
-      const [admissionTrades, admissionEntries] = await Promise.all([
-        repository.listWalletTradeEventsForWallets(
-          walletAddresses,
-          strategyVersion,
-          undefined,
-          minimumTradeEvents
-        ),
-        repository.listWalletEntrySignalsForWallets(
-          walletAddresses,
-          strategyVersion,
-          minimumObservedAt,
-          minimumEntries
-        )
-      ]);
-      if (
-        admissionTrades.length < minimumTradeEvents &&
-        admissionEntries.length < minimumEntries
-      ) {
+      const cachedAdmission = admissionCache.get(walletAlphaWorkRevisionKey(item));
+      let admissionTradeCount: number;
+      let admissionEntryCount: number;
+      if (cachedAdmission) {
+        admissionTradeCount = cachedAdmission.tradeEventCount;
+        admissionEntryCount = cachedAdmission.entryCount;
+      } else {
+        const [admissionTrades, admissionEntries] = await Promise.all([
+          repository.listWalletTradeEventsForWallets(
+            walletAddresses,
+            strategyVersion,
+            undefined,
+            minimumTradeEvents
+          ),
+          repository.listWalletEntrySignalsForWallets(
+            walletAddresses,
+            strategyVersion,
+            minimumObservedAt,
+            minimumEntries
+          )
+        ]);
+        admissionTradeCount = admissionTrades.length;
+        admissionEntryCount = admissionEntries.length;
+      }
+      if (admissionTradeCount < minimumTradeEvents && admissionEntryCount < minimumEntries) {
         if (!(await repository.completeWalletAlphaWork(item))) {
           throw new Error(`Wallet-alpha lease was lost for ${item.walletAddress}.`);
         }
@@ -364,6 +419,20 @@ export async function processWalletAlphaQueue(
         throw new Error(`Wallet-alpha lease was lost for ${item.walletAddress}.`);
       }
       processedWallets += 1;
+      if (item.priority === 2) {
+        signalRelevantWallets += 1;
+        try {
+          await options.onSignalRelevantWalletProcessed?.(item);
+        } catch (error) {
+          // Queue completion is already durable. A signal refresh is derived and
+          // retryable, so it must not turn a completed revision into a false failure.
+          signalRefreshFailures += 1;
+          progress("signal-relevant-refresh-failed", {
+            wallet: item.walletAddress,
+            reason: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
       if ((workIndex + 1) % 25 === 0) {
         progress("wallet-progress", {
           processedWallets,
@@ -403,8 +472,19 @@ export async function processWalletAlphaQueue(
     skippedLowEvidenceWallets,
     failedWallets,
     oversizedWallets,
+    signalRelevantWallets,
+    signalRefreshFailures,
     minimumObservedAt
   };
+}
+
+function walletAlphaWorkRevisionKey(input: {
+  chain: string;
+  walletAddress: string;
+  strategyVersion: string;
+  revision: number;
+}): string {
+  return [input.chain, input.walletAddress, input.strategyVersion, input.revision].join(":");
 }
 
 export async function refreshWalletAlphaSignals(
@@ -469,6 +549,7 @@ export function renderWalletAlphaMarkdown(report: WalletAlphaReport): string {
     `Source window: ${report.sourceWindowDays} days`,
     `Wallet work processed: ${report.workQueue.processed}`,
     `Wallet work pending: ${report.workQueue.pending} (${report.workQueue.processing} leased, ${report.workQueue.failed} retrying)`,
+    `- Priority lanes: ${report.workQueue.signalPending} signal-relevant, ${report.workQueue.elevatedPending} score-changing, ${report.workQueue.backgroundPending} background`,
     "",
     "Research and paper mode only. This is not financial advice.",
     "",

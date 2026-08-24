@@ -15,6 +15,12 @@ flowchart TD
   HT --> IN
   HW --> IN
   BF --> IN
+  IN --> PAY["Daily chain_event_payloads"]
+  PAY --> AW["Bounded archive writer\nzstd-3 + SHA-256"]
+  AW --> B2["Private B2 Object Lock"]
+  B2 --> AV["Independent full restore verifier"]
+  AV --> AM["PostgreSQL archive manifest"]
+  AM --> RET["Fail-closed partition retirement"]
   IN --> CL["Leased parser claims"]
   CL --> DN["Decode + normalize"]
   DN --> EN["Pyth / DAS / RPC / DEX context"]
@@ -45,6 +51,20 @@ flowchart TD
 4. Successful work records `processed_at`; failures move to `retry` with a future eligibility time or to `dead_letter` after the attempt ceiling.
 5. `pipeline_watermarks` records parser progress and health metadata.
 
+Cold storage does not weaken this boundary. Each settled daily payload partition is exported from a
+repeatable-read snapshot into a versioned JSONL/zstd object. PostgreSQL owns the revisioned manifest;
+an independent credential must fully download and restore/hash the object, while the manifest must
+carry either provider-read Object Lock retention or the explicitly weaker attested bucket-default
+policy before maintenance may retire the source partition. A second PostgreSQL-owned policy records the
+archive rollout activation and can be approved only by a non-empty verified UTC day wholly after
+that activation. Maintenance additionally requires an explicit runtime retirement flag. Missing
+policy approval, lock evidence, partial uploads, stale revisions and checksum differences keep the
+PostgreSQL source intact.
+
+The recurring writer anti-joins existing manifest windows before applying its bounded daily seed
+limit. Therefore completed early partitions cannot permanently hide later days. Writer and verifier
+run serially per scheduler instance with durable leases, retries, dead-letter state and no overlap.
+
 The inbox separates four clocks:
 
 - `occurred_at`: chain `blockTime`, used for pool age and ledger ordering;
@@ -58,7 +78,13 @@ Confirmed events are sufficient for shadow and paper measurement. The schema sup
 
 The active worker uses two source roles and one selectable trade-ingest mode:
 
-- `StandardSolanaEventSource` always watches the configured launch programs and performs bounded signature/RPC gap repair. An unresolved older transaction or block time stops cursor advancement for that address.
+- Each configured launch program owns an independent `StandardSolanaEventSource`, supervisor state
+  and restart boundary. One failed or slow program therefore cannot stop healthy discovery sources.
+  Each source performs bounded signature/RPC gap repair; an unresolved older transaction or block
+  time stops cursor advancement for that address.
+- Because standard `logsSubscribe` cannot filter instruction names at the provider, a discovery
+  source whose every address has an exact log filter rejects raw nonmatching notification strings
+  before JSON parsing. Adding any unfiltered address disables this optimization fail-safe.
 - `HELIUS_INGEST_MODE=rpc` is the active fixed-cost profile. Public RPC performs reviewed program
   discovery while Helius standard `logsSubscribe` follows at most three market/risk-admitted pools.
   If its bounded HTTP-resolution queue reaches the high-water mark, the hot pool is immediately
@@ -67,6 +93,30 @@ The active worker uses two source roles and one selectable trade-ingest mode:
   explicit provider-budget decision and is not silently enabled.
 - `HELIUS_INGEST_MODE=transaction-subscribe` enables `HeliusTransactionEventSource` only for a Helius plan that exposes that method. A free-plan rejection is surfaced in diagnostics and disables its backfill queue instead of flooding RPC history.
 
+Live and backfill delivery is serialized per watched address. A fetched event is acknowledged and
+its source cursor advances only after the canonical handler has accepted it durably. A temporary
+storage-admission rejection retains that exact fetched event in memory and retries it at a bounded
+cadence; it is not silently skipped and is not fetched repeatedly. Standard and Helius sockets use
+connection generations so delayed acknowledgements, messages, errors or pongs from an obsolete
+socket cannot mutate the new connection.
+
+Backfill makes a one-row boundary probe after its bounded page budget. If more history remains, the
+source records truncation, leaves the cursor behind the unknown range and the per-program supervisor
+opens a fail-closed coverage incident. Cursor evidence includes the last durably admitted event's
+chain `occurred_at`; parser completion time is never used as the beginning of a possible chain gap.
+A source with no prior cursor starts at an explicit activation boundary and samples only its bounded
+recent page. That bootstrap is not evidence of pre-activation historical completeness.
+
+The supervisor probes `getSignaturesForAddress(limit=1)` only after a health breach and no more than
+once per configured cooldown. A JSON-RPC error or malformed result is an error, not proof that the
+program was quiet. A newer slot, or a different latest signature in the same slot, is conservative
+evidence that the WebSocket may have missed activity. Recovery requires a successful restart plus
+fresh post-restart WebSocket evidence. Transport-only recovery remains
+`transport_recovered_gap_unreconciled`. Standard discovery sources additionally stage a durable,
+bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
+require an independent repaired-head match. Only that stronger proof sets
+`coverage_reconciled_at`; incomplete, capped or unresolved repair remains fail-closed.
+
 The old bounded “top wallets become new subscriptions” loop is not part of the v2 production path. Wallet evidence is derived from transactions involving active pools, avoiding circular discovery based on wallets the scorer already knows.
 
 `HeliusEnhancedTransactionBatcher` is available for discovery signature batches up to 100. Historical/backfill code remains independent of the live full-transaction stream.
@@ -74,6 +124,13 @@ The old bounded “top wallets become new subscriptions” loop is not part of t
 ## Decode and enrichment boundary
 
 - Pool creation/migration definitions are configured by reviewed program ID and instruction discriminator.
+- Discovery scans top-level and CPI/inner instructions, resolves versioned loaded-address indices,
+  stores the selected instruction coordinates and isolates malformed instruction data. The
+  `walletscaner-v3-inner-cpi` tag makes future evidence distinguishable from earlier decoder output.
+- Standard-RPC WebSocket notifications and fetched initial/reconnect backfill transactions apply
+  the same exact instruction-log predicate. Resolved non-matching backfill transactions advance the
+  source cursor but are neither emitted nor persisted, so decoder coverage measures candidate
+  instructions rather than arbitrary program traffic.
 - Raydium LaunchLab/CPMM definitions are pinned to one official IDL commit.
 - Wallet balance decoding only accepts transaction signers/fee payer or an explicitly verified venue authority. Known pool/program infrastructure is excluded.
 - Live wallet trades persist both buys and sells in `wallet_trade_events`. The separate `swaps`
@@ -88,6 +145,10 @@ The old bounded “top wallets become new subscriptions” loop is not part of t
   refreshed at most every five minutes while market eligibility is unchanged, but the first sample,
   every eligibility transition and every detected rug persist immediately. The evidence sampler is
   the sole durable price-history writer and uses deterministic pool/120-second compact buckets.
+- Provider reads remain token-batched, while active entries are grouped by `(token, exact pool)` so
+  one mint's first pool cannot starve another pool of followability evidence. Calculated outcomes
+  are filtered to monotonic lifecycle transitions and persisted in bounded multi-row writes; wallet
+  queue invalidation is coalesced once per changed wallet and batch.
 - Wallet outcomes are lifecycle-driven rather than poll-driven. The first provisional snapshot is
   durable; repeated calculations in the same state are no-ops. PostgreSQL writes the row again only
   when it advances to `unresolved` or `mature`, and mature evidence is immutable. This prevents the
@@ -103,7 +164,16 @@ Telegram API consumer. It claims the `alert` destination from `signal_outbox` an
 `telegram_notification_outbox`, including qualified-pool, paper-trade and status messages. Pool
 discovery messages are not wallet-alpha signals. A recent pool enters the outbox only after
 canonical pool state has at least the configured liquidity and five-minute volume and the latest
-token-risk record is known and warning-free. Quote/system mints are explicitly excluded.
+token-risk record is known and warning-free. The versioned `strict-flow-v2-20260817` path also
+requires five-minute maturity, bounded transaction/buy-share/turnover evidence, top-10 holder
+concentration below 20% and complete trade coverage. Its payload freezes every admission feature;
+`riskConfidence` is evidence coverage, not predicted profit probability. Quote/system mints are
+explicitly excluded.
+
+Strict-pool selection and claim-time validation join the payload back to the canonical Solana token
+and exact pool address. A pool whose chain creation time falls inside an open or closed-but-
+unreconciled discovery incident for its program is ineligible. Already queued candidates that later
+become tainted move to the terminal, retained `suppressed` state; they are not delivered or deleted.
 
 `telegram_notification_outbox` uses unique event/source keys, leases, retries and dead-letter state.
 `telegram_notification_state` persists the first-start watermark so restarts neither flood old pools
@@ -116,9 +186,18 @@ pre-activation notifications as fills. `qualified-pool-paper-v1` is retained as 
 negative control. The separately selectable `qualified-pool-paper-v2` waits five minutes, fetches
 the exact notified pool, repeats a fresh fail-closed risk check and requires stronger retained
 liquidity, volume, transaction, buy-share and turnover evidence before opening a smaller position.
+The separately versioned `qualified-pool-paper-v3-strict-flow` consumes only strict-v2 payloads
+after its own activation and repeats exact-pool flow, liquidity-retention and realistic-cost checks.
 Every simulated buy, partial exit, close and terminal rug outcome is an append-only
 `paper_trade_event`; the current position is materialized in `paper_trades`. Telegram paper messages
 are enqueued transactionally after the paper event and are delivered by the existing notifier.
+Paper candidate selection and the delayed entry recheck apply the same canonical exact-pool incident
+test. The final paper-open transaction acquires the same per-program PostgreSQL advisory lock used
+to open an incident and rechecks coverage before inserting the trade. This serializes a known or
+concurrently committing incident with the simulated entry; it cannot foresee an incident discovered
+later whose conservative gap boundary reaches backward across an already recorded paper fill. Such
+paper evidence remains append-only but is coverage-tainted and must be excluded from strategy
+evaluation rather than presented as an executable alpha result.
 
 Raydium venue-specific instruction matching is implemented as a provider module; full use of that match context for every runtime trade variant and the equivalent Pump sell decoder still require fixture-backed rollout verification.
 
@@ -133,17 +212,31 @@ Raydium venue-specific instruction matching is implemented as a provider module;
 
 The scorer independently summarizes realized profitability and source-linked followability over 30/90-day windows. Reliability uses sample-size shrinkage, Wilson lower bounds, sample diversity, concentration, drawdown and recency decay. Direct creators are excluded; unknown/failed token risk blocks downstream paper signals.
 
-The production scorer leases one wallet revision at a time. A bounded admission probe reads no more
-than six trades and three entries before any full FIFO rebuild. Revisions below both evidence floors
-are completed without a score, while their durable evidence is retained and later evidence requeues
-them. This keeps one-off traders out of the expensive scoring path without making them disappear or
-embedding correlated table probes in the ordered claim SQL.
+The production scorer leases one wallet revision at a time. Before claiming, it may prefetch at
+most 100 queue candidates without locking them; bounded lateral index probes read no more than six
+trades and three entries per wallet under a five-second statement timeout. Prefetch results are
+valid only for the exact observed queue revision, so a concurrent evidence write forces a fresh
+one-wallet probe after claim. Revisions below both evidence floors are completed without a score,
+while their durable evidence is retained and later evidence requeues them. This keeps one-off
+traders out of the expensive scoring path without embedding evidence predicates in the ordered
+claim SQL or leasing a batch of wallets.
+
+The queue has one revision-safe row per wallet and strategy, not duplicate hot/cold queues. Priority
+`2` is restricted to a source-linked, controlled-flow entry with known and passed critical token
+risk; priority `1` covers score-changing entries, sells and outcomes; priority `0` covers buys,
+price enrichment and historical materialization. A producer coalesces work by incrementing the
+revision and taking the greater priority. Completion resets priority only when no newer revision
+arrived during the lease. Claims always take the highest ready priority and remain FIFO within a
+lane. PostgreSQL `NOTIFY` wakes the same bounded worker for elevated work, but the durable queue and
+30/300-second fallback polls remain the recovery truth if a notification or listener is lost.
 
 The optional `wallet-alpha-managed-v2` research path reuses the same canonical entries, trades and
 frozen outcomes, selects the managed `tp15-sl20-20m` followability series, and compares it with the
 fixed-horizon source score in a bounded read-only report. It does not claim the wallet-alpha work
 queue, persist score rows, create outbox work or contact Telegram. This isolation is intentional
-until fill realism and chronological shadow gates pass.
+until fill realism and chronological shadow gates pass. The report processes at most ten wallets per
+evidence batch, excludes entries whose durable buy-to-observation delay is missing or exceeds the
+configured bound, and outcome construction accepts only observations for the entry's exact pool.
 
 Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` messages. Consumers use `FOR UPDATE SKIP LOCKED`, leases, retries and dead-letter states. This permits independent paper and notification delivery without double-sending one outbox message.
 
@@ -158,6 +251,8 @@ Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` m
 - `apps/web`: dashboard for tokens, wallet-alpha rankings/signals and pipeline health.
 - `packages/providers`: external-system adapters and chain decoders.
 - `packages/db`: memory test adapter plus PostgreSQL repositories/lease operations.
+- `scripts/archive` and `packages/db/archive-*`: bounded export, independent restore verification,
+  manifest leases/retries and archive-gated partition retirement.
 - `packages/core`: deterministic evidence, ledger and scoring logic.
 
 ## Runtime boundaries
@@ -168,10 +263,12 @@ Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` m
 - `market-watch` is isolated behind the `legacy-research` Compose profile and must not write the canonical production path.
 - Live execution is disabled; paper decisions are the terminal execution boundary.
 - Canonical insertion stores metadata plus the immutable payload SHA-256 in the inbox and the full
-  JSON in a daily sidecar partition in one transaction. Successfully processed payloads remain for
-  48 hours. Old unresolved payloads move to a compact hold table before their daily high-volume
-  partition is dropped; pending, retrying and dead-letter work is never discarded. Canonical
-  metadata remains for the three-day hot inbox horizon.
+  JSON in a daily sidecar partition in one transaction. Once migration 033 and the archive profile
+  are activated, a partition can be dropped only after its complete object has passed independent
+  B2 Object Lock and full-restore verification. Old unresolved payloads move to a compact hold table
+  in the same retirement transaction; pending, retrying and dead-letter work is never discarded.
+  Canonical metadata remains for the three-day hot inbox horizon, and incomplete metadata coverage
+  prevents archive verification.
 - Price paths use two-day daily partitions. Wallet evidence is admitted only after market and token
   risk pass, rejected diagnostic evidence remains three days, and admitted trade/entry/outcome
   evidence remains 95 days for the 30/90-day scorer.
@@ -181,6 +278,13 @@ Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` m
 - Superseded wallet-alpha score snapshots remain for seven days while the latest row per
   wallet/strategy is always preserved. This keeps the acceptance shadow inspectable without turning
   five-minute derived revisions into a second unbounded evidence store.
+
+The current raw-payload archive solves only the first fixed-disk tier. The 95-day canonical wallet
+evidence set has not yet reached equilibrium and cannot be assumed to fit. The measured target is a
+separate, independently restored daily wallet-evidence archive plus compact incremental FIFO and
+followability facts in PostgreSQL. Its populated-clone benchmark, invariants and rollout gates are
+documented in [storage_lifecycle.md](storage_lifecycle.md). Until those gates pass, existing
+canonical evidence remains authoritative and must not be retired.
 
 ## Production acceptance boundary
 

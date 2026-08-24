@@ -8,11 +8,12 @@ import {
   type SignalOutboxMessage,
   type TelegramNotificationMessage
 } from "@memecoin-alpha/db";
-import type {
-  PaperTradeNotification,
-  PipelineStatusNotification,
-  QualifiedPoolNotification,
-  WalletAlphaSignalEvidence
+import {
+  strictQualifiedPoolNotificationPolicy,
+  type PaperTradeNotification,
+  type PipelineStatusNotification,
+  type QualifiedPoolNotification,
+  type WalletAlphaSignalEvidence
 } from "@memecoin-alpha/shared";
 import {
   formatPaperTradeAlert,
@@ -37,6 +38,7 @@ if (!config.alerts.telegramBotToken || !config.alerts.telegramChatId) {
 const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
 const repository = new PostgresRepository(pool);
 const store = new TelegramNotificationStore(pool);
+const walletAlphaStrategyVersion = process.env.ALPHA_STRATEGY_VERSION?.trim() || "evidence-v1";
 const workerId = `${hostname()}:${process.pid}:telegram-notifier`;
 const startedAt = await store.initializeStartedAt(config.alerts.initialLookbackMinutes);
 const statusIntervalMs = config.alerts.statusIntervalMinutes * 60_000;
@@ -58,13 +60,17 @@ while (!stopping) {
   const cycleStartedAt = Date.now();
   try {
     await processSignalAlerts();
-    const poolsEnqueued = await store.enqueueQualifiedPools({
+    const poolScan = await store.enqueueQualifiedPools({
       startedAt,
       maxAgeMinutes: config.alerts.poolMaxAgeMinutes,
       minimumLiquidityUsd: config.thresholds.minimumLiquidityUsd,
       minimumVolume5mUsd: config.thresholds.minimumVolume5mUsd,
-      excludedTokenAddresses
+      excludedTokenAddresses,
+      deliveryMode: config.alerts.qualifiedPoolDeliveryMode
     });
+    const coverageTransitionsEnqueued = await store.enqueueCoverageIncidentTransitions(
+      walletAlphaStrategyVersion
+    );
     const nextBucket = statusBucket(Date.now(), statusIntervalMs);
     if (nextBucket !== currentStatusBucket) {
       currentStatusBucket = nextBucket;
@@ -77,7 +83,14 @@ while (!stopping) {
           type: "telegram-notifier-health",
           workerId,
           startedAt,
-          poolsEnqueued,
+          walletAlphaStrategyVersion,
+          qualificationVersion: strictQualifiedPoolNotificationPolicy.version,
+          qualifiedPoolDeliveryMode: config.alerts.qualifiedPoolDeliveryMode,
+          scannedPoolCount: poolScan.scannedPoolCount,
+          riskPassedPoolCount: poolScan.riskPassedPoolCount,
+          strictCandidateCount: poolScan.strictCandidateCount,
+          poolsEnqueued: poolScan.inserted,
+          coverageTransitionsEnqueued,
           notificationsDelivered: delivered,
           cycleDurationMs: Date.now() - cycleStartedAt
         })
@@ -132,6 +145,9 @@ async function processNotificationOutbox(): Promise<number> {
   let delivered = 0;
   for (const message of messages) {
     try {
+      if (await store.suppressClaimedCoverageTainted(message.id, workerId)) {
+        continue;
+      }
       await requireTelegramDelivery(formatNotification(message));
       if (!(await store.complete(message.id, workerId))) {
         throw new Error("Notification lease was lost before completion.");
@@ -149,7 +165,7 @@ async function processNotificationOutbox(): Promise<number> {
 }
 
 async function enqueueStatus(sourceKey: string): Promise<void> {
-  const status = await store.getPipelineStatus();
+  const status = await store.getPipelineStatus(walletAlphaStrategyVersion);
   await store.enqueueStatus(sourceKey, status);
 }
 

@@ -58,6 +58,11 @@ export interface PoolSnapshot {
 }
 
 export interface QualifiedPoolNotification {
+  /**
+   * Missing on the legacy broad-alert cohort. A present value identifies the
+   * immutable admission policy that produced this future-only notification.
+   */
+  qualificationVersion?: string;
   tokenAddress: string;
   poolAddress: string;
   tokenSymbol: string;
@@ -70,7 +75,38 @@ export interface QualifiedPoolNotification {
   marketCapUsd?: number;
   riskScore: number;
   riskConfidence: number;
+  riskAssessedAt?: string;
+  poolAgeMinutes?: number;
+  buys5m?: number;
+  sells5m?: number;
+  transactions5m?: number;
+  buyShare5m?: number;
+  volumeLiquidityRatio?: number;
+  top10HolderPercent?: number;
+  tradeCoverageComplete?: boolean;
+  researchMode?: "notify" | "shadow";
+  parentQualificationVersion?: string;
 }
+
+export const STRICT_QUALIFIED_POOL_NOTIFICATION_VERSION = "strict-flow-v2-20260817";
+export const CAUSAL_WALLET_SHADOW_QUALIFICATION_VERSION = "strict-flow-v4-causal-shadow-20260822";
+
+/**
+ * Frozen prospective alert policy. Changing any threshold requires a new
+ * version and activation boundary; do not silently tune this cohort in place.
+ */
+export const strictQualifiedPoolNotificationPolicy = {
+  version: STRICT_QUALIFIED_POOL_NOTIFICATION_VERSION,
+  minimumPoolAgeMinutes: 5,
+  minimumTransactions5m: 20,
+  minimumBuyShare5m: 0.5,
+  maximumBuyShare5mExclusive: 0.6,
+  maximumVolumeLiquidityRatioExclusive: 0.5,
+  maximumTop10HolderPercentExclusive: 20,
+  minimumRiskConfidence: 90,
+  requireZeroRiskScore: true,
+  requireCompleteTradeCoverage: true
+} as const;
 
 export interface PipelineStatusNotification {
   checkedAt: string;
@@ -83,6 +119,28 @@ export interface PipelineStatusNotification {
   lastPoolAgeSeconds?: number;
   lastWalletTradeAgeSeconds?: number;
   databaseBytes: number;
+  openCoverageIncidentCount?: number;
+  openCoverageIncidents?: IngestionCoverageIncidentStatus[];
+  coverageTransition?: IngestionCoverageIncidentTransition;
+}
+
+export interface IngestionCoverageIncidentStatus {
+  incidentId: string;
+  programAddress: string;
+  provider: string;
+  reason: string;
+  gapStartedAt: string;
+  openedAt: string;
+  clusterSlot?: number;
+  sourceSlot?: number;
+  slotLag?: number;
+  silenceMs?: number;
+  coverageDisposition: "alpha_excluded_unreconciled" | "reconciled";
+}
+
+export interface IngestionCoverageIncidentTransition extends IngestionCoverageIncidentStatus {
+  transition: "opened" | "transport-recovered" | "coverage-reconciled";
+  transitionAt: string;
 }
 
 export type PaperTradeNotificationAction =
@@ -590,6 +648,7 @@ export interface IngestionCursorEvidence extends EvidenceMetadata {
   address: string;
   lastSignature: string;
   lastSlot: number;
+  lastEventOccurredAt?: string;
 }
 
 export interface RuntimeThresholds {

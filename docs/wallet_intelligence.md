@@ -91,6 +91,12 @@ proof of an executable fill at the threshold. Detection/exit latency, liquidity-
 slippage, gap-through-stop behavior and zero proceeds after a terminal rug remain mandatory before
 any managed score can feed Telegram or paper entry.
 
+The managed shadow fails closed on followability timing and pool identity. Its default maximum delay
+from the source wallet buy to the recorded bot entry is 60 seconds; missing or slower timestamps do
+not contribute outcomes. Price paths are restricted to the entry's exact pool, so another pool for
+the same mint cannot create a fictitious exit. These are model-quality filters, not reasons to lower
+the tail-risk gates.
+
 ## Status gates
 
 All sample counts below use the current 90-day window.
@@ -120,6 +126,11 @@ A wallet score and a token-entry signal are separate decisions. Even a qualified
 - a recent source-linked observation.
 
 Risk assessment fails closed when mint/freeze authority or holder concentration cannot be established. Direct creators are excluded at score time.
+
+Only an entry that already proves all four facts—source linkage, controlled flow, known critical
+token risk and passed critical token risk—may use the signal-relevant queue lane. This changes when
+the wallet is recomputed, not whether it can pass scoring. Missing or failed risk never receives a
+latency shortcut and remains blocked by the same downstream gates.
 
 The approved design also calls for creator/funder links, strong insider/bundler clusters and critical unknown security evidence to block candidacy. Only the direct-creator and token-risk gates are currently connected end-to-end; funded-by and cluster exclusions remain a production-readiness gap.
 

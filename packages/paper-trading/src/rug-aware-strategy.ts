@@ -1,7 +1,8 @@
-import { round } from "@memecoin-alpha/shared";
+import { STRICT_QUALIFIED_POOL_NOTIFICATION_VERSION, round } from "@memecoin-alpha/shared";
 
 export const QUALIFIED_POOL_PAPER_STRATEGY_VERSION = "qualified-pool-paper-v1";
 export const QUALIFIED_POOL_PAPER_V2_STRATEGY_VERSION = "qualified-pool-paper-v2";
+export const QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION = "qualified-pool-paper-v3-strict-flow";
 
 export interface RugAwarePaperConfig {
   startingBalanceUsd: number;
@@ -14,6 +15,7 @@ export interface RugAwarePaperConfig {
   minimumEntryVolume5mUsd: number;
   minimumEntryTransactions: number;
   minimumEntryBuyShare: number;
+  maximumEntryBuyShare: number;
   maximumEntryVolumeLiquidityRatio: number;
   minimumLiquidityRetention: number;
   maximumPositionLiquidityFraction: number;
@@ -45,6 +47,7 @@ export const defaultRugAwarePaperConfig: RugAwarePaperConfig = {
   minimumEntryVolume5mUsd: 5_000,
   minimumEntryTransactions: 20,
   minimumEntryBuyShare: 3 / 7,
+  maximumEntryBuyShare: 1,
   maximumEntryVolumeLiquidityRatio: 999,
   minimumLiquidityRetention: 0.8,
   maximumPositionLiquidityFraction: 0.0006,
@@ -76,6 +79,7 @@ export const conservativeRugAwarePaperConfig: RugAwarePaperConfig = {
   minimumEntryVolume5mUsd: 10_000,
   minimumEntryTransactions: 40,
   minimumEntryBuyShare: 0.58,
+  maximumEntryBuyShare: 1,
   maximumEntryVolumeLiquidityRatio: 1.5,
   minimumLiquidityRetention: 0.9,
   maximumPositionLiquidityFraction: 0.00025,
@@ -96,6 +100,38 @@ export const conservativeRugAwarePaperConfig: RugAwarePaperConfig = {
   exitBaseSlippageBps: 350
 };
 
+export const strictFlowRugAwarePaperConfig: RugAwarePaperConfig = {
+  startingBalanceUsd: 100,
+  targetPositionSizeUsd: 6,
+  maximumOpenPositions: 2,
+  maximumPortfolioExposureUsd: 12,
+  confirmationDelaySeconds: 120,
+  maximumEntryAgeMinutes: 10,
+  minimumEntryLiquidityUsd: 10_000,
+  minimumEntryVolume5mUsd: 5_000,
+  minimumEntryTransactions: 20,
+  minimumEntryBuyShare: 0.5,
+  maximumEntryBuyShare: 0.6,
+  maximumEntryVolumeLiquidityRatio: 0.5,
+  minimumLiquidityRetention: 0.9,
+  maximumPositionLiquidityFraction: 0.0006,
+  stopLossPercent: 15,
+  capitalRecoveryTriggerPercent: 20,
+  capitalRecoveryFraction: 0.85,
+  secondTakeProfitPercent: 50,
+  secondTakeProfitFraction: 0.75,
+  trailingStopPercent: 15,
+  maximumHoldMinutes: 30,
+  stagnationExitMinutes: 10,
+  minimumStagnationReturnPercent: 3,
+  emergencyLiquidityUsd: 7_500,
+  emergencyLiquidityRetention: 0.7,
+  missingPairLimit: 2,
+  feeBps: 30,
+  entryBaseSlippageBps: 250,
+  exitBaseSlippageBps: 400
+};
+
 export function rugAwarePaperConfigForVersion(strategyVersion: string): RugAwarePaperConfig {
   if (strategyVersion === QUALIFIED_POOL_PAPER_STRATEGY_VERSION) {
     return defaultRugAwarePaperConfig;
@@ -103,7 +139,16 @@ export function rugAwarePaperConfigForVersion(strategyVersion: string): RugAware
   if (strategyVersion === QUALIFIED_POOL_PAPER_V2_STRATEGY_VERSION) {
     return conservativeRugAwarePaperConfig;
   }
+  if (strategyVersion === QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION) {
+    return strictFlowRugAwarePaperConfig;
+  }
   throw new Error(`Unsupported paper strategy version: ${strategyVersion}.`);
+}
+
+export function paperQualificationVersionForStrategy(strategyVersion: string): string | undefined {
+  return strategyVersion === QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION
+    ? STRICT_QUALIFIED_POOL_NOTIFICATION_VERSION
+    : undefined;
 }
 
 export interface PaperMarketSnapshot {
@@ -170,8 +215,12 @@ export function validatePaperEntry(input: {
   if (entryTransactions < config.minimumEntryTransactions) {
     return "entry_activity_too_low";
   }
-  if (input.snapshot.buys5m / Math.max(entryTransactions, 1) < config.minimumEntryBuyShare) {
+  const entryBuyShare = input.snapshot.buys5m / Math.max(entryTransactions, 1);
+  if (entryBuyShare < config.minimumEntryBuyShare) {
     return "entry_sell_pressure";
+  }
+  if (config.maximumEntryBuyShare < 1 && entryBuyShare >= config.maximumEntryBuyShare) {
+    return "entry_buy_share_too_high";
   }
   if (
     input.snapshot.liquidityUsd > 0 &&

@@ -90,6 +90,45 @@ describe("wallet evidence engine", () => {
     });
   });
 
+  it("does not treat a transient unavailable exact pair as a zero-price fill", () => {
+    const unavailable = {
+      ...makePrice("missing", 8, 0, false),
+      poolAddress: "PoolExact111",
+      raw: { marketState: "pair-missing-confirmed", marketExecutable: false }
+    };
+
+    expect(
+      calculateWalletSignalOutcome(
+        makeEntry({ poolAddress: "PoolExact111" }),
+        [unavailable],
+        "2026-07-05T00:25:00.000Z"
+      )
+    ).toMatchObject({ status: "unresolved", rugged: false });
+  });
+
+  it("never substitutes another pool's price for exact-pool followability", () => {
+    const entry = makeEntry({ poolAddress: "PoolExact111" });
+    const wrongPool = {
+      ...makePrice("wrong-pool", 22, 5),
+      poolAddress: "PoolOther222"
+    };
+    const exactPool = {
+      ...makePrice("exact-pool", 24, 1.1),
+      poolAddress: "PoolExact111"
+    };
+
+    expect(
+      calculateWalletSignalOutcome(entry, [wrongPool], "2026-07-05T00:35:00.000Z")
+    ).toMatchObject({ status: "unresolved" });
+    expect(
+      calculateWalletSignalOutcome(entry, [wrongPool, exactPool], "2026-07-05T00:35:00.000Z")
+    ).toMatchObject({
+      status: "mature",
+      outcomePriceUsd: 1.1,
+      frozenAt: "2026-07-05T00:24:00.000Z"
+    });
+  });
+
   it("excludes provisional outcomes from wallet score and deduplicates cohort tokens", () => {
     const entry = makeEntry();
     const secondEntry = {

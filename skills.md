@@ -6,6 +6,21 @@ technology wish list.
 
 Read only the routes relevant to the task, but always read `AGENTS.md` first.
 
+## Native repository skills
+
+Codex discovers these focused workflows from `.agents/skills/`. Use the smallest matching set; this
+file remains the detailed route reference loaded by those skills.
+
+| Skill | Use when |
+| --- | --- |
+| `$walletscaner-audit` | Read-only diagnosis, status, architecture review, root cause, or planning |
+| `$walletscaner-data-pipeline` | Solana ingestion, provider, PostgreSQL, storage, replay, or capacity changes |
+| `$walletscaner-alpha-research` | Wallet/token alpha, risk, outcome, backtest, signal, or paper research |
+| `$walletscaner-production-ops` | Any server, Compose, backup, migration, deployment, start/stop, or incident work |
+
+Skills may be combined when a request crosses a real boundary, such as a pipeline fix followed by a
+separately authorized production rollout. A skill never expands the user's authorization.
+
 ## Route selection
 
 | Task or trigger                                              | Primary route            | Required sources                                        |
@@ -88,6 +103,7 @@ Read:
 - `docs/providers.md`
 - `docs/data_model.md`
 - `docs/operations.md`
+- `docs/storage_lifecycle.md` for fixed-disk capacity, B2 tiers and populated cutover work
 - `apps/worker/src/watch-solana.ts`
 - `packages/providers/src/solana-event-source.ts`
 - `packages/providers/src/solana-ws.ts`
@@ -370,7 +386,8 @@ deployment. `AGENTS.md` is mandatory and takes precedence.
 
 Read:
 
-- `AGENTS.md`, especially Current operational hold and Protected co-tenant
+- `AGENTS.md`, especially production authority and protected co-tenant rules
+- `docs/agent/current-state.md`
 - `docs/operations.md`
 - `docker-compose.server.yml`
 - `scripts/maintenance/*`
@@ -397,6 +414,42 @@ Mutation protocol:
 7. Verify Walletscaner state, persistent mounts/data, and Robinhoodscaner health afterward.
 
 Never restart the intentionally paused stack merely to run a diagnostic.
+
+### Cold archive and fixed-disk retention
+
+Use this sub-route for B2/Object Lock, migrations 033-034, archive writer/verifier, or payload-partition
+retirement. In addition to the operations sources, read:
+
+- `packages/db/src/archive-store.ts`
+- `packages/db/src/archive-artifact.ts`
+- `packages/db/src/archive-retention.ts`
+- `packages/providers/src/object-storage.ts`
+- `scripts/archive/*`
+- `scripts/migrations/033_cold_archive_manifest.sql`
+- `scripts/migrations/034_archive_retirement_policy.sql`
+
+Required sequence:
+
+1. Keep `ARCHIVE_ENABLED=false`, `ARCHIVE_DRY_RUN=true` and production services stopped during
+   diagnosis or migration rehearsal.
+2. Verify separate bucket/prefix-scoped roles. Prefer a writer without read/delete/bypass governance
+   and a verifier with `readFiles` plus `readFileRetentions`. If a provider's fixed profiles cannot
+   meet that, require explicit user risk acceptance, isolate credentials per process, prove there is
+   no delete/bucket-management command path, and label policy attestation separately from API proof.
+3. Prove a complete upload -> independent `GetObjectRetention` -> GET -> zstd restore -> row/byte/
+   SHA-256 match. PUT, ETag, HEAD, file listing or zstd frame validity alone is insufficient.
+4. Apply a new migration only after current dump/restore evidence and populated PostgreSQL 16
+   rehearsal. Never edit migration 033 after it is applied anywhere canonical.
+5. Run one future-only dry run and one segment canary while measuring query plan, temp I/O, runtime,
+   RSS, CPU and host headroom. Keep export on partition/inbox PK index streaming; any external sort
+   or full history scan is a failed gate.
+6. Source compaction or partition retirement is allowed only while the exact manifest revision is
+   `verified`, metadata coverage is complete, observed Object Lock retention is still active, the
+   durable migration-034 future-only policy is ready, and `ARCHIVE_RETIREMENT_ENABLED=true` is set
+   for that maintenance run. Missing either gate must leave PostgreSQL data intact.
+7. Do not configure bucket lifecycle deletion or remove a B2 validation object merely because the
+   production partition was retired. Archive horizon/cost and restore cadence require a separate
+   policy decision.
 
 ## Performance and capacity engineering
 

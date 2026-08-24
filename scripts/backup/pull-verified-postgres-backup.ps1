@@ -4,7 +4,7 @@ param(
   [string]$Server = 'bot',
 
   [ValidateRange(1, 65535)]
-  [int]$SshPort = 443,
+  [int]$SshPort = 22,
 
   [ValidatePattern('^/[A-Za-z0-9._/-]+$')]
   [string]$RemoteBackupDirectory = '/opt/walletscaner/backups',
@@ -20,7 +20,9 @@ param(
   [ValidateRange(1, 10)]
   [int]$TransferAttempts = 4,
 
-  [switch]$AcknowledgeRemote
+  [switch]$AcknowledgeRemote,
+
+  [switch]$PruneRemoteVerifiedBackups
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +40,30 @@ function Invoke-Native {
   if ($LASTEXITCODE -ne 0) {
     throw $FailureMessage
   }
+}
+
+function Get-FileHashWithRetry {
+  param(
+    [Parameter(Mandatory)]
+    [string]$Path,
+    [ValidateRange(1, 120)]
+    [int]$Attempts = 40,
+    [ValidateRange(50, 5000)]
+    [int]$DelayMilliseconds = 250
+  )
+
+  for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+    try {
+      return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    } catch [System.IO.IOException] {
+      if ($attempt -eq $Attempts) { throw }
+      Start-Sleep -Milliseconds $DelayMilliseconds
+    } catch [System.UnauthorizedAccessException] {
+      if ($attempt -eq $Attempts) { throw }
+      Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+  }
+  throw "Unable to hash $Path after $Attempts attempts."
 }
 
 if (-not $BackupName) {
@@ -85,7 +111,7 @@ if ($expectedHash -notmatch '^[a-f0-9]{64}$') {
 
 $needsTransfer = $true
 if (Test-Path -LiteralPath $dumpPath) {
-  $existingHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dumpPath).Hash.ToLowerInvariant()
+  $existingHash = Get-FileHashWithRetry -Path $dumpPath
   $needsTransfer = $existingHash -ne $expectedHash
 }
 
@@ -117,7 +143,10 @@ if ($needsTransfer) {
     throw "PostgreSQL dump transfer failed after $TransferAttempts resumable attempts."
   }
 
-  $partialHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $partialDumpPath).Hash.ToLowerInvariant()
+  # Windows OpenSSH can report sftp exit before its destination handle is
+  # released. Retry only transient sharing violations; never treat an
+  # unreadable hash as a checksum mismatch and delete a complete transfer.
+  $partialHash = Get-FileHashWithRetry -Path $partialDumpPath
   if ($partialHash -ne $expectedHash) {
     Remove-Item -LiteralPath $partialDumpPath -Force
     throw "Transferred dump checksum mismatch: expected=$expectedHash actual=$partialHash"
@@ -125,7 +154,7 @@ if ($needsTransfer) {
   Move-Item -LiteralPath $partialDumpPath -Destination $dumpPath -Force
 }
 
-$actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dumpPath).Hash.ToLowerInvariant()
+$actualHash = Get-FileHashWithRetry -Path $dumpPath
 if ($actualHash -ne $expectedHash) {
   throw "Local dump checksum mismatch: expected=$expectedHash actual=$actualHash"
 }
@@ -212,6 +241,21 @@ if ($AcknowledgeRemote) {
   Invoke-Native -FailureMessage 'Remote off-site acknowledgement commit failed.' -Command {
     ssh -p $SshPort $Server $remoteCommit
   }
+
+  if ($PruneRemoteVerifiedBackups) {
+    $remotePruneScript = '/opt/walletscaner/scripts/backup/prune-verified-server-backups.sh'
+    # Invoke through POSIX sh instead of relying on an executable bit surviving
+    # a Windows -> Linux release copy. The script is still path-pinned and
+    # performs its own fail-closed directory, checksum and acknowledgement
+    # validation before it removes any old server generation.
+    $remotePrune = "test -r '$remotePruneScript' && APPLY=true POSTGRES_BACKUP_DIRECTORY='$RemoteBackupDirectory' sh '$remotePruneScript'"
+    Invoke-Native -FailureMessage 'Verified server backup reconciliation failed closed.' -Command {
+      ssh -p $SshPort $Server $remotePrune |
+        ForEach-Object { Write-Verbose "remote-backup-reconcile: $_" }
+    }
+  }
+} elseif ($PruneRemoteVerifiedBackups) {
+  throw '-PruneRemoteVerifiedBackups requires -AcknowledgeRemote.'
 }
 
 [pscustomobject]$manifest

@@ -11,6 +11,10 @@ reports
 backups
 deploy/*.tar
 deploy/*.tar.gz
+deploy/*.tar.zst
+deploy/*.zip
 *.tar
 *.tar.gz
+*.tar.zst
+*.zip
 npm-debug.log*

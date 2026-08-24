@@ -10,11 +10,12 @@ import {
   type QualifiedPoolPaperCandidate
 } from "@memecoin-alpha/db";
 import {
-  QUALIFIED_POOL_PAPER_STRATEGY_VERSION,
+  QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION,
   calculatePaperPositionSize,
   decidePaperPosition,
   entrySlippageBps,
   exitSlippageBps,
+  paperQualificationVersionForStrategy,
   rugAwarePaperConfigForVersion,
   validatePaperEntry,
   type PaperMarketSnapshot,
@@ -24,8 +25,9 @@ import { DexScreenerClient, type DexScreenerPair } from "@memecoin-alpha/provide
 import { round, type PaperTrade, type PaperTradeNotification } from "@memecoin-alpha/shared";
 
 const runtime = loadRuntimeConfig();
-const strategyVersion = process.env.PAPER_STRATEGY_VERSION ?? QUALIFIED_POOL_PAPER_STRATEGY_VERSION;
+const strategyVersion = requiredPaperStrategyVersion();
 const strategy = rugAwarePaperConfigForVersion(strategyVersion);
+const requiredQualificationVersion = requiredPaperQualificationVersion(strategyVersion);
 const pool = new pg.Pool({ connectionString: runtime.databaseUrl, max: 2 });
 const store = new PaperTradingStore(pool);
 const notificationStore = new TelegramNotificationStore(pool);
@@ -34,6 +36,26 @@ const workerId = `${hostname()}:${process.pid}:rug-aware-paper`;
 const pollIntervalMs = 30_000;
 let stopping = false;
 let lastHealthLogAt = 0;
+
+function requiredPaperStrategyVersion(): typeof QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION {
+  const configured = process.env.PAPER_STRATEGY_VERSION?.trim();
+  if (configured !== QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION) {
+    throw new Error(
+      `PAPER_STRATEGY_VERSION must be exactly ${QUALIFIED_POOL_PAPER_V3_STRATEGY_VERSION}.`
+    );
+  }
+  return configured;
+}
+
+function requiredPaperQualificationVersion(strategyVersion: string): string {
+  const qualificationVersion = paperQualificationVersionForStrategy(strategyVersion);
+  if (!qualificationVersion) {
+    throw new Error(
+      "The active paper strategy requires an explicit notification qualification version."
+    );
+  }
+  return qualificationVersion;
+}
 
 process.once("SIGINT", () => {
   stopping = true;
@@ -61,6 +83,7 @@ while (!stopping) {
           type: "rug-aware-paper-health",
           workerId,
           strategyVersion,
+          requiredQualificationVersion,
           activatedAt: portfolio.activatedAt,
           cashBalanceUsd: snapshot.cashBalanceUsd,
           openPositionCount: snapshot.openPositionCount,
@@ -89,7 +112,8 @@ async function processNewCandidates(): Promise<number> {
   const candidates = await store.listQualifiedPoolCandidates(
     strategyVersion,
     strategy.confirmationDelaySeconds,
-    5
+    5,
+    requiredQualificationVersion
   );
   let opened = 0;
   for (const candidate of candidates) {
@@ -110,6 +134,9 @@ async function processNewCandidates(): Promise<number> {
 }
 
 async function processCandidate(candidate: QualifiedPoolPaperCandidate): Promise<boolean> {
+  if (!candidate.currentDiscoveryCoveragePassed) {
+    return rejectCandidate(candidate, "discovery_coverage_unreconciled");
+  }
   if (!candidate.currentRiskPassed) {
     return rejectCandidate(candidate, "current_token_risk_unknown_or_failed");
   }
@@ -180,24 +207,36 @@ async function processCandidate(candidate: QualifiedPoolPaperCandidate): Promise
       lastMarket: market
     }
   };
-  const recorded = await store.recordTradeEvent(trade, {
-    id: stableId(`${tradeId}:opened`),
-    tradeId,
-    strategyVersion,
-    eventType: "opened",
-    quantity,
-    priceUsd: fillPriceUsd,
-    grossValueUsd: positionSizeUsd - entryFeeUsd,
-    feesUsd: entryFeeUsd,
-    cashDeltaUsd: -positionSizeUsd,
-    realizedPnlUsd: 0,
-    slippageBps,
-    liquidityUsd,
-    occurredAt,
-    reason: trade.reason,
-    raw: { market, candidate: candidate.payload }
-  });
-  if (!recorded) return false;
+  if (!(await store.isQualifiedPoolCandidateCoverageEligible(candidate.notificationId))) {
+    return rejectCandidate(candidate, "discovery_coverage_unreconciled");
+  }
+  const recorded = await store.recordTradeEvent(
+    trade,
+    {
+      id: stableId(`${tradeId}:opened`),
+      tradeId,
+      strategyVersion,
+      eventType: "opened",
+      quantity,
+      priceUsd: fillPriceUsd,
+      grossValueUsd: positionSizeUsd - entryFeeUsd,
+      feesUsd: entryFeeUsd,
+      cashDeltaUsd: -positionSizeUsd,
+      realizedPnlUsd: 0,
+      slippageBps,
+      liquidityUsd,
+      occurredAt,
+      reason: trade.reason,
+      raw: { market, candidate: candidate.payload }
+    },
+    { qualificationVersion: requiredQualificationVersion }
+  );
+  if (!recorded) {
+    if (!(await store.isQualifiedPoolCandidateCoverageEligible(candidate.notificationId))) {
+      return rejectCandidate(candidate, "discovery_coverage_unreconciled");
+    }
+    return false;
+  }
   const updatedPortfolio = await store.getPortfolioSnapshot(strategyVersion);
   await enqueueTradeNotification(
     `opened:${tradeId}`,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Walletscaner Alpha Research"
+  short_description: "Validate causal alpha and paper models"
+  default_prompt: "Use $walletscaner-alpha-research to evaluate a wallet or token alpha hypothesis without temporal leakage."

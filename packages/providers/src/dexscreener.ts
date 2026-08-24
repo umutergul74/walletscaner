@@ -71,6 +71,15 @@ export class DexScreenerClient {
     );
   }
 
+  async fetchPair(chain: ChainId, pairAddress: string): Promise<DexScreenerPair[]> {
+    const response = await fetchJson<{ pairs?: DexScreenerPair[] | null }>(
+      "dexscreener",
+      `${this.baseUrl}/latest/dex/pairs/${chain}/${pairAddress}`,
+      { fetchImpl: this.fetchImpl, retries: 2 }
+    );
+    return response.pairs ?? [];
+  }
+
   async fetchTokenPairsBatch(chain: ChainId, tokenAddresses: string[]): Promise<DexScreenerPair[]> {
     if (tokenAddresses.length === 0) return [];
     if (tokenAddresses.length > 30) {

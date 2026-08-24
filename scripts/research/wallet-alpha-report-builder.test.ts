@@ -130,12 +130,14 @@ describe("wallet alpha report", () => {
     expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toEqual({
       pending: 1,
       processing: 0,
-      failed: 1
+      failed: 1,
+      backgroundPending: 1,
+      elevatedPending: 0,
+      signalPending: 0,
+      oldestPendingAt: expect.any(String)
     });
     expect(scopedLoads.mock.calls.map(([wallets]) => wallets)).toEqual([
       ["AHeavyWallet"],
-      ["AHeavyWallet"],
-      ["ZHealthyWallet"],
       ["ZHealthyWallet"]
     ]);
     expect(await repository.listWalletAlphaScores("evidence-v1")).toHaveLength(1);
@@ -143,6 +145,9 @@ describe("wallet alpha report", () => {
 
   it("completes low-evidence work without scoring it", async () => {
     const repository = new MemoryRepository();
+    const candidatePrefetch = vi.spyOn(repository, "listWalletAlphaWorkCandidates");
+    const admissionPrefetch = vi.spyOn(repository, "probeWalletAlphaAdmission");
+    const scopedTradeLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
     await repository.saveWalletTradeEvent(walletTrade("SingleTradeWallet", "single", 1));
     for (let index = 0; index < 3; index += 1) {
       await repository.saveWalletEntrySignal({
@@ -174,10 +179,91 @@ describe("wallet alpha report", () => {
       skippedLowEvidenceWallets: 1,
       failedWallets: 0
     });
-    expect((await repository.listWalletAlphaScores("evidence-v1")).map((score) => score.walletAddress)).toEqual([
-      "ThreeEntryWallet"
-    ]);
+    expect(
+      (await repository.listWalletAlphaScores("evidence-v1")).map((score) => score.walletAddress)
+    ).toEqual(["ThreeEntryWallet"]);
     expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({ pending: 0 });
+    expect(candidatePrefetch).toHaveBeenCalledTimes(1);
+    expect(admissionPrefetch).toHaveBeenCalledTimes(1);
+    // Only the admitted wallet reaches the full evidence load. The low-evidence
+    // wallet is completed from the revision-bound batch probe.
+    expect(scopedTradeLoads.mock.calls.map(([wallets]) => wallets)).toEqual([["ThreeEntryWallet"]]);
+  });
+
+  it("falls back to a fresh probe when evidence advances the queued revision", async () => {
+    const repository = new MemoryRepository();
+    await repository.saveWalletTradeEvent(walletTrade("RevisionWallet", "revision-1", 1));
+    const originalProbe = repository.probeWalletAlphaAdmission.bind(repository);
+    vi.spyOn(repository, "probeWalletAlphaAdmission").mockImplementation(async (...args) => {
+      const probes = await originalProbe(...args);
+      await repository.saveWalletTradeEvent(walletTrade("RevisionWallet", "revision-2", 2));
+      return probes;
+    });
+    const scopedTradeLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
+
+    const result = await processWalletAlphaQueue(
+      repository,
+      "evidence-v1",
+      "2026-07-10T00:00:00.000Z",
+      30,
+      {
+        materializeHistorical: false,
+        workBatchSize: 1,
+        maxWorkBatches: 1,
+        minimumTradeEvents: 6,
+        minimumEntries: 3
+      }
+    );
+
+    expect(result.skippedLowEvidenceWallets).toBe(1);
+    expect(scopedTradeLoads).toHaveBeenCalledTimes(1);
+  });
+
+  it("processes a risk-passed source entry before historical backlog", async () => {
+    const repository = new MemoryRepository();
+    await repository.saveWalletTradeEvent(walletTrade("HistoricalWallet", "historical-buy", 1));
+    await repository.saveWalletEntrySignal({
+      ...unknownRiskEntry(),
+      idempotencyKey: "safe-priority-entry",
+      walletAddress: "SafePriorityWallet",
+      tokenAddress: "SafePriorityToken",
+      cohort: "controlled-flow-control",
+      flowEvidence: {
+        controlledFlow: true,
+        tokenRiskKnown: true,
+        tokenRiskPassed: true
+      }
+    });
+    const onSignalRelevantWalletProcessed = vi.fn();
+
+    const result = await processWalletAlphaQueue(
+      repository,
+      "evidence-v1",
+      "2026-07-10T00:00:00.000Z",
+      30,
+      {
+        materializeHistorical: false,
+        workBatchSize: 1,
+        maxWorkBatches: 1,
+        minimumTradeEvents: 6,
+        minimumEntries: 1,
+        onSignalRelevantWalletProcessed
+      }
+    );
+
+    expect(result).toMatchObject({
+      processedWallets: 1,
+      signalRelevantWallets: 1,
+      signalRefreshFailures: 0
+    });
+    expect(onSignalRelevantWalletProcessed).toHaveBeenCalledWith(
+      expect.objectContaining({ walletAddress: "SafePriorityWallet", priority: 2 })
+    );
+    expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({
+      pending: 1,
+      backgroundPending: 1,
+      signalPending: 0
+    });
   });
 });
 

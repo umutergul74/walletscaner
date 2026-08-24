@@ -23,6 +23,23 @@ describe("DexScreenerClient", () => {
     ).rejects.toThrow("at most 30");
   });
 
+  it("uses the exact-pair endpoint to confirm a missing token-batch market", async () => {
+    let requestedUrl = "";
+    const client = new DexScreenerClient("https://api.dexscreener.com", (async (
+      input: RequestInfo | URL
+    ) => {
+      requestedUrl = String(input);
+      return Response.json({ pairs: [{ pairAddress: "Pool111", priceUsd: "0.01" }] });
+    }) as typeof fetch);
+
+    await expect(client.fetchPair("solana", "Pool111")).resolves.toEqual([
+      { pairAddress: "Pool111", priceUsd: "0.01" }
+    ]);
+    expect(requestedUrl).toBe(
+      "https://api.dexscreener.com/latest/dex/pairs/solana/Pool111"
+    );
+  });
+
   it("normalizes latest Solana profiles into idempotent events", async () => {
     const fetchImpl = async (input: RequestInfo | URL) => {
       const url = String(input);

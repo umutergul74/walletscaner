@@ -21,6 +21,7 @@ export interface QualifiedPoolPaperCandidate {
   deliveredAt: string;
   payload: QualifiedPoolNotification;
   currentRiskPassed: boolean;
+  currentDiscoveryCoveragePassed: boolean;
 }
 
 export interface PaperTradeEvent {
@@ -113,8 +114,12 @@ export class PaperTradingStore {
   async listQualifiedPoolCandidates(
     strategyVersion: string,
     confirmationDelaySeconds: number,
-    limit = 10
+    limit = 10,
+    qualificationVersion: string
   ): Promise<QualifiedPoolPaperCandidate[]> {
+    if (!qualificationVersion.trim()) {
+      throw new Error("Paper candidate qualification version is required.");
+    }
     const result = await this.pool.query(
       `SELECT
          message.id,
@@ -126,7 +131,27 @@ export class PaperTradingStore {
               AND risk.confidence > 0
               AND jsonb_array_length(risk.warnings) = 0,
             FALSE
-          ) AS current_risk_passed
+          ) AS current_risk_passed,
+         EXISTS (
+           SELECT 1
+           FROM pools pool
+           WHERE pool.chain = 'solana'
+             AND pool.pool_address = message.payload->>'poolAddress'
+             AND pool.base_token_address = message.payload->>'tokenAddress'
+             AND pool.created_at IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+               FROM ingestion_coverage_incidents incident
+               WHERE incident.chain = pool.chain
+                 AND incident.coverage_reconciled_at IS NULL
+                 AND incident.program_address = pool.dex
+                 AND pool.created_at >= incident.gap_started_at
+                 AND pool.created_at <= COALESCE(
+                   incident.closed_at,
+                   'infinity'::timestamptz
+                 )
+             )
+         ) AS current_discovery_coverage_passed
        FROM telegram_notification_outbox message
        JOIN paper_portfolios portfolio
          ON portfolio.strategy_version = $1
@@ -144,6 +169,8 @@ export class PaperTradingStore {
        ) risk ON TRUE
        WHERE message.event_type = 'qualified-pool'
          AND message.status = 'delivered'
+         AND portfolio.status = 'active'
+         AND message.payload->>'qualificationVersion' = $4::text
          AND message.delivered_at >= portfolio.activated_at
          AND message.delivered_at <= NOW() - ($2 * INTERVAL '1 second')
          AND NOT EXISTS (
@@ -156,15 +183,47 @@ export class PaperTradingStore {
       [
         strategyVersion,
         Math.max(0, Math.trunc(confirmationDelaySeconds)),
-        Math.max(1, Math.min(50, Math.trunc(limit)))
+        Math.max(1, Math.min(50, Math.trunc(limit))),
+        qualificationVersion
       ]
     );
     return result.rows.map((row) => ({
       notificationId: String(row.id),
       deliveredAt: new Date(row.delivered_at).toISOString(),
       payload: row.payload as QualifiedPoolNotification,
-      currentRiskPassed: row.current_risk_passed === true
+      currentRiskPassed: row.current_risk_passed === true,
+      currentDiscoveryCoveragePassed: row.current_discovery_coverage_passed === true
     }));
+  }
+
+  async isQualifiedPoolCandidateCoverageEligible(notificationId: string): Promise<boolean> {
+    const result = await this.pool.query<{ eligible: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM pools pool
+         WHERE pool.chain = 'solana'
+           AND pool.pool_address = message.payload->>'poolAddress'
+           AND pool.base_token_address = message.payload->>'tokenAddress'
+           AND pool.created_at IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1
+             FROM ingestion_coverage_incidents incident
+             WHERE incident.chain = pool.chain
+               AND incident.coverage_reconciled_at IS NULL
+               AND incident.program_address = pool.dex
+               AND pool.created_at >= incident.gap_started_at
+               AND pool.created_at <= COALESCE(
+                 incident.closed_at,
+                 'infinity'::timestamptz
+               )
+           )
+       ) AS eligible
+       FROM telegram_notification_outbox message
+       WHERE message.id = $1
+         AND message.event_type = 'qualified-pool'`,
+      [notificationId]
+    );
+    return result.rows[0]?.eligible === true;
   }
 
   async listOpenTrades(strategyVersion: string): Promise<PaperTrade[]> {
@@ -220,7 +279,13 @@ export class PaperTradingStore {
     return (result.rowCount ?? 0) === 1;
   }
 
-  async recordTradeEvent(trade: PaperTrade, event: PaperTradeEvent): Promise<boolean> {
+  async recordTradeEvent(
+    trade: PaperTrade,
+    event: PaperTradeEvent,
+    options: { qualificationVersion?: string } = {}
+  ): Promise<boolean> {
+    const qualificationVersion = options.qualificationVersion?.trim();
+    if (event.eventType === "opened" && !qualificationVersion) return false;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -235,6 +300,59 @@ export class PaperTradingStore {
       if ((duplicate.rowCount ?? 0) > 0) {
         await client.query("ROLLBACK");
         return false;
+      }
+      if (event.eventType === "opened") {
+        const locked = await client.query(
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended('walletscaner:discovery-coverage:' || pool.dex, 0)
+           )
+           FROM telegram_notification_outbox message
+            JOIN pools pool
+              ON pool.chain = 'solana'
+             AND pool.pool_address = message.payload->>'poolAddress'
+             AND pool.base_token_address = message.payload->>'tokenAddress'
+             AND pool.created_at IS NOT NULL
+            WHERE message.id = $1
+              AND message.event_type = 'qualified-pool'
+              AND message.status = 'delivered'
+              AND message.payload->>'qualificationVersion' = $2::text`,
+          [trade.signalId, qualificationVersion]
+        );
+        if ((locked.rowCount ?? 0) !== 1) {
+          await client.query("ROLLBACK");
+          return false;
+        }
+        const coverage = await client.query<{ eligible: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM telegram_notification_outbox message
+             JOIN pools pool
+               ON pool.chain = 'solana'
+              AND pool.pool_address = message.payload->>'poolAddress'
+              AND pool.base_token_address = message.payload->>'tokenAddress'
+              AND pool.created_at IS NOT NULL
+              WHERE message.id = $1
+                AND message.status = 'delivered'
+                AND message.payload->>'qualificationVersion' = $2::text
+                AND NOT EXISTS (
+                 SELECT 1
+                 FROM ingestion_coverage_incidents incident
+                 WHERE incident.chain = pool.chain
+                   AND incident.coverage_reconciled_at IS NULL
+                   AND incident.program_address = pool.dex
+                   AND pool.created_at >= incident.gap_started_at
+                   AND pool.created_at <= COALESCE(
+                     incident.closed_at,
+                     'infinity'::timestamptz
+                   )
+               )
+           ) AS eligible`,
+          [trade.signalId, qualificationVersion]
+        );
+        if (coverage.rows[0]?.eligible !== true) {
+          await client.query("ROLLBACK");
+          return false;
+        }
       }
       await client.query(
         `INSERT INTO paper_trades (

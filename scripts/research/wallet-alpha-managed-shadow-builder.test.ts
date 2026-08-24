@@ -7,6 +7,7 @@ import type {
 } from "@memecoin-alpha/shared";
 import {
   buildManagedShadowReport,
+  entryDetectionDelaySeconds,
   renderManagedShadowMarkdown
 } from "./wallet-alpha-managed-shadow-builder";
 
@@ -39,6 +40,7 @@ describe("wallet alpha managed shadow report", () => {
       persisted: false,
       signalsEnabled: false,
       scoreStrategyVersion: "wallet-alpha-managed-v2",
+      inputs: { entries: 30, followableEntries: 30, timingExcludedEntries: 0 },
       statusCounts: { watch: 1 }
     });
     expect(report.comparisons[0]).toMatchObject({
@@ -51,6 +53,46 @@ describe("wallet alpha managed shadow report", () => {
     );
     expect(renderManagedShadowMarkdown(report)).toContain("Persisted: no");
     expect(renderManagedShadowMarkdown(report)).toContain("Signals enabled: no");
+  });
+
+  it("excludes stale or unprovable entry timing from followability", async () => {
+    const evidence = managedEvidence();
+    const staleEntries = evidence.entries.map((value) => ({
+      ...value,
+      flowEvidence: {
+        ...value.flowEvidence,
+        buyObservedAt: new Date(new Date(value.observedAt).getTime() - 61_000).toISOString()
+      }
+    }));
+    const [sourceScore] = buildWalletAlphaScores({
+      trades: evidence.trades,
+      entries: evidence.entries,
+      outcomes: evidence.outcomes,
+      strategyVersion: "evidence-v1",
+      calculatedAt: "2026-08-05T00:00:00.000Z"
+    });
+    const repository = {
+      listWalletAlphaScores: vi.fn().mockResolvedValue([sourceScore!]),
+      listWalletTradeEventsForWallets: vi.fn().mockResolvedValue(evidence.trades),
+      listWalletEntrySignalsForWallets: vi.fn().mockResolvedValue(staleEntries),
+      listWalletSignalOutcomesForWallets: vi.fn().mockResolvedValue(evidence.outcomes),
+      listTokenCreatorAddresses: vi.fn().mockResolvedValue([])
+    };
+
+    const report = await buildManagedShadowReport(
+      repository,
+      "evidence-v1",
+      "2026-08-05T00:00:00.000Z",
+      { maximumWallets: 1, maximumEntryDetectionDelaySeconds: 60 }
+    );
+
+    expect(report.inputs).toMatchObject({
+      entries: 30,
+      followableEntries: 0,
+      timingExcludedEntries: 30
+    });
+    expect(report.statusCounts.watch).toBe(0);
+    expect(entryDetectionDelaySeconds(staleEntries[0]!)).toBe(61);
   });
 });
 
@@ -105,7 +147,12 @@ function entry(index: number): WalletEntrySignalEvidence {
     observedLiquidityUsd: 20_000,
     cohort: "wallet-alpha",
     repeatWalletCount: index,
-    flowEvidence: { poolAgeMinutes: 6, tokenRiskKnown: true, tokenRiskPassed: true },
+    flowEvidence: {
+      poolAgeMinutes: 6,
+      tokenRiskKnown: true,
+      tokenRiskPassed: true,
+      buyObservedAt: new Date(new Date(observedAt).getTime() - 30_000).toISOString()
+    },
     signature: `entry-sig-${index}`,
     slot: index + 1,
     provider: "mock",

@@ -9,3 +9,5 @@ export * from "./wallet-buy";
 export * from "./wallet-trade";
 export * from "./pyth";
 export * from "./raydium-manifest";
+export * from "./solana-venue-manifest";
+export * from "./jupiter-quote";
