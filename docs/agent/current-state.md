@@ -5,44 +5,49 @@ before every operational claim or mutation.
 
 ## Last verified boundary
 
-- Observation: 2026-08-24 07:47 UTC, durable discovery-gap repair and split-WebSocket rollout plus
-  staged shared-host production canary.
+- Observation: 2026-08-24 17:09 UTC, exact-finalized repair-proof rollout and live discovery
+  transport recovery on the shared host.
 - Live capital: `ENABLE_LIVE_EXECUTION=false`; paper v3 is paused with zero open positions and v4
   remains a non-deliverable causal shadow.
-- Releases: `solana-ingestion` runs immutable `discovery-repair-cap-r20-20260824` (production image
-  `sha256:ec85cedd23f3...`, source SHA-256 `417578088d87...`). `telegram-notifier` and
+- Releases: `solana-ingestion` runs immutable `discovery-coverage-proof-r22-20260824` (runtime
+  revision `2666a81`, source SHA-256 `13413cee1b9f...`). `telegram-notifier` and
   `data-maintenance` run the compatible R18 tree; `evidence-sampler` and `wallet-alpha` remain on
   immutable `wallet-alpha-priority-r13-20260824`; operations remains R9. API, web and paper-alert
-  remain stopped. Migrations 044-045 are deployed after migration 043.
+  remain stopped. Migrations 044-046 are deployed after migration 043.
 - Shared-host state: one Walletscaner Compose project was listed; no protected co-tenant service,
   secret or runtime was inspected or changed.
 
 ## Operational discovery transport and bounded repair
 
-- **Operational — split standard WebSocket transport:** the production PublicNode endpoint
-  acknowledged four independent per-program sockets but delivered traffic only to the first two
-  from the host. R19/R20 keep Pump.fun and PumpSwap on PublicNode and route LaunchLab and CPMM to
-  `api.mainnet-beta.solana.com`; HTTP transaction fetch, cursor and repair remain on PublicNode.
-  The first R20 health sample showed LaunchLab `2` notifications / `10` slot lag and CPMM `13,384`
-  notifications / `0` slot lag. All four sources had zero reconnect, ACK timeout, heartbeat timeout,
-  queue, drop and handler-rejection counters. The route is static and hostname-only in telemetry;
-  no Helius discovery credits or new credential are used.
-- **Operational / converging — durable exact-boundary repair:** migrations 044-045 stage reconnect
-  signatures durably, collect without moving the live cursor, replay oldest-first and allow coverage
-  reconciliation only from an exact `truncation_cursor`. The unsafe R16 canary was stopped before
-  any proof closed; its rows remain failed and its 50 idempotent replay attempts are not coverage.
-  CPMM reached its exact boundary after 11,143 signatures and was replaying at 1,200/11,143 at the
-  observation boundary. Its single incident remains open and alpha-excluded until full replay plus
-  independent head match. This is the sole reason aggregate discovery remains `degraded`.
-- **Operational — fail-closed repair-cap retirement:** Pump.fun and PumpSwap each reached the
-  reviewed 20,000-signature cap before their old boundary. Both repairs remain `failed`; R20 closed
-  only the current transport state after two fresh samples and permanently retained the historical
-  intervals as `transport_recovered_gap_unreconciled`. Strict alpha consumers continue to exclude
-  them. This prevents unbounded RPC/rows/replay and removes the incident/recovery notification loop
-  without pretending the gap was repaired.
-- **Operational — Telegram transition delivery:** the two cap-retirement recovery transitions were
-  delivered once with one attempt; the outbox had no pending, retry or dead-letter row. One final
-  CPMM reconciliation transition is expected only after the durable repair proof completes.
+- **Operational — official live WebSocket / PublicNode HTTP hybrid:** PublicNode acknowledged the
+  Pump.fun and PumpSwap sockets but delivered zero live notifications for several minutes. Bounded
+  same-host canaries against `api.mainnet-beta.solana.com` delivered 24,169 Pump.fun notifications
+  in 20 seconds and 15,449 PumpSwap notifications in 23 seconds while the existing official sockets
+  stayed active. All four reviewed discovery programs now use the official WebSocket; HTTP
+  transaction fetch, cursors and bounded repair remain on PublicNode. The first post-route sample
+  had fresh Pump.fun, PumpSwap and CPMM notifications at zero slot lag. No Helius discovery credits
+  or new credential are used. The route still needs a future observation window; a short canary is
+  operational evidence, not the 99% coverage validation gate.
+- **Operational — exact-finalized durable repair:** migrations 044-046 stage reconnect
+  signatures durably, collect without moving the live cursor and replay oldest-first. Completion is
+  bound to the immutable collected target rather than the moving live cursor. A separate
+  history-aware signature-status request must prove the exact signature/slot successful and
+  finalized, and an append-only PostgreSQL proof row plus post-incident WebSocket evidence are
+  required before `coverage_reconciled_at` can be set. The rollout normalized and reconciled the
+  previous 11,143-signature CPMM repair and 731-signature Pump.fun repair; their former moving cursor
+  slots remain in the proof audit rows. The re-route startup Pump.fun, PumpSwap and CPMM scans each
+  reached the reviewed 20,000-signature cap, closed as
+  `current-transport-healthy-repair-cap-exhausted`, and retained only those historical intervals as
+  `alpha_excluded_unreconciled`. At 17:09 UTC, open incidents were zero and all four program
+  transports reported `ok`; Pump.fun, PumpSwap and CPMM were at zero slot lag and LaunchLab at two.
+- **Operational — fail-closed repair-cap retirement:** R20/R22 close only current transport state
+  after two fresh samples when a repair reaches the reviewed 20,000-signature cap. Those repairs
+  remain `failed`, the affected historical intervals remain alpha-excluded, and later current data
+  is not blocked indefinitely. This bounds RPC/rows/replay and removes the incident/recovery loop
+  without pretending that an unrepaired gap was complete.
+- **Operational — Telegram transition delivery:** transition messages remain outbox-backed and
+  deduplicated. Exact reconciliation and capacity-retirement events are emitted once per incident.
+  After convergence, there were no pending, retry, processing or dead-letter Telegram rows.
 
 ## Operational wallet-alpha priority queue
 
@@ -86,6 +91,10 @@ before every operational claim or mutation.
   SHA-256 `2f8831a3a9bde0e6e19c89099444b2404bc950f30ae9c7f20865e38c0f43fdba`. Server,
   off-host bytes, PostgreSQL 16 archive-list, sidecar and acknowledgement passed; the scheduled
   task completed with result zero.
+  The next server dump `memecoin_alpha_20260824T150923Z.dump` also completed PostgreSQL archive-list
+  validation and local SHA generation at 1,692,713,492 bytes. It is not yet an off-host verified
+  generation; the 2026-08-23 verified server/off-host recovery point remains present until that
+  acknowledgement arrives.
 - **Operational — finality gate:** migrations 041-042 are deployed. The R10 terminal-state sweep
   repairs events that arrive after their signature was already finalized. The live mismatch count
   fell from three to zero, the blocked inbox fell from 803 to normal working-set levels, and the
@@ -128,17 +137,25 @@ before every operational claim or mutation.
 
 ## Capacity and remaining hard gates
 
-- At the R13 canary PostgreSQL was about 13.80 GB and the host had about 22.30 GB free / 70% used.
-  The operations monitor remained degraded because database size exceeded its 12 GiB warning,
-  payload compaction lag was about 9,326 seconds and the conservative recent-window runway was
-  2.52 days above the 8 GiB reserve. Pipeline backlog/dead letters and unresolved finality were
-  zero. Treat the runway as a capacity alarm, not as release failure or steady-state proof.
+- At 17:09 UTC PostgreSQL was 14,525,111,319 bytes and the host had about 19 GB free / 73% used.
+  Aggregate operations status remains legitimately `degraded` even though discovery is `ok` and
+  open coverage incidents are zero: the new daily dump awaits B2 acknowledgement, database size is
+  above the 12 GiB warning, chain-payload compaction lag is about 14.1 hours and conservative runway
+  is 2.61 days above the 8 GiB reserve. The recent disk-consumption regression includes allocation
+  of the new 1.69 GB dump, while measured database growth is still about 0.58 GB/day. Do not hide or
+  relabel these capacity warnings as transport health.
 - The 95-day detailed wallet evidence layout is still not at proven disk equilibrium. Do not delete
   canonical trades, entries or outcomes until B2 wallet-evidence export, deterministic compact
   ledger dual-read parity, isolated restore, backup and stopped-cutover gates pass.
 - Continuous WAL/PITR is not operational. The verified daily dump limits data loss but is not PITR.
   A bounded spool/sidecar, measured WAL rate, B2 restore rehearsal and reserve-failure behavior are
   required before enabling PostgreSQL archiving on this fixed disk.
+- The raw live exact-log prefilter does not yet persist an ordered transport checkpoint. On a
+  restart, a high-volume program can saturate the 500-signature startup scan even if its prior
+  socket was current, because the canonical cursor intentionally advances only across durably
+  admitted or transaction-level excluded work. Current repair is bounded, fail-closed and can
+  retire the historical interval without blocking future live data; eliminating this restart gap
+  requires a separate ordered checkpoint design that cannot overtake pending durable admission.
 - Jupiter exact/direct quote support is implemented but not operational because no approved API key
   is configured. DexScreener observations remain market context, not executable fills.
 - Reviewed optional Meteora/Orca/Raydium manifests are implemented but disabled. Base ingestion
