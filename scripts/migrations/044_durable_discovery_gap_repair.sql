@@ -97,3 +97,4 @@ ALTER TABLE ingestion_coverage_incidents
   ) NOT VALID;
 ALTER TABLE ingestion_coverage_incidents
   VALIDATE CONSTRAINT ingestion_coverage_incidents_repair_proof_check;
+
