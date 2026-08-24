@@ -31,6 +31,8 @@ def render_update(
     image: str,
     secondary_url: str,
     secondary_programs: list[str],
+    expected_secondary_url: str | None = None,
+    expected_secondary_programs: list[str] | None = None,
 ) -> tuple[str, list[dict[str, str | None]]]:
     programs = secondary_programs
     if (
@@ -44,6 +46,18 @@ def render_update(
     parsed_url = urlparse(secondary_url)
     if parsed_url.scheme != "wss" or not parsed_url.hostname:
         raise ValueError("Secondary discovery endpoint must be an absolute wss:// URL.")
+    if (expected_secondary_url is None) != (expected_secondary_programs is None):
+        raise ValueError("Expected secondary URL and programs must be provided together.")
+    if expected_secondary_programs is not None:
+        if (
+            not expected_secondary_programs
+            or any(not value.strip() for value in expected_secondary_programs)
+            or len(set(expected_secondary_programs)) != len(expected_secondary_programs)
+        ):
+            raise ValueError("Expected secondary programs must be a non-empty unique list.")
+        expected_parsed_url = urlparse(expected_secondary_url or "")
+        if expected_parsed_url.scheme != "wss" or not expected_parsed_url.hostname:
+            raise ValueError("Expected secondary endpoint must be an absolute wss:// URL.")
 
     newline = "\r\n" if "\r\n" in original else "\n"
     had_trailing_newline = original.endswith(("\n", "\r"))
@@ -70,8 +84,18 @@ def render_update(
         URL_KEY: secondary_url,
         PROGRAMS_KEY: normalized_programs,
     }
+    expected_route = {
+        URL_KEY: expected_secondary_url,
+        PROGRAMS_KEY: (
+            json.dumps(expected_secondary_programs, separators=(",", ":"))
+            if expected_secondary_programs is not None
+            else None
+        ),
+    }
     for key in (URL_KEY, PROGRAMS_KEY):
-        if key in current and current[key] != intended[key]:
+        if key not in current or current[key] == intended[key]:
+            continue
+        if expected_route[key] is None or current[key] != expected_route[key]:
             raise ValueError(f"Conflicting pre-existing {key}; refusing to overwrite it.")
 
     changes: list[dict[str, str | None]] = []
@@ -128,6 +152,8 @@ def main() -> None:
     parser.add_argument("--image", required=True)
     parser.add_argument("--secondary-url", required=True)
     parser.add_argument("--secondary-program", action="append", default=[])
+    parser.add_argument("--expected-secondary-url")
+    parser.add_argument("--expected-secondary-program", action="append")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
 
@@ -139,6 +165,8 @@ def main() -> None:
         args.image,
         args.secondary_url,
         args.secondary_program,
+        args.expected_secondary_url,
+        args.expected_secondary_program,
     )
     if args.apply and changes:
         atomic_replace(path, rendered, path.stat().st_mode)
