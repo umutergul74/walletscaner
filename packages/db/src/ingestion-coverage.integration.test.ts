@@ -326,19 +326,24 @@ integrationDescribe("PostgreSQL ingestion coverage safety", () => {
       coverage_repair_id: string;
       coverage_reconciled_at: string | Date;
       repair_status: string;
+      confirmation_status: string;
     }>(
       `SELECT incident.coverage_repair_id,
               incident.coverage_reconciled_at,
-              repair.status AS repair_status
+              repair.status AS repair_status,
+              target_proof.confirmation_status
        FROM ingestion_coverage_incidents incident
        JOIN ingestion_gap_repairs repair
          ON repair.repair_id = incident.coverage_repair_id
+       JOIN ingestion_gap_repair_target_proofs target_proof
+         ON target_proof.repair_id = repair.repair_id
        WHERE incident.idempotency_key = $1`,
       [incident.idempotencyKey]
     );
     expect(proof.rows[0]).toMatchObject({
       coverage_repair_id: repairId,
-      repair_status: "completed"
+      repair_status: "completed",
+      confirmation_status: "finalized"
     });
     expect(new Date(proof.rows[0]!.coverage_reconciled_at).toISOString()).toBe(
       "2026-08-21T01:03:00.000Z"

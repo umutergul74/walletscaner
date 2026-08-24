@@ -58,10 +58,12 @@ claimed in descending position order, which is oldest-first. Collection, replay 
 are explicit; a configured signature-cap breach moves the session to terminal `failed` without
 closing coverage. Completed staging rows are operational scratch evidence with bounded retention;
 the repair session and incident proof remain durable. `covered_through_*` must equal the immutable
-`target_*` pair and completed counts must equal fetched counts. `target_verified_at`,
-`target_verified_slot` and `target_confirmation_status=finalized` record the independent exact-target
-check. Migration 046 preserves any pre-fix mutable-cursor completion metadata in `previous_*` audit
-columns before normalizing a fully replayed session to its staged position-zero target.
+`target_*` pair and completed counts must equal fetched counts. `verified_at`, `target_slot` and
+`confirmation_status=finalized` live in the append-only
+`ingestion_gap_repair_target_proofs` relation and record the independent exact-target check.
+Migration 046 avoids an access-exclusive rewrite of the active repair table. The proof transaction
+preserves any pre-fix mutable-cursor completion metadata in `previous_*` fields before normalizing a
+fully replayed session to its staged position-zero target.
 
 Strict consumers conservatively exclude a canonical pool when its `created_at` is in the inclusive
 interval from `gap_started_at` through `closed_at`, or from `gap_started_at` onward while the incident

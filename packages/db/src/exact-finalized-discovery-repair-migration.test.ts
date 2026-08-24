@@ -8,11 +8,11 @@ describe("exact finalized discovery repair migration", () => {
       "utf8"
     );
 
-    expect(sql).toContain("previous_covered_through_signature");
-    expect(sql).toContain("covered_through_signature = repair.target_signature");
-    expect(sql).toContain("completed_signature_count = fetched_signature_count");
-    expect(sql).toContain("target_verified_at IS NOT NULL");
-    expect(sql).toContain("target_confirmation_status = 'finalized'");
+    expect(sql).toContain("ingestion_gap_repair_target_proofs");
+    expect(sql).toContain("discovery repair target proof is append-only");
+    expect(sql).toContain("covered_through_signature IS DISTINCT FROM NEW.target_signature");
+    expect(sql).toContain("repair.completed_signature_count = repair.fetched_signature_count");
+    expect(sql).toContain("proof.confirmation_status = 'finalized'");
     expect(sql).toContain("exact finalized repair target proof");
   });
 });
