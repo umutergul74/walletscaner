@@ -3441,10 +3441,13 @@ export class PostgresRepository
                SELECT 1
                FROM ingestion_gap_repairs repair
                WHERE repair.repair_id = $7
-               AND repair.incident_id = $1
-               AND repair.status = 'completed'
-               AND repair.boundary_source = 'truncation_cursor'
-             )
+                AND repair.incident_id = $1
+                AND repair.status = 'completed'
+                AND repair.boundary_source = 'truncation_cursor'
+                AND repair.target_verified_at IS NOT NULL
+                AND repair.target_confirmation_status = 'finalized'
+                AND repair.target_verified_slot = repair.target_slot
+              )
            )
          )
        RETURNING idempotency_key`,
@@ -3656,15 +3659,53 @@ export class PostgresRepository
            updated_at = $4,
            last_error = NULL
        WHERE repair.repair_id = $1
-         AND repair.status = 'replaying'
-         AND repair.boundary_reached
-         AND repair.boundary_source = 'truncation_cursor'
-         AND NOT EXISTS (
+          AND repair.status = 'replaying'
+          AND repair.boundary_reached
+          AND repair.boundary_source = 'truncation_cursor'
+          AND repair.target_signature = $2
+          AND repair.target_slot = $3
+          AND repair.completed_signature_count = repair.fetched_signature_count
+          AND NOT EXISTS (
            SELECT 1
            FROM ingestion_gap_repair_signatures staged
            WHERE staged.repair_id = repair.repair_id AND staged.status = 'pending'
          )`,
       [repairId, coveredThrough.signature, coveredThrough.slot, completedAt]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async verifyIngestionGapRepairTarget(
+    repairId: string,
+    proof: {
+      signature: string;
+      slot: number;
+      confirmationStatus: "finalized";
+      verifiedAt?: string;
+    }
+  ): Promise<boolean> {
+    const verifiedAt = proof.verifiedAt ?? new Date().toISOString();
+    const result = await this.pool.query(
+      `UPDATE ingestion_gap_repairs repair
+       SET target_verified_at = COALESCE(repair.target_verified_at, $5),
+           target_verified_slot = COALESCE(repair.target_verified_slot, $3),
+           target_confirmation_status = COALESCE(repair.target_confirmation_status, $4),
+           updated_at = GREATEST(repair.updated_at, $5)
+       WHERE repair.repair_id = $1
+         AND repair.status = 'completed'
+         AND repair.boundary_source = 'truncation_cursor'
+         AND repair.target_signature = $2
+         AND repair.target_slot = $3
+         AND repair.covered_through_signature = $2
+         AND repair.covered_through_slot = $3
+         AND $4 = 'finalized'
+         AND (repair.target_verified_slot IS NULL OR repair.target_verified_slot = $3)
+         AND (
+           repair.target_confirmation_status IS NULL
+           OR repair.target_confirmation_status = 'finalized'
+         )
+       RETURNING repair_id`,
+      [repairId, proof.signature, proof.slot, proof.confirmationStatus, verifiedAt]
     );
     return (result.rowCount ?? 0) === 1;
   }
@@ -4392,11 +4433,18 @@ function rowToIngestionGapRepair(row: Record<string, unknown>): IngestionGapRepa
     ...(row.covered_through_slot !== null && row.covered_through_slot !== undefined
       ? { coveredThroughSlot: Number(row.covered_through_slot) }
       : {}),
+    ...(row.target_verified_at
+      ? { targetVerifiedAt: new Date(String(row.target_verified_at)).toISOString() }
+      : {}),
+    ...(row.target_verified_slot !== null && row.target_verified_slot !== undefined
+      ? { targetVerifiedSlot: Number(row.target_verified_slot) }
+      : {}),
+    ...(row.target_confirmation_status
+      ? { targetConfirmationStatus: String(row.target_confirmation_status) as "finalized" }
+      : {}),
     createdAt: new Date(String(row.created_at)).toISOString(),
     updatedAt: new Date(String(row.updated_at)).toISOString(),
-    ...(row.completed_at
-      ? { completedAt: new Date(String(row.completed_at)).toISOString() }
-      : {})
+    ...(row.completed_at ? { completedAt: new Date(String(row.completed_at)).toISOString() } : {})
   };
 }
 

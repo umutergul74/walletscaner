@@ -578,8 +578,10 @@ Treat these conditions as fail-closed coverage incidents:
 probe, restart, ACK, heartbeat, truncation, repair progress, last-signature and fresh-WebSocket
 evidence. Cumulative counters are monotonic across a supervised source restart. Transport recovery
 alone must say the gap is still unreconciled. A `coverage-reconciled` transition is permitted only
-after durable boundary reach, complete oldest-first replay, an independent repaired-head match and
-post-incident WebSocket evidence.
+after durable boundary reach, complete oldest-first replay, exact completion at the immutable staged
+target, an independent history-aware RPC result showing that target successful and `finalized`, and
+post-incident WebSocket evidence. Do not compare the repair target with the moving latest program
+head or live cursor; both may advance normally during a long repair.
 
 If `telegram-notifier` was stopped while incidents opened and recovered repeatedly, restart must
 not replay the whole historical transition stream. The notifier selects only the latest durable

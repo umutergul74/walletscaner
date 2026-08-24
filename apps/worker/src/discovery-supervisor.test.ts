@@ -10,7 +10,8 @@ import type {
 import {
   DiscoverySupervisor,
   fetchConfirmedSolanaSlot,
-  fetchLatestSolanaAddressActivity
+  fetchLatestSolanaAddressActivity,
+  fetchSolanaSignatureStatus
 } from "./discovery-supervisor";
 
 class FakeSource implements SolanaEventSource {
@@ -752,9 +753,10 @@ describe("DiscoverySupervisor", () => {
     });
   });
 
-  it("closes coverage only after durable replay, independent head match and post-incident WS evidence", async () => {
+  it("closes coverage after durable replay, exact target finality and post-incident WS evidence even when the head advances", async () => {
     const repository = new MemoryRepository();
     const source = healthySource("provider", 1_000, 999, 1);
+    let targetConfirmationStatus: "confirmed" | "finalized" = "confirmed";
     source.repairGap = async (address, incidentId) => {
       const repairId = `${incidentId}:repair`;
       await repository.getOrCreateIngestionGapRepair({
@@ -793,7 +795,11 @@ describe("DiscoverySupervisor", () => {
         {
           programId: "Reconciled111",
           source,
-          probeLatestActivity: async () => ({ signature: "covered-head", slot: 1_010 })
+          probeLatestActivity: async () => ({ signature: "newer-head", slot: 1_050 }),
+          probeSignatureStatus: async (signature) => {
+            expect(signature).toBe("covered-head");
+            return { slot: 1_010, confirmationStatus: targetConfirmationStatus, succeeded: true };
+          }
         }
       ],
       repository,
@@ -824,7 +830,11 @@ describe("DiscoverySupervisor", () => {
       lastWebsocketMessageAt: "2026-08-21T00:00:59.000Z"
     };
     await supervisor.sampleHead(1_010, new Date("2026-08-21T00:01:00.000Z"));
+    await supervisor.sampleHead(1_011, new Date("2026-08-21T00:01:30.000Z"));
+    expect(await repository.listOpenIngestionCoverageIncidents("provider")).toHaveLength(1);
 
+    targetConfirmationStatus = "finalized";
+    await supervisor.sampleHead(1_012, new Date("2026-08-21T00:02:00.000Z"));
     expect(await repository.listOpenIngestionCoverageIncidents("provider")).toHaveLength(0);
     expect(supervisor.getProgramDiagnostics()[0]).toMatchObject({
       gapRepairStatus: "completed",
@@ -915,7 +925,8 @@ describe("DiscoverySupervisor", () => {
         closeStarted = true;
         await closeGate;
         return repository.closeIngestionCoverageIncident(...args);
-      }
+      },
+      verifyIngestionGapRepairTarget: repository.verifyIngestionGapRepairTarget.bind(repository)
     };
     const source = healthySource("provider", 1_000, 700, 1);
     const supervisor = new DiscoverySupervisor({
@@ -1078,6 +1089,42 @@ describe("fetchConfirmedSolanaSlot", () => {
           )
       })
     ).rejects.toThrow("RPC error -32005: rate limited");
+  });
+
+  it("queries one exact signature through transaction history for finalized repair proof", async () => {
+    const requests: unknown[] = [];
+    const status = await fetchSolanaSignatureStatus({
+      rpcUrl: "https://rpc.example",
+      provider: "provider",
+      signature: "repair-target",
+      timeoutMs: 1_000,
+      retries: 0,
+      fetchImpl: async (_input, init) => {
+        requests.push(JSON.parse(String(init?.body)));
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              value: [
+                { slot: 123_400, confirmations: null, err: null, confirmationStatus: "finalized" }
+              ]
+            }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    });
+
+    expect(status).toEqual({ slot: 123_400, confirmationStatus: "finalized", succeeded: true });
+    expect(requests).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getSignatureStatuses",
+        params: [["repair-target"], { searchTransactionHistory: true }]
+      }
+    ]);
   });
 });
 

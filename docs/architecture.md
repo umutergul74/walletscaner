@@ -112,10 +112,13 @@ once per configured cooldown. A JSON-RPC error or malformed result is an error, 
 program was quiet. A newer slot, or a different latest signature in the same slot, is conservative
 evidence that the WebSocket may have missed activity. Recovery requires a successful restart plus
 fresh post-restart WebSocket evidence. Transport-only recovery remains
-`transport_recovered_gap_unreconciled`. Standard discovery sources additionally stage a durable,
-bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
-require an independent repaired-head match. Only that stronger proof sets
-`coverage_reconciled_at`; incomplete, capped or unresolved repair remains fail-closed.
+  `transport_recovered_gap_unreconciled`. Standard discovery sources additionally stage a durable,
+  bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
+  bind completion to the immutable newest signature captured when repair collection began. A
+  separate `getSignatureStatuses(searchTransactionHistory=true)` call must return that exact slot
+  with successful `finalized` status; the mutable live cursor and advancing latest program head are
+  never repair proof. Only that stronger proof plus post-incident WebSocket evidence sets
+  `coverage_reconciled_at`; incomplete, capped or unresolved repair remains fail-closed.
 
 The old bounded “top wallets become new subscriptions” loop is not part of the v2 production path. Wallet evidence is derived from transactions involving active pools, avoiding circular discovery based on wallets the scorer already knows.
 

@@ -57,7 +57,8 @@ import { compactDexScreenerPair } from "./evidence-sampling.js";
 import {
   DiscoverySupervisor,
   fetchConfirmedSolanaSlot,
-  fetchLatestSolanaAddressActivity
+  fetchLatestSolanaAddressActivity,
+  fetchSolanaSignatureStatus
 } from "./discovery-supervisor.js";
 import { activateTradeSubscription, excludeTradeCoverage } from "./trade-coverage.js";
 import {
@@ -486,6 +487,14 @@ const discoveryProgramSources = programs.map((program) => ({
       timeoutMs: discoverySentinelTimeoutMs,
       // The sentinel itself is periodic. Keep each disambiguation probe to one
       // bounded HTTP attempt so several quiet programs cannot stack retries.
+      retries: 0
+    }),
+  probeSignatureStatus: (signature: string) =>
+    fetchSolanaSignatureStatus({
+      rpcUrl,
+      provider: discoveryProvider,
+      signature,
+      timeoutMs: discoverySentinelTimeoutMs,
       retries: 0
     }),
   source: new StandardSolanaEventSource({
@@ -2357,11 +2366,7 @@ function handleTradeQueuePressure(pressure: {
   const pool = activePools.get(pressure.address);
   if (!pool || !pool.tradeCoverageComplete) return;
   if (pool.subscribedToBuys) liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-  excludeTradeCoverage(
-    pool,
-    `rpc-trade-queue-${pressure.reason}`,
-    new Date().toISOString()
-  );
+  excludeTradeCoverage(pool, `rpc-trade-queue-${pressure.reason}`, new Date().toISOString());
   poolSamplingDiagnostics.tradeQueuePressureCount += 1;
   poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
   console.warn(
@@ -2375,9 +2380,7 @@ function handleTradeQueuePressure(pressure: {
   );
 }
 
-async function handleTradeBackfillTruncation(
-  truncation: SolanaBackfillTruncation
-): Promise<void> {
+async function handleTradeBackfillTruncation(truncation: SolanaBackfillTruncation): Promise<void> {
   const pool = activePools.get(truncation.address);
   liveTradeSource?.unsubscribeAddress(truncation.address);
   if (!pool) {

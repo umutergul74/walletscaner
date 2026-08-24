@@ -285,6 +285,13 @@ integrationDescribe("PostgreSQL ingestion coverage safety", () => {
     await repository.completeIngestionGapRepairSignature(repairId, "head-new");
     await expect(
       repository.completeIngestionGapRepair(repairId, {
+        signature: "moving-live-cursor",
+        slot: 999,
+        completedAt: "2026-08-21T01:02:20.000Z"
+      })
+    ).resolves.toBe(false);
+    await expect(
+      repository.completeIngestionGapRepair(repairId, {
         signature: "head-new",
         slot: 103,
         completedAt: "2026-08-21T01:02:30.000Z"
@@ -292,10 +299,26 @@ integrationDescribe("PostgreSQL ingestion coverage safety", () => {
     ).resolves.toBe(true);
     await expect(
       repository.closeIngestionCoverageIncident(incident.idempotencyKey, {
+        closedAt: "2026-08-21T01:02:40.000Z",
+        coverageReconciledAt: "2026-08-21T01:02:40.000Z",
+        coverageRepairId: repairId,
+        metadata: { proof: "must-not-close-before-exact-target-finality" }
+      })
+    ).resolves.toBe(false);
+    await expect(
+      repository.verifyIngestionGapRepairTarget(repairId, {
+        signature: "head-new",
+        slot: 103,
+        confirmationStatus: "finalized",
+        verifiedAt: "2026-08-21T01:02:45.000Z"
+      })
+    ).resolves.toBe(true);
+    await expect(
+      repository.closeIngestionCoverageIncident(incident.idempotencyKey, {
         closedAt: "2026-08-21T01:03:00.000Z",
         coverageReconciledAt: "2026-08-21T01:03:00.000Z",
         coverageRepairId: repairId,
-        metadata: { proof: "durable-oldest-first-replay-and-independent-head-match" }
+        metadata: { proof: "durable-oldest-first-replay-and-exact-finalized-target" }
       })
     ).resolves.toBe(true);
 

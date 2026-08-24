@@ -188,9 +188,7 @@ export interface IngestionCoverageIncidentCloseInput {
 }
 
 export type IngestionGapRepairStatus = "collecting" | "replaying" | "completed" | "failed";
-export type IngestionGapRepairBoundarySource =
-  | "unsafe_legacy_current_cursor"
-  | "truncation_cursor";
+export type IngestionGapRepairBoundarySource = "unsafe_legacy_current_cursor" | "truncation_cursor";
 
 export interface IngestionGapRepair {
   repairId: string;
@@ -213,6 +211,9 @@ export interface IngestionGapRepair {
   lastError?: string;
   coveredThroughSignature?: string;
   coveredThroughSlot?: number;
+  targetVerifiedAt?: string;
+  targetVerifiedSlot?: number;
+  targetConfirmationStatus?: "finalized";
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -851,6 +852,15 @@ export interface CanonicalRepository {
   completeIngestionGapRepair(
     repairId: string,
     coveredThrough: { signature: string; slot: number; completedAt?: string }
+  ): Promise<boolean>;
+  verifyIngestionGapRepairTarget(
+    repairId: string,
+    proof: {
+      signature: string;
+      slot: number;
+      confirmationStatus: "finalized";
+      verifiedAt?: string;
+    }
   ): Promise<boolean>;
   getPipelineHealth(): Promise<PipelineHealthSummary>;
   listWalletAlphaRankings(query?: WalletAlphaRankingQuery): Promise<WalletAlphaScoreSnapshot[]>;

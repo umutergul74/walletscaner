@@ -127,10 +127,12 @@ are staged in `ingestion_gap_repair_signatures` across bounded cycles and proces
 transaction is replayed and no cursor advances until the old durable cursor boundary is reached.
 The staged set is then replayed oldest-first in batches of
 `SOLANA_DISCOVERY_GAP_REPAIR_REPLAY_LIMIT` (50 by default). Collection fails closed at
-`SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES` (20,000 by default), so repair cannot become an
-unbounded JSON/RPC or PostgreSQL workload. An incident becomes reconciled only after every staged
-signature is durably admitted, an independent latest-activity probe matches the repaired head, and
-post-incident WebSocket evidence exists. Anything less remains alpha-excluded.
+  `SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES` (20,000 by default), so repair cannot become an
+  unbounded JSON/RPC or PostgreSQL workload. An incident becomes reconciled only after every staged
+  signature is durably admitted, completion equals the immutable collected target signature/slot, a
+  separate history-aware signature-status query proves that exact target successful and `finalized`,
+  and post-incident WebSocket evidence exists. A later live cursor or program head cannot replace or
+  invalidate that target. Anything less remains alpha-excluded.
 
 If collection reaches that reviewed cap before the boundary, the repair row becomes `failed` and
 is never coverage proof. Once two fresh samples separately prove the current live transport, the

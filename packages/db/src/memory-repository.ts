@@ -1607,6 +1607,13 @@ export class MemoryRepository
         return false;
       }
       if (repair.boundarySource !== "truncation_cursor") return false;
+      if (
+        !repair.targetVerifiedAt ||
+        repair.targetConfirmationStatus !== "finalized" ||
+        repair.targetVerifiedSlot !== repair.targetSlot
+      ) {
+        return false;
+      }
     }
     if (
       coverageTimestamp(input.closedAt, "Coverage incident close time") <
@@ -1622,9 +1629,7 @@ export class MemoryRepository
       closedAt: input.closedAt,
       ...(input.clusterSlot !== undefined ? { closeClusterSlot: input.clusterSlot } : {}),
       ...(input.sourceSlot !== undefined ? { closeSourceSlot: input.sourceSlot } : {}),
-      ...(input.coverageReconciledAt
-        ? { coverageReconciledAt: input.coverageReconciledAt }
-        : {}),
+      ...(input.coverageReconciledAt ? { coverageReconciledAt: input.coverageReconciledAt } : {}),
       ...(input.coverageRepairId ? { coverageRepairId: input.coverageRepairId } : {}),
       resolution: "transport_recovered_gap_unreconciled",
       closeMetadata: input.metadata
@@ -1742,9 +1747,7 @@ export class MemoryRepository
       ...repair,
       ...(error.startsWith("gap-repair-signature-cap-") ? { status: "failed" as const } : {}),
       collectionAttemptCount:
-        phase === "collection"
-          ? repair.collectionAttemptCount + 1
-          : repair.collectionAttemptCount,
+        phase === "collection" ? repair.collectionAttemptCount + 1 : repair.collectionAttemptCount,
       replayAttemptCount:
         phase === "replay" ? repair.replayAttemptCount + 1 : repair.replayAttemptCount,
       lastError: error.slice(0, 500),
@@ -1760,6 +1763,14 @@ export class MemoryRepository
     const repair = this.ingestionGapRepairs.get(repairId);
     if (!repair || repair.status !== "replaying") return false;
     if (repair.boundarySource !== "truncation_cursor") return false;
+    if (
+      !repair.targetSignature ||
+      repair.targetSlot === undefined ||
+      coveredThrough.signature !== repair.targetSignature ||
+      coveredThrough.slot !== repair.targetSlot
+    ) {
+      return false;
+    }
     const pending = [...this.ingestionGapRepairSignatures.values()].some(
       (item) => item.repairId === repairId && item.status === "pending"
     );
@@ -1774,6 +1785,39 @@ export class MemoryRepository
       coveredThroughSlot: coveredThrough.slot,
       completedAt,
       updatedAt: completedAt
+    });
+    return true;
+  }
+
+  async verifyIngestionGapRepairTarget(
+    repairId: string,
+    proof: {
+      signature: string;
+      slot: number;
+      confirmationStatus: "finalized";
+      verifiedAt?: string;
+    }
+  ): Promise<boolean> {
+    const repair = this.ingestionGapRepairs.get(repairId);
+    if (
+      !repair ||
+      repair.status !== "completed" ||
+      repair.boundarySource !== "truncation_cursor" ||
+      repair.targetSignature !== proof.signature ||
+      repair.targetSlot !== proof.slot ||
+      repair.coveredThroughSignature !== proof.signature ||
+      repair.coveredThroughSlot !== proof.slot ||
+      proof.confirmationStatus !== "finalized"
+    ) {
+      return false;
+    }
+    const verifiedAt = proof.verifiedAt ?? nowIso();
+    this.ingestionGapRepairs.set(repairId, {
+      ...repair,
+      targetVerifiedAt: verifiedAt,
+      targetVerifiedSlot: proof.slot,
+      targetConfirmationStatus: "finalized",
+      updatedAt: verifiedAt
     });
     return true;
   }

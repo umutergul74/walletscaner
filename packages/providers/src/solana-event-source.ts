@@ -347,9 +347,7 @@ export interface StandardSolanaEventSourceOptions {
     queuedSignatures: number;
     maxQueuedSignatures: number;
   }) => void;
-  onBackfillTruncated?: (
-    truncation: SolanaBackfillTruncation
-  ) => Promise<void> | void;
+  onBackfillTruncated?: (truncation: SolanaBackfillTruncation) => Promise<void> | void;
   now?: () => Date;
 }
 
@@ -726,8 +724,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       // fail-closed by the caller. Retaining those notifications would spend
       // RPC/CPU on evidence that cannot be admitted and could starve healthy
       // pools behind the per-address ordering barrier.
-      this.diagnostics.purgedSignatureCount =
-        (this.diagnostics.purgedSignatureCount ?? 0) + purged;
+      this.diagnostics.purgedSignatureCount = (this.diagnostics.purgedSignatureCount ?? 0) + purged;
     }
     this.queuePressureByAddress.delete(address);
     const subscriptionId = this.subscriptionByAddress.get(address);
@@ -817,17 +814,22 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       };
     }
     if (repair.status === "completed") {
+      if (!repair.targetSignature || repair.targetSlot === undefined) {
+        return {
+          repairId: repair.repairId,
+          status: "blocked",
+          fetchedSignatureCount: repair.fetchedSignatureCount,
+          completedSignatureCount: repair.completedSignatureCount,
+          error: "completed-repair-missing-immutable-target"
+        };
+      }
       return {
         repairId: repair.repairId,
         status: "completed",
         fetchedSignatureCount: repair.fetchedSignatureCount,
         completedSignatureCount: repair.completedSignatureCount,
-        ...(repair.coveredThroughSignature
-          ? { coveredThroughSignature: repair.coveredThroughSignature }
-          : {}),
-        ...(repair.coveredThroughSlot !== undefined
-          ? { coveredThroughSlot: repair.coveredThroughSlot }
-          : {})
+        coveredThroughSignature: repair.targetSignature,
+        coveredThroughSlot: repair.targetSlot
       };
     }
 
@@ -972,9 +974,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         completedSignatureCount: repair.completedSignatureCount
       };
     }
-    const coveredThrough = await this.options.cursorStore.get(address);
-    if (!coveredThrough) {
-      const error = "repair-completed-without-durable-cursor";
+    if (!repair.targetSignature || repair.targetSlot === undefined) {
+      const error = "repair-completed-without-immutable-target";
       await store.recordIngestionGapRepairError(repair.repairId, "replay", error);
       this.diagnostics.lastGapRepairError = error;
       return {
@@ -987,8 +988,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     }
     const completedAt = this.now().toISOString();
     const completed = await store.completeIngestionGapRepair(repair.repairId, {
-      signature: coveredThrough.signature,
-      slot: coveredThrough.slot,
+      signature: repair.targetSignature,
+      slot: repair.targetSlot,
       completedAt
     });
     if (!completed) {
@@ -1007,15 +1008,15 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       (this.diagnostics.gapRepairCompletionCount ?? 0) + 1;
     this.diagnostics.lastGapRepairCompletedAt = completedAt;
     this.diagnostics.lastGapRepairError = null;
-    this.diagnostics.lastGapRepairCoveredThroughSignature = coveredThrough.signature;
-    this.diagnostics.lastGapRepairCoveredThroughSlot = coveredThrough.slot;
+    this.diagnostics.lastGapRepairCoveredThroughSignature = repair.targetSignature;
+    this.diagnostics.lastGapRepairCoveredThroughSlot = repair.targetSlot;
     return {
       repairId: repair.repairId,
       status: "completed",
       fetchedSignatureCount: repair.fetchedSignatureCount,
       completedSignatureCount: repair.completedSignatureCount,
-      coveredThroughSignature: coveredThrough.signature,
-      coveredThroughSlot: coveredThrough.slot
+      coveredThroughSignature: repair.targetSignature,
+      coveredThroughSlot: repair.targetSlot
     };
   }
 
@@ -1353,8 +1354,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         // notification never crossed the PostgreSQL admission boundary.
         this.diagnostics.durableSignatureAdmissionErrorCount =
           (this.diagnostics.durableSignatureAdmissionErrorCount ?? 0) + 1;
-        this.diagnostics.droppedSignatureCount =
-          (this.diagnostics.droppedSignatureCount ?? 0) + 1;
+        this.diagnostics.droppedSignatureCount = (this.diagnostics.droppedSignatureCount ?? 0) + 1;
         this.diagnostics.status = "degraded";
         this.notifyQueuePressure(address, "full");
         return;
@@ -1851,8 +1851,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         ) {
           return;
         }
-        this.diagnostics.heartbeatTimeoutCount =
-          (this.diagnostics.heartbeatTimeoutCount ?? 0) + 1;
+        this.diagnostics.heartbeatTimeoutCount = (this.diagnostics.heartbeatTimeoutCount ?? 0) + 1;
         this.diagnostics.status = "degraded";
         this.handleSocketClose(socket, generation);
         try {

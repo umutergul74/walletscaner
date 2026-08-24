@@ -20,18 +20,26 @@ type CoverageIncidentRepository = Pick<
   | "listOpenIngestionCoverageIncidents"
   | "markIngestionCoverageIncidentRestart"
   | "closeIngestionCoverageIncident"
+  | "verifyIngestionGapRepairTarget"
 >;
 
 export interface DiscoveryProgramSource {
   programId: string;
   source: SolanaEventSource;
   probeLatestActivity?: () => Promise<DiscoveryProgramActivityHead | null>;
+  probeSignatureStatus?: (signature: string) => Promise<DiscoverySignatureStatus | null>;
 }
 
 export interface DiscoveryProgramActivityHead {
   signature: string;
   slot: number;
   blockTime?: number;
+}
+
+export interface DiscoverySignatureStatus {
+  slot: number;
+  confirmationStatus: "processed" | "confirmed" | "finalized";
+  succeeded: boolean;
 }
 
 export interface DiscoverySupervisorOptions {
@@ -93,6 +101,7 @@ interface ProgramState {
   programId: string;
   source: SolanaEventSource;
   probeLatestActivity?: () => Promise<DiscoveryProgramActivityHead | null>;
+  probeSignatureStatus?: (signature: string) => Promise<DiscoverySignatureStatus | null>;
   running: boolean;
   startedAtMs: number | null;
   consecutiveBreachSamples: number;
@@ -131,6 +140,17 @@ interface SlotResponse {
 
 interface SignatureResponse {
   result?: Array<{ signature?: string; slot?: number; blockTime?: number | null }>;
+  error?: { code?: number; message?: string };
+}
+
+interface SignatureStatusResponse {
+  result?: {
+    value?: Array<{
+      slot?: number;
+      err?: unknown;
+      confirmationStatus?: string | null;
+    } | null>;
+  };
   error?: { code?: number; message?: string };
 }
 
@@ -206,6 +226,50 @@ export async function fetchLatestSolanaAddressActivity(options: {
   };
 }
 
+export async function fetchSolanaSignatureStatus(options: {
+  rpcUrl: string;
+  provider: string;
+  signature: string;
+  timeoutMs: number;
+  retries: number;
+  fetchImpl?: typeof fetch;
+}): Promise<DiscoverySignatureStatus | null> {
+  const response = await fetchJson<SignatureStatusResponse>(options.provider, options.rpcUrl, {
+    method: "POST",
+    body: {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getSignatureStatuses",
+      params: [[options.signature], { searchTransactionHistory: true }]
+    },
+    timeoutMs: options.timeoutMs,
+    retries: options.retries,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {})
+  });
+  if (response.error) {
+    throw new Error(
+      `Solana signature status RPC error ${response.error.code ?? "unknown"}: ${response.error.message ?? "unknown error"}`
+    );
+  }
+  const values = response.result?.value;
+  if (!Array.isArray(values) || values.length !== 1) {
+    throw new Error("Solana signature status returned an invalid result array.");
+  }
+  const status = values[0];
+  if (!status) return null;
+  if (!Number.isSafeInteger(status.slot) || (status.slot ?? -1) < 0) {
+    throw new Error("Solana signature status returned an invalid slot.");
+  }
+  if (!isSignatureConfirmationStatus(status.confirmationStatus)) {
+    throw new Error("Solana signature status returned an invalid confirmation status.");
+  }
+  return {
+    slot: status.slot!,
+    confirmationStatus: status.confirmationStatus,
+    succeeded: status.err === null || status.err === undefined
+  };
+}
+
 export class DiscoverySupervisor {
   private readonly provider: string;
   private readonly repository: CoverageIncidentRepository;
@@ -263,40 +327,44 @@ export class DiscoverySupervisor {
     );
     this.repairCooldownMs = positiveInteger(options.repairCooldownMs ?? 30_000, "repairCooldownMs");
     this.now = options.now ?? (() => new Date());
-    this.states = options.programs.map(({ programId, source, probeLatestActivity }) => ({
-      programId,
-      source,
-      ...(probeLatestActivity ? { probeLatestActivity } : {}),
-      running: false,
-      startedAtMs: null,
-      consecutiveBreachSamples: 0,
-      consecutiveHealthySamples: 0,
-      clusterSlot: null,
-      sourceSlot: null,
-      slotLag: null,
-      rawSilenceMs: null,
-      breachReasons: [],
-      incident: null,
-      lastRestartAtMs: null,
-      lastRestartError: null,
-      initialLiveEventBaseline: source.getDiagnostics().liveEventCount ?? 0,
-      initialLiveEventEvaluated: false,
-      websocketNotificationBaseline: source.getDiagnostics().websocketNotificationCount ?? 0,
-      observedSubscriptionAckTimeoutCount: source.getDiagnostics().subscriptionAckTimeoutCount ?? 0,
-      observedBackfillTruncatedCount: source.getDiagnostics().backfillTruncatedCount ?? 0,
-      observedQueuePressureCount: source.getDiagnostics().queuePressureCount ?? 0,
-      observedDroppedSignatureCount: source.getDiagnostics().droppedSignatureCount ?? 0,
-      queuePressureBreachActive: false,
-      sourceGeneration: 0,
-      lastActivityProbeAtMs: null,
-      latestProgramActivity: null,
-      activityProbeStatus: probeLatestActivity ? "idle" : "not-configured",
-      activityProbeErrorCount: 0,
-      consecutiveActivityProbeFailures: 0,
-      lastActivityProbeError: null,
-      lastGapRepairAtMs: null,
-      lastGapRepairResult: null
-    }));
+    this.states = options.programs.map(
+      ({ programId, source, probeLatestActivity, probeSignatureStatus }) => ({
+        programId,
+        source,
+        ...(probeLatestActivity ? { probeLatestActivity } : {}),
+        ...(probeSignatureStatus ? { probeSignatureStatus } : {}),
+        running: false,
+        startedAtMs: null,
+        consecutiveBreachSamples: 0,
+        consecutiveHealthySamples: 0,
+        clusterSlot: null,
+        sourceSlot: null,
+        slotLag: null,
+        rawSilenceMs: null,
+        breachReasons: [],
+        incident: null,
+        lastRestartAtMs: null,
+        lastRestartError: null,
+        initialLiveEventBaseline: source.getDiagnostics().liveEventCount ?? 0,
+        initialLiveEventEvaluated: false,
+        websocketNotificationBaseline: source.getDiagnostics().websocketNotificationCount ?? 0,
+        observedSubscriptionAckTimeoutCount:
+          source.getDiagnostics().subscriptionAckTimeoutCount ?? 0,
+        observedBackfillTruncatedCount: source.getDiagnostics().backfillTruncatedCount ?? 0,
+        observedQueuePressureCount: source.getDiagnostics().queuePressureCount ?? 0,
+        observedDroppedSignatureCount: source.getDiagnostics().droppedSignatureCount ?? 0,
+        queuePressureBreachActive: false,
+        sourceGeneration: 0,
+        lastActivityProbeAtMs: null,
+        latestProgramActivity: null,
+        activityProbeStatus: probeLatestActivity ? "idle" : "not-configured",
+        activityProbeErrorCount: 0,
+        consecutiveActivityProbeFailures: 0,
+        lastActivityProbeError: null,
+        lastGapRepairAtMs: null,
+        lastGapRepairResult: null
+      })
+    );
   }
 
   async initialize(): Promise<void> {
@@ -473,14 +541,10 @@ export class DiscoverySupervisor {
             ? "reconciled"
             : "current_transport_healthy",
         lastGapRepairAt:
-          state.lastGapRepairAtMs === null
-            ? null
-            : new Date(state.lastGapRepairAtMs).toISOString(),
+          state.lastGapRepairAtMs === null ? null : new Date(state.lastGapRepairAtMs).toISOString(),
         gapRepairStatus: state.lastGapRepairResult?.status ?? null,
-        gapRepairFetchedSignatureCount:
-          state.lastGapRepairResult?.fetchedSignatureCount ?? 0,
-        gapRepairCompletedSignatureCount:
-          state.lastGapRepairResult?.completedSignatureCount ?? 0,
+        gapRepairFetchedSignatureCount: state.lastGapRepairResult?.fetchedSignatureCount ?? 0,
+        gapRepairCompletedSignatureCount: state.lastGapRepairResult?.completedSignatureCount ?? 0,
         lastGapRepairError: state.lastGapRepairResult?.error ?? null
       };
     });
@@ -589,10 +653,7 @@ export class DiscoverySupervisor {
         sources,
         "lastGapRepairCoveredThroughSignature"
       ),
-      lastGapRepairCoveredThroughSlot: maxNullable(
-        sources,
-        "lastGapRepairCoveredThroughSlot"
-      )
+      lastGapRepairCoveredThroughSlot: maxNullable(sources, "lastGapRepairCoveredThroughSlot")
     };
   }
 
@@ -736,13 +797,15 @@ export class DiscoverySupervisor {
       } else {
         state.consecutiveHealthySamples = 0;
         state.consecutiveBreachSamples += 1;
-        const requiredSamples = queuePressureBreached || reasons.some((reason) =>
-          ["subscription_ack_timeout", "stale_live_notification", "backfill_truncated"].includes(
-            reason
+        const requiredSamples =
+          queuePressureBreached ||
+          reasons.some((reason) =>
+            ["subscription_ack_timeout", "stale_live_notification", "backfill_truncated"].includes(
+              reason
+            )
           )
-        )
-          ? 1
-          : 2;
+            ? 1
+            : 2;
         if (state.consecutiveBreachSamples >= requiredSamples && !state.incident) {
           const openInput = this.buildIncidentInput(
             state,
@@ -854,25 +917,22 @@ export class DiscoverySupervisor {
     const repairBoundary = safeRepairBoundary(incident, state.source.getDiagnostics());
     if (!state.source.repairGap || !repairBoundary) {
       if (state.consecutiveHealthySamples < 2) return false;
-      const closed = await this.repository.closeIngestionCoverageIncident(
-        incident.idempotencyKey,
-        {
-          closedAt: checkedAt.toISOString(),
-          clusterSlot,
-          ...(sourceSlot !== null ? { sourceSlot } : {}),
-          metadata: {
-            healthySamples: state.consecutiveHealthySamples,
-            proof: "fresh-post-start-websocket-notification",
-            sourceGeneration: state.sourceGeneration,
-            websocketNotificationBaseline: state.websocketNotificationBaseline,
-            websocketNotificationCount,
-            coverageDisposition: "alpha_excluded_unreconciled",
-            note: state.source.repairGap
-              ? "Transport recovered; no exact truncation-cursor boundary was available, so the interval remains unreconciled."
-              : "Transport recovered; no durable repair adapter was available."
-          }
+      const closed = await this.repository.closeIngestionCoverageIncident(incident.idempotencyKey, {
+        closedAt: checkedAt.toISOString(),
+        clusterSlot,
+        ...(sourceSlot !== null ? { sourceSlot } : {}),
+        metadata: {
+          healthySamples: state.consecutiveHealthySamples,
+          proof: "fresh-post-start-websocket-notification",
+          sourceGeneration: state.sourceGeneration,
+          websocketNotificationBaseline: state.websocketNotificationBaseline,
+          websocketNotificationCount,
+          coverageDisposition: "alpha_excluded_unreconciled",
+          note: state.source.repairGap
+            ? "Transport recovered; no exact truncation-cursor boundary was available, so the interval remains unreconciled."
+            : "Transport recovered; no durable repair adapter was available."
         }
-      );
+      });
       if (closed) state.incident = null;
       return closed;
     }
@@ -883,16 +943,44 @@ export class DiscoverySupervisor {
       previous.coveredThroughSlot !== undefined &&
       previous.coveredThroughSignature
     ) {
-      const activityAhead = await this.probeProgramActivity(
-        state,
-        previous.coveredThroughSlot,
-        clusterSlot,
-        checkedAt,
-        previous.coveredThroughSignature,
-        true
-      );
-      if (!this.isLifecycleCurrent(generation)) return false;
-      if (activityAhead === false) {
+      if (!state.probeSignatureStatus) {
+        state.lastGapRepairResult = {
+          ...previous,
+          error: "exact-repair-target-status-probe-unavailable"
+        };
+        return false;
+      }
+      try {
+        const targetStatus = await state.probeSignatureStatus(previous.coveredThroughSignature);
+        if (!this.isLifecycleCurrent(generation)) return false;
+        if (!targetStatus) {
+          state.lastGapRepairResult = {
+            ...previous,
+            error: "exact-repair-target-not-found"
+          };
+          return false;
+        }
+        if (!targetStatus.succeeded) {
+          state.lastGapRepairResult = {
+            ...previous,
+            error: "exact-repair-target-failed-on-chain"
+          };
+          return false;
+        }
+        if (targetStatus.slot !== previous.coveredThroughSlot) {
+          state.lastGapRepairResult = {
+            ...previous,
+            error: `exact-repair-target-slot-mismatch:${targetStatus.slot}`
+          };
+          return false;
+        }
+        if (targetStatus.confirmationStatus !== "finalized") {
+          state.lastGapRepairResult = {
+            ...previous,
+            error: `exact-repair-target-awaiting-finality:${targetStatus.confirmationStatus}`
+          };
+          return false;
+        }
         const incidentOpenedAtMs = Date.parse(incident.openedAt);
         const postIncidentWebsocketEvidence =
           subscriptionHealthy &&
@@ -900,6 +988,26 @@ export class DiscoverySupervisor {
           Number.isFinite(incidentOpenedAtMs) &&
           lastMessageAtMs >= incidentOpenedAtMs;
         if (!postIncidentWebsocketEvidence) return false;
+        const targetVerified = await this.repository.verifyIngestionGapRepairTarget(
+          previous.repairId,
+          {
+            signature: previous.coveredThroughSignature,
+            slot: previous.coveredThroughSlot,
+            confirmationStatus: "finalized",
+            verifiedAt: checkedAt.toISOString()
+          }
+        );
+        if (!this.isLifecycleCurrent(generation)) return false;
+        if (!targetVerified) {
+          state.lastGapRepairResult = {
+            ...previous,
+            error: "exact-repair-target-proof-persistence-conflict"
+          };
+          return false;
+        }
+        const verifiedRepair = { ...previous };
+        delete verifiedRepair.error;
+        state.lastGapRepairResult = verifiedRepair;
         const closedAt = checkedAt.toISOString();
         const closed = await this.repository.closeIngestionCoverageIncident(
           incident.idempotencyKey,
@@ -911,7 +1019,7 @@ export class DiscoverySupervisor {
             coverageRepairId: previous.repairId,
             metadata: {
               healthySamples: state.consecutiveHealthySamples,
-              proof: "durable-oldest-first-replay-and-independent-head-match",
+              proof: "durable-oldest-first-replay-and-exact-finalized-target",
               sourceGeneration: state.sourceGeneration,
               websocketNotificationCount,
               repairId: previous.repairId,
@@ -919,12 +1027,24 @@ export class DiscoverySupervisor {
               completedSignatureCount: previous.completedSignatureCount,
               coveredThroughSignature: previous.coveredThroughSignature,
               coveredThroughSlot: previous.coveredThroughSlot,
+              targetConfirmationStatus: targetStatus.confirmationStatus,
+              targetVerifiedAt: closedAt,
               coverageDisposition: "reconciled"
             }
           }
         );
         if (closed) state.incident = null;
         return closed;
+      } catch (error) {
+        if (!this.isLifecycleCurrent(generation)) return false;
+        state.lastGapRepairResult = {
+          ...previous,
+          error:
+            error instanceof Error
+              ? `exact-repair-target-probe-error:${error.message.slice(0, 240)}`
+              : `exact-repair-target-probe-error:${String(error).slice(0, 240)}`
+        };
+        return false;
       }
     }
 
@@ -965,27 +1085,24 @@ export class DiscoverySupervisor {
       state.consecutiveHealthySamples >= 2 &&
       postStartWebsocketEvidence
     ) {
-      const closed = await this.repository.closeIngestionCoverageIncident(
-        incident.idempotencyKey,
-        {
-          closedAt: checkedAt.toISOString(),
-          clusterSlot,
-          ...(sourceSlot !== null ? { sourceSlot } : {}),
-          metadata: {
-            healthySamples: state.consecutiveHealthySamples,
-            proof: "current-transport-healthy-repair-cap-exhausted",
-            sourceGeneration: state.sourceGeneration,
-            websocketNotificationBaseline: state.websocketNotificationBaseline,
-            websocketNotificationCount,
-            repairId: result.repairId,
-            fetchedSignatureCount: result.fetchedSignatureCount,
-            completedSignatureCount: result.completedSignatureCount,
-            repairError: result.error,
-            coverageDisposition: "alpha_excluded_unreconciled",
-            note: "The bounded historical repair exceeded its reviewed capacity. The interval remains permanently excluded; only current transport health was restored."
-          }
+      const closed = await this.repository.closeIngestionCoverageIncident(incident.idempotencyKey, {
+        closedAt: checkedAt.toISOString(),
+        clusterSlot,
+        ...(sourceSlot !== null ? { sourceSlot } : {}),
+        metadata: {
+          healthySamples: state.consecutiveHealthySamples,
+          proof: "current-transport-healthy-repair-cap-exhausted",
+          sourceGeneration: state.sourceGeneration,
+          websocketNotificationBaseline: state.websocketNotificationBaseline,
+          websocketNotificationCount,
+          repairId: result.repairId,
+          fetchedSignatureCount: result.fetchedSignatureCount,
+          completedSignatureCount: result.completedSignatureCount,
+          repairError: result.error,
+          coverageDisposition: "alpha_excluded_unreconciled",
+          note: "The bounded historical repair exceeded its reviewed capacity. The interval remains permanently excluded; only current transport health was restored."
         }
-      );
+      });
       if (closed) {
         state.source.acknowledgeUnreconciledGap?.(state.programId);
         state.incident = null;
@@ -1342,6 +1459,12 @@ function activityHeadIsAhead(
     return head.blockTime * 1_000 >= startedAtMs - 5_000;
   }
   return Math.max(0, clusterSlot - head.slot) <= recentSlotThreshold;
+}
+
+function isSignatureConfirmationStatus(
+  value: string | null | undefined
+): value is DiscoverySignatureStatus["confirmationStatus"] {
+  return value === "processed" || value === "confirmed" || value === "finalized";
 }
 
 function parseTime(value: string | null | undefined): number | null {

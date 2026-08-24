@@ -42,7 +42,9 @@ monotonically; closing freezes the row with the only permitted resolution,
 `transport_recovered_gap_unreconciled`. Closing proves fresh transport recovery, not historical
 reconstruction.
 
-Migration 044 adds nullable `coverage_reconciled_at` and `coverage_repair_id` proof fields. They may
+Migration 044 adds nullable `coverage_reconciled_at` and `coverage_repair_id` proof fields. Migration
+046 additionally requires the referenced repair's immutable target to have an exact, separately
+persisted `finalized` status proof. The incident fields may
 be set only while closing an open incident and only when the referenced repair for that same
 incident is complete. Closed incidents without both fields preserve the original unreconciled
 meaning and remain excluded by strict consumers.
@@ -55,7 +57,11 @@ attempt counters and completion proof. Signature rows have a unique head-relativ
 claimed in descending position order, which is oldest-first. Collection, replay and completed states
 are explicit; a configured signature-cap breach moves the session to terminal `failed` without
 closing coverage. Completed staging rows are operational scratch evidence with bounded retention;
-the repair session and incident proof remain durable.
+the repair session and incident proof remain durable. `covered_through_*` must equal the immutable
+`target_*` pair and completed counts must equal fetched counts. `target_verified_at`,
+`target_verified_slot` and `target_confirmation_status=finalized` record the independent exact-target
+check. Migration 046 preserves any pre-fix mutable-cursor completion metadata in `previous_*` audit
+columns before normalizing a fully replayed session to its staged position-zero target.
 
 Strict consumers conservatively exclude a canonical pool when its `created_at` is in the inclusive
 interval from `gap_started_at` through `closed_at`, or from `gap_started_at` onward while the incident

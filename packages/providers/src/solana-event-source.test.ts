@@ -49,7 +49,9 @@ class MemoryLiveSignatureStore implements DurableSolanaSignatureStore {
         (item) =>
           item.provider === provider && item.address === address && item.status === "pending"
       )
-      .sort((left, right) => left.slot - right.slot || left.signature.localeCompare(right.signature))
+      .sort(
+        (left, right) => left.slot - right.slot || left.signature.localeCompare(right.signature)
+      )
       .slice(0, limit)
       .map(({ status: _status, ...item }) => item);
   }
@@ -138,10 +140,7 @@ class MemoryGapRepairStore implements DurableSolanaGapRepairStore {
       .map(({ status: _status, ...item }) => item);
   }
 
-  async completeIngestionGapRepairSignature(
-    repairId: string,
-    signature: string
-  ): Promise<boolean> {
+  async completeIngestionGapRepairSignature(repairId: string, signature: string): Promise<boolean> {
     const key = `${repairId}:${signature}`;
     const item = this.signatures.get(key);
     const repair = this.repairs.get(repairId);
@@ -164,8 +163,7 @@ class MemoryGapRepairStore implements DurableSolanaGapRepairStore {
     if (!repair) return false;
     this.repairs.set(repairId, {
       ...repair,
-      collectionAttemptCount:
-        repair.collectionAttemptCount + (phase === "collection" ? 1 : 0),
+      collectionAttemptCount: repair.collectionAttemptCount + (phase === "collection" ? 1 : 0),
       replayAttemptCount: repair.replayAttemptCount + (phase === "replay" ? 1 : 0),
       lastError: error
     });
@@ -178,6 +176,14 @@ class MemoryGapRepairStore implements DurableSolanaGapRepairStore {
   ): Promise<boolean> {
     const repair = this.repairs.get(repairId);
     if (!repair) return false;
+    if (
+      !repair.targetSignature ||
+      repair.targetSlot === undefined ||
+      repair.targetSignature !== coveredThrough.signature ||
+      repair.targetSlot !== coveredThrough.slot
+    ) {
+      return false;
+    }
     if (
       [...this.signatures.values()].some(
         (item) => item.repairId === repairId && item.status === "pending"
@@ -428,8 +434,20 @@ describe("StandardSolanaEventSource", () => {
     const gapRepairStore = new MemoryGapRepairStore();
     const replayed: string[] = [];
     const signaturePages = new Map<string, Array<{ signature: string; slot: number }>>([
-      ["head", [{ signature: "sig-4", slot: 14 }, { signature: "sig-3", slot: 13 }]],
-      ["sig-3", [{ signature: "sig-2", slot: 12 }, { signature: "sig-1", slot: 11 }]],
+      [
+        "head",
+        [
+          { signature: "sig-4", slot: 14 },
+          { signature: "sig-3", slot: 13 }
+        ]
+      ],
+      [
+        "sig-3",
+        [
+          { signature: "sig-2", slot: 12 },
+          { signature: "sig-1", slot: 11 }
+        ]
+      ],
       ["sig-1", []]
     ]);
     const fetchImpl = async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -440,7 +458,7 @@ describe("StandardSolanaEventSource", () => {
       const options = (request.params[1] ?? {}) as { before?: string; limit?: number };
       const result =
         request.method === "getSignaturesForAddress"
-          ? signaturePages.get(options.before ?? "head") ?? []
+          ? (signaturePages.get(options.before ?? "head") ?? [])
           : {
               blockTime: 1_700_000_000,
               transaction: { message: { instructions: [] } },
@@ -467,18 +485,28 @@ describe("StandardSolanaEventSource", () => {
     const firstSource = createSource();
 
     await expect(
-      firstSource.repairGap("ProgramRepair111", "incident-1", (event) => {
-        replayed.push(event.signature);
-      }, { signature: "cursor-old", slot: 10, source: "truncation_cursor" })
+      firstSource.repairGap(
+        "ProgramRepair111",
+        "incident-1",
+        (event) => {
+          replayed.push(event.signature);
+        },
+        { signature: "cursor-old", slot: 10, source: "truncation_cursor" }
+      )
     ).resolves.toMatchObject({ status: "collecting", fetchedSignatureCount: 2 });
     expect(cursorStore.values.get("ProgramRepair111")?.signature).toBe("cursor-old");
     expect(replayed).toEqual([]);
 
     const resumedSource = createSource();
     await expect(
-      resumedSource.repairGap("ProgramRepair111", "incident-1", (event) => {
-        replayed.push(event.signature);
-      }, { signature: "cursor-old", slot: 10, source: "truncation_cursor" })
+      resumedSource.repairGap(
+        "ProgramRepair111",
+        "incident-1",
+        (event) => {
+          replayed.push(event.signature);
+        },
+        { signature: "cursor-old", slot: 10, source: "truncation_cursor" }
+      )
     ).resolves.toMatchObject({
       status: "replaying",
       fetchedSignatureCount: 4,
@@ -488,9 +516,14 @@ describe("StandardSolanaEventSource", () => {
     expect(cursorStore.values.get("ProgramRepair111")?.signature).toBe("sig-2");
 
     await expect(
-      resumedSource.repairGap("ProgramRepair111", "incident-1", (event) => {
-        replayed.push(event.signature);
-      }, { signature: "cursor-old", slot: 10, source: "truncation_cursor" })
+      resumedSource.repairGap(
+        "ProgramRepair111",
+        "incident-1",
+        (event) => {
+          replayed.push(event.signature);
+        },
+        { signature: "cursor-old", slot: 10, source: "truncation_cursor" }
+      )
     ).resolves.toMatchObject({
       status: "completed",
       fetchedSignatureCount: 4,
@@ -552,14 +585,74 @@ describe("StandardSolanaEventSource", () => {
         source: "truncation_cursor"
       })
     ).resolves.toMatchObject({ status: "collecting", fetchedSignatureCount: 2 });
-    expect(requestedUntil).toEqual([
-      "captured-truncation-cursor",
-      "captured-truncation-cursor"
-    ]);
+    expect(requestedUntil).toEqual(["captured-truncation-cursor", "captured-truncation-cursor"]);
     expect([...gapRepairStore.repairs.values()][0]).toMatchObject({
       cursorSignature: "captured-truncation-cursor",
       cursorSlot: 10,
       boundarySource: "truncation_cursor"
+    });
+  });
+
+  it("completes against the immutable repair target when the live cursor advances concurrently", async () => {
+    const cursorStore = new MemoryCursorStore();
+    cursorStore.values.set("ProgramConcurrentCursor111", {
+      signature: "captured-cursor",
+      slot: 10
+    });
+    const gapRepairStore = new MemoryGapRepairStore();
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramConcurrentCursor111"],
+      cursorStore,
+      gapRepairStore,
+      backfillPageLimit: 2,
+      maxBackfillPages: 1,
+      gapRepairReplayLimit: 2,
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as {
+          method: string;
+          params?: [string, { limit?: number }];
+        };
+        const result =
+          request.method === "getSignaturesForAddress"
+            ? request.params?.[1]?.limit === 1
+              ? []
+              : [
+                  { signature: "repair-target", slot: 12 },
+                  { signature: "repair-oldest", slot: 11 }
+                ]
+            : { slot: 12, blockTime: 1_777_000_000, meta: {}, transaction: {} };
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      now: () => new Date("2026-08-24T00:10:00.000Z")
+    });
+
+    await expect(
+      source.repairGap("ProgramConcurrentCursor111", "incident-concurrent", () => undefined, {
+        signature: "captured-cursor",
+        slot: 10,
+        source: "truncation_cursor"
+      })
+    ).resolves.toMatchObject({ status: "completed", coveredThroughSignature: "repair-target" });
+
+    cursorStore.values.set("ProgramConcurrentCursor111", {
+      signature: "live-cursor-far-ahead",
+      slot: 99
+    });
+    await expect(
+      source.repairGap("ProgramConcurrentCursor111", "incident-concurrent", () => undefined, {
+        signature: "captured-cursor",
+        slot: 10,
+        source: "truncation_cursor"
+      })
+    ).resolves.toMatchObject({
+      status: "completed",
+      coveredThroughSignature: "repair-target",
+      coveredThroughSlot: 12
     });
   });
 
@@ -1995,8 +2088,8 @@ describe("StandardSolanaEventSource", () => {
     }
     await waitUntil(
       () =>
-        [...liveSignatureStore.values.values()].filter((item) => item.status === "pending").length ===
-        6
+        [...liveSignatureStore.values.values()].filter((item) => item.status === "pending")
+          .length === 6
     );
     await waitUntil(() => source.getDiagnostics().activeTransactionWorkerCount === 2);
 
@@ -2007,9 +2100,8 @@ describe("StandardSolanaEventSource", () => {
     });
     releaseTransactions?.();
     await waitUntil(() => accepted.length === 6);
-    await waitUntil(
-      () =>
-        [...liveSignatureStore.values.values()].every((item) => item.status === "completed")
+    await waitUntil(() =>
+      [...liveSignatureStore.values.values()].every((item) => item.status === "completed")
     );
     expect(new Set(accepted)).toEqual(
       new Set(Array.from({ length: 6 }, (_, index) => `durable-${index}`))
