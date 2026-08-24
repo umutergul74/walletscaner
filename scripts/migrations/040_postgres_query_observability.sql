@@ -5,3 +5,4 @@ SET LOCAL statement_timeout = '30s';
 -- is used in production. The extension stores aggregate query fingerprints;
 -- it does not change application data or enable statement logging by itself.
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
