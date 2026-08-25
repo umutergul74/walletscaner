@@ -7,7 +7,7 @@
 - Export SHA-256: `ea2d04df2813cf5b845b38b792e7d5369c0fe19e56b77d711402d4db735ee0d0`
 - Supporting R29 source/image: `b3ab4c8` /
   `sha256:ecfc196020573f29a76d052fc386a519d57650662f4c7731b543a05b8eb38c55`
-- Migrations: through `048_wallet_alpha_qualified_signal_lane.sql`
+- Migrations: through `049_wallet_alpha_transient_retry_backoff.sql`
 - Live execution: `false`
 
 ## Recovery and pre-state
@@ -28,7 +28,9 @@
 
 - Targeted discovery-supervisor tests: 26/26 passed.
 - TypeScript, ESLint and production workspace build passed.
-- Exact Node 24/Linux image plus disposable PostgreSQL 16 passed 88/88 files and 426/426 tests.
+- The post-migration-049 exact Node 24/Linux image plus disposable PostgreSQL 16 passed 89/89 files
+  and 428/428 tests. The two migration-heavy database suites ran sequentially to avoid test-only
+  schema-install contention.
   Deploy-time Python and the reviewed root Compose file were mounted only into the disposable test
   container; they were not added to the worker runtime image.
 - Local and remote tar bytes/SHA-256 matched before `docker load`; loaded image labels identify
@@ -66,19 +68,26 @@ the host, global prune, volume command, destructive DDL, `VACUUM FULL` or B2 mut
   reconciled. A failed transaction still produces no discovery event.
 - R30 ingestion samples showed live trade transport OK, canonical parser/finality errors zero,
   dropped signatures zero, queue-pressure zero and storage admission open.
+- Migration 049 was applied without a service restart after a PostgreSQL 16 integration test passed
+  32/32. It preserves an active transient retry boundary when new wallet evidence coalesces. A
+  production transaction canary proved revision increment, unchanged `not_before` and retained
+  error provenance, then rolled back to zero canary rows.
 
 ## Waiting and residual risk
 
-- Restart-created PumpSwap and CPMM repair sessions remain bounded by the reviewed 20,000-signature
-  ceiling. Their exact intervals stay alpha-excluded until exact proof commits; cap exhaustion must
-  close only current transport as unreconciled and must never relabel the gap complete.
+- PumpSwap reached the reviewed 20,000-signature ceiling and closed only as unreconciled; its exact
+  interval remains alpha-excluded. CPMM reached its exact boundary with 15,941 staged signatures
+  and was the only open incident, replaying oldest-first with 800 completed at 18:20 UTC. Neither
+  interval was falsely relabelled complete.
 - Background wallet-alpha P0/P1 was about 8.5k rows with the oldest pending revision about 40 hours.
   P2 was zero. Cgroup counters proved alpha and PostgreSQL were quota-throttled while the host was
   about 71% idle, so a restart-free canary raised only PostgreSQL 0.18->0.21 CPU and alpha
   0.07->0.10. The first two complete cycles moved queue 8,531->8,495; a comparable light cycle
   improved 201.5->132.5 seconds and a heavy cycle completed 54 rather than 46 wallets inside the
   same 245-second ceiling. The Compose limits now match the accepted live canary, but a negative
-  one-hour slope is still required or both limits must be reverted.
+  one-hour slope is still required or both limits must be reverted. A later short sample moved the
+  evidence-v1 queue from 8,550 to 8,419 while P1 fell 6,686 to 6,548; this is encouraging but does
+  not replace the one-hour gate.
 - The newest dump still needs byte-identical off-site acknowledgement. The scheduler intentionally
   blocks another multi-gigabyte generation until that happens.
 - No watch-or-better wallet signal or profitable chronological paper cohort is validated. Observe

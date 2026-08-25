@@ -558,6 +558,9 @@ do not match HTTP backfill.
 ## Retry and recovery
 
 - Inbox and outbox claims use leases. A crashed worker's expired `processing` row is claimable again.
+- Wallet-alpha migration 049 preserves a future transient retry boundary when new evidence
+  coalesces into the same revision-safe queue row. New evidence still increments `revision`, but it
+  cannot reset a failing hot wallet to immediately claimable and starve its priority lane.
 - Canonical claims expose only one oldest unresolved row per partition. Different partition heads
   may run concurrently, but a retrying, leased or dead-letter head still blocks later events from
   that same partition.

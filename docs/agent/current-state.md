@@ -10,8 +10,10 @@ before every operational claim or mutation.
   operations monitor run immutable R29 from `b3ab4c8`. Telegram remains on the compatible R23
   notifier. Every recreated container has restart `0`, OOM `false` and its prior CPU/RAM ceiling.
   PostgreSQL, Redis and Telegram identities remained unchanged during the scoped recreations.
-- **Validated — exact gate:** Node 24/Linux plus disposable PostgreSQL 16 passed 88/88 test files
-  and 426/426 tests. TypeScript, ESLint and the production workspace build pass. R30 additionally
+- **Validated — exact gate:** the post-migration-049 Node 24/Linux image plus disposable PostgreSQL
+  16 passed 89/89 test files and 428/428 tests; the two migration-heavy PostgreSQL suites ran
+  sequentially to avoid test-only schema-install lock contention. TypeScript, ESLint and the
+  production workspace build pass. R30 additionally
   proves that a finalized failed transaction is a valid immutable repair boundary while still
   producing no discovery event; exact slot, full replay, finality and append-only proof gates remain.
 - **Operational — maintenance capacity:** the first normal R29 cycle compacted 6,750 archived raw
@@ -24,6 +26,10 @@ before every operational claim or mutation.
   wallets with zero current-cycle failure; the last completed in 36.577 seconds. Migration 048 plus
   the R29 producer reserve P2 only for latest watch/candidate/validated-paper wallets. The 207
   legacy P2 rows were consumed/reclassified without deleting evidence and legacy P2 is zero.
+  Migration 049 now preserves an active transient retry boundary when new revisions coalesce, so a
+  frequently updated timeout wallet cannot become immediately claimable and starve its lane. A
+  PostgreSQL 16 integration gate passed 32/32 and a rolled-back production canary preserved both
+  revision and retry time.
 - **Operational canary — measured resource correction:** cgroup counters proved alpha and PostgreSQL
   were quota-throttled while the host stayed about 71% idle. A restart-free 7%->10% alpha and
   18%->21% PostgreSQL canary improved a comparable light cycle from 201.5 to 132.5 seconds and a
@@ -33,9 +39,11 @@ before every operational claim or mutation.
 - **Operational with excluded gaps — discovery:** R30 reconciled the completed Pump repair after
   independent PublicNode and official-RPC checks proved its exact target finalized at slot
   441,602,989; the target transaction failed and therefore emitted no pool event. Restart-created
-  PumpSwap/CPMM repairs remain bounded and their intervals stay alpha-excluded unless exact proof
-  commits. Current live transport, parser and finality are active with drop/pressure/parser/finality
-  errors zero; aggregate status remains degraded only while those durable incidents are open.
+  PumpSwap reached the reviewed 20,000-signature cap and closed only as unreconciled/alpha-excluded.
+  CPMM reached its exact boundary with 15,941 signatures and was replaying oldest-first; it was the
+  only open incident, at 800 completed signatures in the 18:20 UTC observation. Current live
+  transport remains active with no terminal inbox/dead-letter failure; aggregate status remains
+  degraded until that historical CPMM interval resolves.
 - **Waiting — backup and storage validation:** dump `memecoin_alpha_20260825T150924Z.dump` is
   2,053,352,363 bytes with SHA-256
   `ba26a3c89fdb8dc671d92976659ae177a6d8f76be40a45b8b8f774bb54238160`; its sidecar and PostgreSQL
@@ -48,12 +56,12 @@ profitable chronological paper cohort has passed the documented gates.
 
 ## Last verified boundary
 
-- Observation: 2026-08-25 17:59 UTC, R30 repair-boundary canary on the shared host.
+- Observation: 2026-08-25 18:28 UTC, R30 plus migration-049 canary on the shared host.
 - Live capital: `ENABLE_LIVE_EXECUTION=false`; paper v3 is paused with zero open positions and v4
   remains a non-deliverable causal shadow.
 - Releases: ingestion R30; sampler/alpha/maintenance/operations R29; Telegram R23. PostgreSQL 16,
   Redis 7 and the archive schedulers remain active. API, web, paper-alert and legacy research remain
-  stopped. Migrations through 048 are deployed.
+  stopped. Migrations through 049 are deployed.
 - Shared-host state: one Walletscaner Compose project was listed; no protected co-tenant service,
   secret or runtime was inspected or changed.
 
@@ -71,9 +79,11 @@ profitable chronological paper cohort has passed the documented gates.
 - **Operational — exact-finalized durable repair:** migrations 044-046 stage reconnect
   signatures durably, collect without moving the live cursor and replay oldest-first. Completion is
   bound to the immutable collected target rather than the moving live cursor. A separate
-  history-aware signature-status request must prove the exact signature/slot successful and
-  finalized, and an append-only PostgreSQL proof row plus post-incident WebSocket evidence are
-  required before `coverage_reconciled_at` can be set. The rollout normalized and reconciled the
+  history-aware signature-status request must prove the exact signature/slot finalized. Transaction
+  success is recorded as audit metadata, not required for ordering: a finalized failed transaction
+  is replayed and correctly produces no discovery event. An append-only PostgreSQL proof row plus
+  post-incident WebSocket evidence are required before `coverage_reconciled_at` can be set. The
+  rollout normalized and reconciled the
   previous 11,143-signature CPMM repair and 731-signature Pump.fun repair; their former moving cursor
   slots remain in the proof audit rows. The re-route startup Pump.fun, PumpSwap and CPMM scans each
   reached the reviewed 20,000-signature cap, closed as

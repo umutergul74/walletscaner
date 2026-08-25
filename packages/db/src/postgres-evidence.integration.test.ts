@@ -401,6 +401,66 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     ).toEqual([]);
   });
 
+  it("preserves an active transient retry delay when new wallet evidence coalesces", async () => {
+    const strategyVersion = "transient-retry-v1";
+    const walletAddress = "TransientRetryWallet";
+    await testPool.query(
+      `SELECT enqueue_wallet_alpha_work(
+         'solana', $1, $2, 1::smallint, 'entry-evidence'
+       )`,
+      [walletAddress, strategyVersion]
+    );
+
+    const [item] = await repository.claimWalletAlphaWork({
+      strategyVersion,
+      workerId: "transient-retry-worker",
+      limit: 1,
+      leaseSeconds: 60
+    });
+    expect(item).toBeDefined();
+    expect(await repository.failWalletAlphaWork(item!, "transient timeout", 3_600)).toBe(true);
+
+    const before = await testPool.query<{
+      revision: string;
+      not_before: Date;
+      last_error: string;
+    }>(
+      `SELECT revision, not_before, last_error
+       FROM wallet_alpha_work_queue
+       WHERE wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    await testPool.query(
+      `SELECT enqueue_wallet_alpha_work(
+         'solana', $1, $2, 1::smallint, 'risk-passed-unqualified-wallet-entry'
+       )`,
+      [walletAddress, strategyVersion]
+    );
+    const after = await testPool.query<{
+      revision: string;
+      not_before: Date;
+      last_error: string;
+      quarantine_reason: string | null;
+    }>(
+      `SELECT revision, not_before, last_error, quarantine_reason
+       FROM wallet_alpha_work_queue
+       WHERE wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+
+    expect(Number(after.rows[0]?.revision)).toBe(Number(before.rows[0]?.revision) + 1);
+    expect(after.rows[0]?.not_before).toEqual(before.rows[0]?.not_before);
+    expect(after.rows[0]?.last_error).toBe("transient timeout");
+    expect(after.rows[0]?.quarantine_reason).toBeNull();
+    expect(
+      await repository.claimWalletAlphaWork({
+        strategyVersion,
+        workerId: "transient-retry-bypass-probe",
+        limit: 1
+      })
+    ).toEqual([]);
+  });
+
   it("does not join wallet outcomes across strategy boundaries", async () => {
     await testPool.query(
       `INSERT INTO wallet_entry_signals (
