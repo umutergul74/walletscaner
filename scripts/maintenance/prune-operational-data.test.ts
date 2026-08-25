@@ -74,6 +74,16 @@ describe("operational maintenance SQL contract", () => {
     expect(source).toContain("`${compactionStatementTimeoutMs}ms`");
   });
 
+  it("uses the production-measured small compaction batch and bounded catch-up window", async () => {
+    const source = await readFile(scriptPath, "utf8");
+
+    expect(source).toContain(
+      "positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 250)"
+    );
+    expect(source).toContain("positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 45)");
+    expect(source).toContain("positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50)");
+  });
+
   it("uses one pinned PostgreSQL session for the advisory lock lifecycle", async () => {
     const source = await readFile(scriptPath, "utf8");
 

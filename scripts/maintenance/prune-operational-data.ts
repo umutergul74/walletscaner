@@ -38,9 +38,9 @@ const rejectedWalletEvidenceRetentionDays = positiveInt(
 );
 const batchSize = positiveInt(process.env.MAINTENANCE_DELETE_BATCH_SIZE, 5_000);
 const inboxBatchSize = positiveInt(process.env.MAINTENANCE_INBOX_DELETE_BATCH_SIZE, 500);
-const compactBatchSize = positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 500);
+const compactBatchSize = positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 250);
 const maxBatches = positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50);
-const maxRunSeconds = positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 30);
+const maxRunSeconds = positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 45);
 const statementTimeoutMs = positiveInt(process.env.MAINTENANCE_STATEMENT_TIMEOUT_MS, 5_000);
 const compactionStatementTimeoutMs = positiveInt(
   process.env.MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS,

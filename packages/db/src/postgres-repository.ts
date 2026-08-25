@@ -1444,56 +1444,60 @@ export class PostgresRepository
     const entryLimit = clampLimit(maximumEntries, 2_000, 50_000);
     const outcomeLimit = clampLimit(maximumOutcomes, 4_000, 100_000);
     return this.withTransaction(async (client) => {
+      // Keep each indexed ceiling probe independently bounded. A single
+      // statement used to share one five-second budget across all three
+      // relations, so a valid wallet could be retried forever when the sum of
+      // otherwise healthy probes crossed that boundary under production I/O.
       await client.query("SET LOCAL statement_timeout = '5s'");
-      const result = await client.query<{
-        trade_events_exceeded: boolean;
-        entries_exceeded: boolean;
-        outcomes_exceeded: boolean;
-      }>(
-        `SELECT
-           EXISTS (
-             SELECT 1
-             FROM wallet_trade_events trade
-             WHERE trade.chain = $1
-               AND trade.wallet_address = $2
-               AND trade.strategy_version = $3
-             OFFSET $5 LIMIT 1
-           ) AS trade_events_exceeded,
-           EXISTS (
-             SELECT 1
-             FROM wallet_entry_signals entry
-             WHERE entry.chain = $1
-               AND entry.wallet_address = $2
-               AND entry.strategy_version = $3
-               AND entry.observed_at >= $4
-             OFFSET $6 LIMIT 1
-           ) AS entries_exceeded,
-           EXISTS (
-             SELECT 1
-             FROM wallet_signal_outcomes outcome
-             JOIN wallet_entry_signals entry
-               ON entry.idempotency_key = outcome.entry_idempotency_key
-             WHERE entry.chain = $1
-               AND entry.wallet_address = $2
-               AND entry.strategy_version = $3
-               AND outcome.strategy_version = $3
-               AND outcome.observed_at >= $4
-             OFFSET $7 LIMIT 1
-           ) AS outcomes_exceeded`,
-        [
-          item.chain,
-          item.walletAddress,
-          item.strategyVersion,
-          minObservedAt,
-          tradeLimit,
-          entryLimit,
-          outcomeLimit
-        ]
+      const common = [item.chain, item.walletAddress, item.strategyVersion];
+      const trades = await boundedWalletAlphaProbe(
+        client,
+        "trade-events",
+        `SELECT EXISTS (
+           SELECT 1
+           FROM wallet_trade_events trade
+           WHERE trade.chain = $1
+             AND trade.wallet_address = $2
+             AND trade.strategy_version = $3
+           OFFSET $4 LIMIT 1
+         ) AS exceeded`,
+        [...common, tradeLimit]
+      );
+      const entries = await boundedWalletAlphaProbe(
+        client,
+        "entries",
+        `SELECT EXISTS (
+           SELECT 1
+           FROM wallet_entry_signals entry
+           WHERE entry.chain = $1
+             AND entry.wallet_address = $2
+             AND entry.strategy_version = $3
+             AND entry.observed_at >= $4
+           OFFSET $5 LIMIT 1
+         ) AS exceeded`,
+        [...common, minObservedAt, entryLimit]
+      );
+      const outcomes = await boundedWalletAlphaProbe(
+        client,
+        "outcomes",
+        `SELECT EXISTS (
+           SELECT 1
+           FROM wallet_signal_outcomes outcome
+           JOIN wallet_entry_signals entry
+             ON entry.idempotency_key = outcome.entry_idempotency_key
+           WHERE entry.chain = $1
+             AND entry.wallet_address = $2
+             AND entry.strategy_version = $3
+             AND outcome.strategy_version = $3
+             AND outcome.observed_at >= $4
+           OFFSET $5 LIMIT 1
+         ) AS exceeded`,
+        [...common, minObservedAt, outcomeLimit]
       );
       return {
-        tradeEventsExceeded: Boolean(result.rows[0]?.trade_events_exceeded),
-        entriesExceeded: Boolean(result.rows[0]?.entries_exceeded),
-        outcomesExceeded: Boolean(result.rows[0]?.outcomes_exceeded)
+        tradeEventsExceeded: trades,
+        entriesExceeded: entries,
+        outcomesExceeded: outcomes
       };
     });
   }
@@ -4675,6 +4679,21 @@ function assertWalletAlphaPriorityRange(
     minimumPriority > maximumPriority
   ) {
     throw new Error("Wallet-alpha priority range must be ordered within 0..2.");
+  }
+}
+
+async function boundedWalletAlphaProbe(
+  client: TransactionClient,
+  stage: "trade-events" | "entries" | "outcomes",
+  query: string,
+  params: unknown[]
+): Promise<boolean> {
+  try {
+    const result = await client.query<{ exceeded: boolean }>(query, params);
+    return Boolean(result.rows[0]?.exceeded);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Wallet-alpha ${stage} bound probe failed: ${message}`);
   }
 }
 
