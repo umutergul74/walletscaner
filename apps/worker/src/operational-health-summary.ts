@@ -8,6 +8,11 @@ export interface OperationalHealthSummary {
   diskUsedPercent?: number;
   databaseBytes?: number;
   chainPayloadCompactionLagSeconds?: number;
+  walletArchivePendingSegments?: number;
+  walletArchiveLagSeconds?: number;
+  walletCompactPendingDays?: number;
+  walletCompactMismatchDays?: number;
+  walletCompactLagSeconds?: number;
   backupAgeSeconds?: number;
   backupOffsiteAcknowledged?: boolean;
 }
@@ -33,6 +38,8 @@ export async function readOperationalHealthSummary(
     }
     const resources = objectValue(parsed.resources);
     const pipeline = objectValue(parsed.pipeline);
+    const archive = objectValue(parsed.archive);
+    const walletEvidence = objectValue(archive.walletEvidence);
     const backup = objectValue(parsed.backup);
     return {
       checkedAt: new Date(checkedAtMs).toISOString(),
@@ -49,6 +56,11 @@ export async function readOperationalHealthSummary(
         "chainPayloadCompactionLagSeconds",
         pipeline.chainPayloadCompactionLagSeconds
       ),
+      ...optionalNumber("walletArchivePendingSegments", walletEvidence.pendingSegments),
+      ...optionalNumber("walletArchiveLagSeconds", walletEvidence.lagSeconds),
+      ...optionalNumber("walletCompactPendingDays", walletEvidence.compactPendingDays),
+      ...optionalNumber("walletCompactMismatchDays", walletEvidence.compactMismatchDays),
+      ...optionalNumber("walletCompactLagSeconds", walletEvidence.compactLagSeconds),
       ...optionalNumber("backupAgeSeconds", backup.ageSeconds),
       ...(typeof backup.offsiteAcknowledged === "boolean"
         ? { backupOffsiteAcknowledged: backup.offsiteAcknowledged }

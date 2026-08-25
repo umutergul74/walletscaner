@@ -173,6 +173,19 @@ export function formatPipelineStatusAlert(status: PipelineStatusNotification): s
                 `Payload compaction gecikmesi: ${formatAge(operational.chainPayloadCompactionLagSeconds)}`
               ]
             : []),
+          ...(operational.walletArchivePendingSegments !== undefined
+            ? [
+                `Wallet arşiv bekleyen / compact gün: ${operational.walletArchivePendingSegments} / ${operational.walletCompactPendingDays ?? 0}`
+              ]
+            : []),
+          ...(operational.walletArchiveLagSeconds !== undefined
+            ? [
+                `Wallet arşiv / compact gecikme: ${formatAge(operational.walletArchiveLagSeconds)} / ${formatAge(operational.walletCompactLagSeconds ?? 0)}`
+              ]
+            : []),
+          ...((operational.walletCompactMismatchDays ?? 0) > 0
+            ? [`Wallet compact parity hatası: ${operational.walletCompactMismatchDays}`]
+            : []),
           ...operational.reasons.slice(0, 3).map((reason) => `Durum nedeni: ${reason}`)
         ]
       : []),

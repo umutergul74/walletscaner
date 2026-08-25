@@ -15,6 +15,15 @@ describe("operational health summary", () => {
         status: "degraded",
         reasons: ["backup stale"],
         pipeline: { chainPayloadCompactionLagSeconds: 123 },
+        archive: {
+          walletEvidence: {
+            pendingSegments: 4,
+            lagSeconds: 321,
+            compactPendingDays: 2,
+            compactMismatchDays: 0,
+            compactLagSeconds: 90
+          }
+        },
         backup: { ageSeconds: 456, offsiteAcknowledged: false },
         resources: { diskAvailableBytes: 789, diskUsedPercent: 75, databaseBytes: 999 },
         ignored: { secret: "must-not-propagate" }
@@ -31,6 +40,11 @@ describe("operational health summary", () => {
       diskUsedPercent: 75,
       databaseBytes: 999,
       chainPayloadCompactionLagSeconds: 123,
+      walletArchivePendingSegments: 4,
+      walletArchiveLagSeconds: 321,
+      walletCompactPendingDays: 2,
+      walletCompactMismatchDays: 0,
+      walletCompactLagSeconds: 90,
       backupAgeSeconds: 456,
       backupOffsiteAcknowledged: false
     });

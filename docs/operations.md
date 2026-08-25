@@ -472,6 +472,14 @@ three type counts. Historical wallet catch-up never preempts a pending chain-pay
 revisions. A verified wallet segment starts compact-shadow eligibility but does not enable source
 retirement.
 
+Migration 051 and `wallet-evidence-materializer-scheduler` implement that compact shadow. The
+scheduler waits ten minutes after startup, then processes at most one verified day every thirty
+minutes with one database connection, no gather parallelism, an 80 MiB memory cap and 5% CPU cap.
+Every run is transaction- and advisory-lock-protected. It must finish source/fact count and dual
+digest parity before recording a verified day; mismatch/retry receipts and their oldest age are
+reported by operational health. Do not start a second manual materializer while the scheduler is
+active, and do not treat compact verification alone as source-retirement authority.
+
 Docker image retention is project-scoped. After a verified deployment, run
 `scripts/deploy/prune-walletscaner-images.sh` first in its default report-only mode and then with
 `APPLY=true`, an explicit `KEEP_RELEASE_TAG` and one `KEEP_ROLLBACK_TAG`. It removes tags only from

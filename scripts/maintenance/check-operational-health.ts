@@ -49,6 +49,18 @@ const maxArchiveUnverifiedAgeSeconds = positiveNumber(
   process.env.OPERATIONS_MAX_ARCHIVE_UNVERIFIED_AGE_SECONDS,
   86_400
 );
+const walletArchiveSettleHours = positiveNumber(
+  process.env.ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS,
+  72
+);
+const maxWalletArchiveLagSeconds = positiveNumber(
+  process.env.OPERATIONS_MAX_WALLET_ARCHIVE_LAG_SECONDS,
+  2 * 86_400
+);
+const maxWalletCompactLagSeconds = positiveNumber(
+  process.env.OPERATIONS_MAX_WALLET_COMPACT_LAG_SECONDS,
+  86_400
+);
 const archiveMinimumRemainingDays = Math.floor(
   positiveNumber(process.env.ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS, 7)
 );
@@ -89,6 +101,13 @@ try {
     archive_oldest_unverified_at: Date | null;
     archive_latest_verified_at: Date | null;
     archive_retirement_policy_ready: boolean;
+    wallet_archive_pending_segments: number;
+    wallet_archive_dead_letter_segments: number;
+    wallet_archive_latest_verified_end: Date | null;
+    wallet_compact_pending_days: number;
+    wallet_compact_mismatch_days: number;
+    wallet_compact_latest_verified_end: Date | null;
+    wallet_compact_oldest_pending_verified_at: Date | null;
     finality_pending: number;
     finality_oldest_pending_age_seconds: number | null;
     finality_unresolved_24h: number;
@@ -162,7 +181,51 @@ try {
          SELECT MAX(verified_at) FROM archive_segments
          WHERE status = 'verified'
        ) AS archive_latest_verified_at,
-       archive_retirement_policy_ready($1::integer) AS archive_retirement_policy_ready,
+        archive_retirement_policy_ready($1::integer) AS archive_retirement_policy_ready,
+        (
+          SELECT COUNT(*)::integer FROM archive_segments
+          WHERE source_kind='wallet-evidence'
+            AND status IN ('pending','exporting','retry_export','verify_pending','verifying','retry_verify')
+        ) AS wallet_archive_pending_segments,
+        (
+          SELECT COUNT(*)::integer FROM archive_segments
+          WHERE source_kind='wallet-evidence' AND status='dead_letter'
+        ) AS wallet_archive_dead_letter_segments,
+        (
+          SELECT MAX(range_end) FROM archive_segments
+          WHERE source_kind='wallet-evidence' AND status='verified'
+        ) AS wallet_archive_latest_verified_end,
+        (
+          SELECT COUNT(*)::integer
+          FROM archive_segments segment
+          LEFT JOIN wallet_evidence_compact_days compact
+            ON compact.range_start=segment.range_start
+           AND compact.archive_segment_id=segment.id
+           AND compact.archive_revision=segment.revision
+           AND compact.status='verified'
+          WHERE segment.source_kind='wallet-evidence'
+            AND segment.status='verified'
+            AND compact.range_start IS NULL
+        ) AS wallet_compact_pending_days,
+        (
+          SELECT COUNT(*)::integer FROM wallet_evidence_compact_days
+          WHERE status IN ('mismatch','retry')
+        ) AS wallet_compact_mismatch_days,
+        (
+          SELECT MAX(range_end) FROM wallet_evidence_compact_days WHERE status='verified'
+        ) AS wallet_compact_latest_verified_end,
+        (
+          SELECT MIN(segment.verified_at)
+          FROM archive_segments segment
+          LEFT JOIN wallet_evidence_compact_days compact
+            ON compact.range_start=segment.range_start
+           AND compact.archive_segment_id=segment.id
+           AND compact.archive_revision=segment.revision
+           AND compact.status='verified'
+          WHERE segment.source_kind='wallet-evidence'
+            AND segment.status='verified'
+            AND compact.range_start IS NULL
+        ) AS wallet_compact_oldest_pending_verified_at,
        (
          SELECT COUNT(*)::integer FROM solana_transaction_finality
          WHERE status = 'pending'
@@ -187,6 +250,19 @@ try {
     [archiveMinimumRemainingDays]
   );
   const row = result.rows[0]!;
+  const checkedAtMs = Date.now();
+  const walletEligibleEndMs =
+    Math.floor((checkedAtMs - walletArchiveSettleHours * 3_600_000) / 86_400_000) * 86_400_000;
+  const walletArchiveLatestEndMs = row.wallet_archive_latest_verified_end?.getTime();
+  const walletArchiveLagSeconds =
+    walletArchiveLatestEndMs === undefined
+      ? null
+      : Math.max(0, (walletEligibleEndMs - walletArchiveLatestEndMs) / 1_000);
+  const walletCompactOldestPendingMs = row.wallet_compact_oldest_pending_verified_at?.getTime();
+  const walletCompactLagSeconds =
+    walletCompactOldestPendingMs === undefined
+      ? 0
+      : Math.max(0, (checkedAtMs - walletCompactOldestPendingMs) / 1_000);
   const filesystem = await statfs("/app");
   const diskTotalBytes = filesystem.blocks * filesystem.bsize;
   const diskAvailableBytes = filesystem.bavail * filesystem.bsize;
@@ -307,6 +383,27 @@ try {
       `archive unverified age ${round(archiveUnverifiedAgeSeconds)}s > ${maxArchiveUnverifiedAgeSeconds}s`
     );
   }
+  if (archiveEnabled && row.wallet_compact_mismatch_days > 0) {
+    reasons.push(`${row.wallet_compact_mismatch_days} wallet compact parity mismatch days`);
+  }
+  if (
+    archiveEnabled &&
+    walletArchiveLagSeconds !== null &&
+    walletArchiveLagSeconds > maxWalletArchiveLagSeconds
+  ) {
+    reasons.push(
+      `wallet archive lag ${round(walletArchiveLagSeconds)}s > ${maxWalletArchiveLagSeconds}s`
+    );
+  }
+  if (
+    archiveEnabled &&
+    walletCompactLagSeconds !== null &&
+    walletCompactLagSeconds > maxWalletCompactLagSeconds
+  ) {
+    reasons.push(
+      `wallet compact lag ${round(walletCompactLagSeconds)}s > ${maxWalletCompactLagSeconds}s`
+    );
+  }
   if (
     storageRunway.mature &&
     storageRunway.runwayDays !== null &&
@@ -366,7 +463,19 @@ try {
           ? null
           : new Date(archiveOldestUnverifiedAt).toISOString(),
       latestVerifiedAt: row.archive_latest_verified_at?.toISOString() ?? null,
-      retirementPolicyReady: row.archive_retirement_policy_ready
+      retirementPolicyReady: row.archive_retirement_policy_ready,
+      walletEvidence: {
+        pendingSegments: row.wallet_archive_pending_segments,
+        deadLetterSegments: row.wallet_archive_dead_letter_segments,
+        latestVerifiedEnd: row.wallet_archive_latest_verified_end?.toISOString() ?? null,
+        lagSeconds: walletArchiveLagSeconds === null ? null : round(walletArchiveLagSeconds),
+        compactPendingDays: row.wallet_compact_pending_days,
+        compactMismatchDays: row.wallet_compact_mismatch_days,
+        compactLatestVerifiedEnd: row.wallet_compact_latest_verified_end?.toISOString() ?? null,
+        compactOldestPendingVerifiedAt:
+          row.wallet_compact_oldest_pending_verified_at?.toISOString() ?? null,
+        compactLagSeconds: round(walletCompactLagSeconds)
+      }
     },
     backup,
     resources: {

@@ -138,6 +138,11 @@ export interface PipelineStatusNotification {
     diskUsedPercent?: number;
     databaseBytes?: number;
     chainPayloadCompactionLagSeconds?: number;
+    walletArchivePendingSegments?: number;
+    walletArchiveLagSeconds?: number;
+    walletCompactPendingDays?: number;
+    walletCompactMismatchDays?: number;
+    walletCompactLagSeconds?: number;
     backupAgeSeconds?: number;
     backupOffsiteAcknowledged?: boolean;
   };

@@ -197,6 +197,14 @@ rows. `archive_segment_generations` keeps the immutable manifest of every indepe
 revision when late evidence invalidates the current day. These objects are recovery/research
 evidence, not executable fills and not permission to retire hot rows before compact-reader parity.
 
+Migration 051 adds normalized `wallet_evidence_*_dimensions`,
+`wallet_profitability_episode_facts`, `wallet_open_lot_facts` and
+`wallet_followability_facts`. `wallet_evidence_compact_days` binds each shadow result to the exact
+verified archive segment/revision and records source counts plus deterministic source/fact parity.
+These are shadow tables until reader equivalence and the production observation gate pass. They do
+not authorize source deletion, and a corrected archive revision invalidates the old receipt for
+selection purposes.
+
 - `wallet_entry_signals`: source-linked first wallet entry and risk/flow evidence.
 - `wallet_signal_outcomes`: mature/provisional/unresolved followability outcomes measured after bot observation.
 - `wallet_alpha_scores`: timestamped status, separate profitability/followability scores, metrics, gates and reasons.

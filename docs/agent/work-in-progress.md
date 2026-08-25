@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T19:44:00Z
+updated_at_utc: 2026-08-25T20:59:54Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: migration 050 wallet-evidence archive foundation implemented and tested locally; production unchanged
+last_safe_checkpoint: migration 051 compact shadow implemented; populated PostgreSQL 16 restore is complete; production unchanged
 ---
 
 # Walletscaner Work In Progress
@@ -89,6 +89,54 @@ blindly repeat the last mutation.
 - First resume action: inspect this file, `git status/log`, current-state and live read-only storage
   metrics. Do not repeat an upload, migration, archive run or cleanup without checking its durable
   manifest/migration/hash first.
+
+## Interruption checkpoint at 2026-08-25 20:28 UTC
+
+- Git HEAD remains `3b8af11`; the compact-shadow phase is intentionally uncommitted. Preserve the
+  unrelated untracked `deploy/.tmp-pipeline-storage-r28-2dc66ab.tar817264887` file.
+- Added migration 051, the bounded wallet-evidence materializer, its scheduled Compose service and
+  a PostgreSQL integration path. TypeScript and ESLint pass.
+- Built the exact Linux/Node 24 test artifact
+  `walletscaner-worker@sha256:2daf3bea6a38d6468403bfff2197c92589859eb98afe8a5670f89b8144884500`.
+  Its PostgreSQL 16 archive/materializer integration passed 5/5, including independent restore,
+  digest parity and correction revision preservation.
+- Restored the verified 25 August dump into the local disposable PostgreSQL 16 database
+  `walletscaner_storage_lab` in container `walletscaner-pg16-r31`; the restored database is about
+  11 GB. Migrations 050 and 051 applied successfully. Compact receipt count is still zero, so the
+  populated materializer benchmark has not yet run.
+- No production command or mutation occurred during this phase. The next exact action is to export,
+  independently validate and locally mark one full wallet-evidence day on the populated clone,
+  then run the materializer and measure counts, parity, runtime and relation sizes. Only after that
+  result should this phase be committed and production preflight refreshed.
+- The populated-clone export/restore gate completed for the full 2026-08-24 UTC cohort under the
+  production writer ceilings (128 MiB and 0.04 CPU). Local segment 65/revision 1 is `verified`.
+  Exactly 100,078 records (58,252 trades, 14,206 entries and 27,620 outcomes) produced
+  174,558,627 canonical bytes and a 16,034,890-byte zstd artifact in 562,489 ms. Independent
+  restore reproduced counts, 174,558,627 bytes and source SHA-256
+  `5bba6ee2fa6a5a03fa6e9e4394c4ebe19efe64e1bf986d1d98933e97699d43ab` exactly. The local clone
+  uses a clearly labelled simulated verification receipt; this is benchmark evidence, not proof of
+  a B2 upload.
+- The exact 0.03-CPU/80-MiB Docker Desktop run twice timed out before opening a Node PostgreSQL
+  connection; `pg_isready` independently proved the database/port healthy and no transaction or
+  compact row was created. At the revised 0.05-CPU/80-MiB/120-second-statement ceiling the real
+  materializer completed in 260,459 ms. It verified count and dual-digest parity for 218,492
+  episodes, 251,460 non-realized lots and 27,498 mature followability facts. The fact tables occupy
+  185,548,800 bytes and dimensions 3,219,456 bytes on this clone. The deprecated same-client
+  concurrent-query warning observed during the gate was fixed by serializing the six aggregate
+  queries; rerun the targeted tests after rebuilding the exact image.
+- Added wallet archive/compact backlog, age and parity telemetry to operational health and the
+  bounded Telegram summary. Same-revision materializer failures wait six hours; a corrected archive
+  revision is immediately eligible. Missing source episodes are removed from the affected shadow
+  wallet/strategy scope and covered by a correction-revision integration test.
+- Final local gate: typecheck and ESLint passed; exact Linux/Node 24/PostgreSQL 16 storage,
+  correction, telemetry and alert tests passed 17/17. The broader exact-image suite passed 421/430;
+  its nine failures were only deploy/backup tests requiring Python or the root Compose file, neither
+  of which is included in the worker image. Those seven files then passed 17/17 in the Windows host
+  environment, and the workspace production build passed. The final tested artifact is
+  `walletscaner-worker@sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`.
+  Production remains unchanged. Next exact step: remove only the generated local 24-Aug benchmark
+  artifact, commit this coherent compact phase, then refresh production backup/headroom/service and
+  protected co-tenant inventory before any deploy.
 
 ## Local implementation checkpoint
 

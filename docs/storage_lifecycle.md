@@ -106,6 +106,21 @@ second verbose realized-lot cache caused avoidable WAL and relation growth. The 
 cache may be reclaimed only through its verified-backup/stopped-worker operation, after which it
 rebuilds in the smaller form.
 
+### Implemented compact shadow (migration 051)
+
+Migration 051 is an additive, non-reader-changing shadow layer. One scheduled materializer claims
+at most one independently verified wallet-evidence day per run, rechecks the live source counts
+against that exact archive revision, and transactionally maintains normalized wallet/token/strategy
+dimensions, scalar profitability episodes, non-realized FIFO continuation lots and mature
+followability facts. Source and compact rows must match in count and two deterministic aggregate
+digests before `wallet_evidence_compact_days` becomes `verified`; a mismatch is durable and fails
+closed. The worker is advisory-lock protected, single-connection, serial, capped at 80 MiB and 5%
+of one CPU, and does not delete or redirect a source row.
+
+The operational monitor reports wallet archive backlog/freshness, compact backlog/age and parity
+mismatches separately. These receipts prove field-preserving materialization, but do not replace the
+reader dual-run or seven-day production shadow gates.
+
 ## Populated-clone benchmark
 
 The verified 2026-08-15 production dump was serially restored into an isolated PostgreSQL 16
@@ -125,6 +140,15 @@ Deterministic 64-bit aggregate digests over all retained profitability and follo
 matched exactly between source and target. The benchmark is evidence for the design, not deletion
 authority: its tables are unlogged, it excludes B2 artifact cost and it does not yet prove live
 dual-write, crash recovery or scorer hash parity.
+
+The later 2026-08-25 PostgreSQL 16 clone exercised the real archive and materializer path over the
+complete 2026-08-24 UTC cohort. Exactly 100,078 evidence rows (58,252 trades, 14,206 entries and
+27,620 outcomes) produced 174,558,627 canonical bytes and a 16,034,890-byte zstd artifact. An
+independent restore reproduced the per-type counts, bytes and source SHA-256. At a 4% CPU ceiling,
+export plus restore took 562,489 ms. The 5%-CPU compact pass took 260,459 ms and matched 218,492
+episodes, 251,460 non-realized lots and 27,498 mature followability facts. Compact fact relations
+for that pass occupied about 188 MiB plus about 3 MiB of dimensions. This is populated-clone proof
+for one representative full day, not B2 upload evidence or permission to retire canonical rows.
 
 ## Required rollout gates
 

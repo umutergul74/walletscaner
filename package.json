@@ -39,6 +39,7 @@
     "maintenance:backfill-discovery-cursor-time": "tsx scripts/maintenance/backfill-ingestion-cursor-chain-time.ts",
     "maintenance:reclaim-derived-ledger": "tsx scripts/maintenance/reclaim-derived-ledger-cache.ts",
     "archive:writer": "tsx scripts/archive/archive-writer.ts",
+    "archive:wallet-materialize": "tsx scripts/archive/wallet-evidence-materializer.ts",
     "archive:verifier": "tsx scripts/archive/archive-verifier.ts",
     "archive:database-backup-writer": "tsx scripts/archive/database-backup-writer.ts",
     "archive:database-backup-verifier": "tsx scripts/archive/database-backup-verifier.ts",

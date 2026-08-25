@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +14,7 @@ import { PostgresRepository } from "./postgres-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integrationDescribe = databaseUrl ? describe : describe.skip;
+const execFileAsync = promisify(execFile);
 
 integrationDescribe("PostgreSQL cold archive pipeline", () => {
   const adminPool = new pg.Pool({ connectionString: databaseUrl });
@@ -222,6 +225,29 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
        )`,
       [observedAt]
     );
+    await testPool.query(
+      `INSERT INTO wallet_position_episodes (
+         id, chain, wallet_address, token_address, strategy_version, episode_index,
+         status, opened_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
+         remaining_raw_amount, token_decimals, realized_lot_count,
+         high_quality_price_coverage, metadata
+       ) VALUES (
+         'wallet-episode-archive-1', 'solana', 'WalletArchive111', 'TokenArchive111',
+         'evidence-v1', 1, 'open', $1, 2, 0, 0, 10, 6, 0, 1, '{}'::jsonb
+       )`,
+      [observedAt]
+    );
+    await testPool.query(
+      `INSERT INTO wallet_position_lots (
+         id, episode_id, source_event_idempotency_key, lot_sequence, raw_amount,
+         remaining_raw_amount, token_decimals, quote_cost_usd, fees_usd,
+         slippage_usd, opened_at, status, metadata
+       ) VALUES (
+         'wallet-lot-archive-1', 'wallet-episode-archive-1', 'wallet-trade-archive-1',
+         1, 10, 10, 6, 2, 0, 0, $1, 'open', '{}'::jsonb
+       )`,
+      [observedAt]
+    );
 
     await expect(store.seedEligibleWalletEvidenceSegments(24, 1)).resolves.toBe(1);
     const segment = await store.claimWriter({
@@ -274,6 +300,41 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       })
     ).toBe(true);
 
+    const scopedUrl = new URL(databaseUrl!);
+    scopedUrl.searchParams.set("options", `-c search_path=${schema},public`);
+    await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: scopedUrl.toString(),
+          WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+        },
+        timeout: 30_000
+      }
+    );
+    const compact = await testPool.query<{
+      status: string;
+      affected_episode_count: string;
+      open_lot_count: string;
+      mature_followability_count: string;
+    }>(
+      `SELECT status, affected_episode_count::text, open_lot_count::text,
+              mature_followability_count::text
+       FROM wallet_evidence_compact_days WHERE range_start=$1`,
+      [rangeStart.toISOString()]
+    );
+    expect(compact.rows[0]).toMatchObject({
+      status: "verified",
+      affected_episode_count: "1",
+      open_lot_count: "1",
+      mature_followability_count: "1"
+    });
+    await expect(
+      testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_open_lot_facts")
+    ).resolves.toMatchObject({ rows: [{ rows: 1 }] });
+
     await testPool.query(
       `UPDATE wallet_trade_events
        SET raw = raw || '{"corrected":true}'::jsonb
@@ -291,6 +352,91 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       [segment!.id]
     );
     expect(generation.rowCount).toBe(1);
+
+    await testPool.query("DELETE FROM wallet_position_lots WHERE id='wallet-lot-archive-1'");
+    await testPool.query(
+      "DELETE FROM wallet_position_episodes WHERE id='wallet-episode-archive-1'"
+    );
+    const corrected = await store.claimWriter({
+      workerId: "wallet-archive-writer-correction-test",
+      leaseSeconds: 300
+    });
+    expect(corrected).toMatchObject({ id: segment!.id, revision: 2, sourceKind: "wallet-evidence" });
+    const correctedPath = join(directory, "wallet-segment-r2.jsonl.zst");
+    const correctedClient = await testPool.connect();
+    let correctedArtifact;
+    try {
+      correctedArtifact = await exportArchiveSegment({
+        client: correctedClient,
+        segment: corrected!,
+        outputPath: correctedPath
+      });
+    } finally {
+      correctedClient.release();
+    }
+    await expect(
+      validateArchiveArtifact({ filePath: correctedPath, expected: correctedArtifact })
+    ).resolves.toMatchObject({ sourceRowCount: 3, canonicalMetadataRowCount: 3 });
+    expect(
+      await store.markUploadForVerification({
+        segment: corrected!,
+        workerId: "wallet-archive-writer-correction-test",
+        artifact: correctedArtifact,
+        uploadSucceeded: true
+      })
+    ).toBe(true);
+    const correctedVerifier = await store.claimVerifier({
+      workerId: "wallet-archive-verifier-correction-test",
+      leaseSeconds: 300
+    });
+    expect(
+      await store.completeVerification({
+        segment: correctedVerifier!,
+        workerId: "wallet-archive-verifier-correction-test",
+        receipt: {
+          objectLockMode: "GOVERNANCE",
+          objectLockEvidence: "api-verified",
+          retainUntil
+        },
+        minimumRetainUntil: new Date(Date.now() + 7 * 86_400_000).toISOString()
+      })
+    ).toBe(true);
+    await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: scopedUrl.toString(),
+          WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+        },
+        timeout: 30_000
+      }
+    );
+    await expect(
+      testPool.query(
+        `SELECT archive_revision, status, affected_episode_count::int,
+                open_lot_count::int, mature_followability_count::int
+         FROM wallet_evidence_compact_days WHERE range_start=$1`,
+        [rangeStart.toISOString()]
+      )
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          archive_revision: 2,
+          status: "verified",
+          affected_episode_count: 0,
+          open_lot_count: 0,
+          mature_followability_count: 1
+        }
+      ]
+    });
+    await expect(
+      testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_profitability_episode_facts")
+    ).resolves.toMatchObject({ rows: [{ rows: 0 }] });
+    await expect(
+      testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_open_lot_facts")
+    ).resolves.toMatchObject({ rows: [{ rows: 0 }] });
   });
 
   it("invalidates an in-flight revision when its source window changes", async () => {
