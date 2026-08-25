@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:08:00Z
+updated_at_utc: 2026-08-25T22:14:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -419,3 +419,17 @@ blindly repeat the last mutation.
 - Next exact action: mark machine-ledger revision 4 as `derived-cache-reclaim=failed` with timeout
   and data-intact evidence. Then implement/test the bounded preflight change locally before opening
   a new revision-controlled retry. Do not rerun the current image/script.
+- Server ledger revision 4 records `derived-cache-reclaim=failed`, statement timeout, data intact
+  and wallet-alpha R34 running; SHA-256 is
+  `e4a169b87278a35a913e942b63252351127192d4e8a24dcff1c747120df09cd5`.
+- Implemented the bounded preflight fix in a separately testable core. It now uses canonical source
+  `EXISTS` plus relation-size/catalog estimates, materializes latest wallet statuses once in a
+  transaction-local table and reuses that table for the qualified-wallet gate and observed-wallet
+  requeue. Statement timeout remains 30 seconds; no resource limit was raised.
+- Disposable PostgreSQL 16 integration passed both real transaction paths: derived tables truncate
+  and only current observed wallets requeue on success; a newer qualified status causes full
+  rollback with derived rows/revision intact. Combined focused tests pass 6/6. Typecheck, ESLint and
+  workspace production build pass.
+- Next exact action: commit the coherent fix, build a new immutable R35 image rather than mutating
+  R34, run the integration inside the exact Linux/Node image, then stage/hash/load it. Do not reopen
+  ledger retry until image identity and target test evidence pass.
