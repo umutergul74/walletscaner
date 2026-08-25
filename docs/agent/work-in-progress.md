@@ -1,9 +1,9 @@
 ---
 status: waiting
-updated_at_utc: 2026-08-25T22:26:05Z
+updated_at_utc: 2026-08-25T22:27:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: R34 storage shadow operational and documented at c07c7e2; server ledger revision 9 waits on clean 24h/7d gates with canonical retirement disabled
+last_safe_checkpoint: R34 storage shadow operational and documented through d8dadd7; server ledger revision 9 waits on clean 24h/7d gates with canonical retirement disabled
 ---
 
 # Walletscaner Work In Progress
@@ -552,3 +552,9 @@ blindly repeat the last mutation.
   mutation remains. On the next observation, first verify server ledger revision 9/hash and actual
   runtime state, then measure archive catch-up, compact parity, queue slope and a clean post-catch-up
   24-hour storage window. Do not close revision 9 before the seven-future-day gate also matures.
+- Final post-documentation read-only sample at 2026-08-25 22:26 UTC again proved 12/12 services
+  running, restart 0/OOM false and live execution false on every selected worker. Server ledger is
+  still revision 9 with the same SHA-256. Pipeline backlog/dead-letter was 0/0, pool evidence age
+  1.5 seconds and wallet-trade age 304.5 seconds. The health report remains degraded for database
+  size, nine-day wallet archive catch-up, rollout-contaminated 4.83-day runway and an oscillating
+  load sample of 2.35; current-state commit `d8dadd7` records that this must remain under observation.
