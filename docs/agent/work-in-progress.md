@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:17:00Z
+updated_at_utc: 2026-08-25T21:21:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -205,3 +205,15 @@ blindly repeat the last mutation.
   `.partial` files; independently match every hash; then create a bounded rollback directory and
   atomically rename the reviewed files plus image artifact. Loading remains separate from
   activation.
+- All five server staging artifacts matched their local SHA-256 and were atomically renamed at
+  2026-08-25 21:20 UTC. The old Compose and updater are preserved under
+  `/opt/walletscaner/deploy/rollback-storage-r34-20260825T2119Z`; the old Compose SHA-256 is
+  `ae54b1e10b92246405f0026e56eb1a463b22dac35056839342658d5c970d1bcd`. The updater was unchanged
+  and has the same hash on both sides.
+- This checkpoint changes only inert host files. The R34 image tar is not loaded, migration level
+  remains 049, all existing containers retain their pre-rollout image/container identities and no
+  PostgreSQL or B2 data was changed.
+- Next exact action: stream-decompress the verified tar into `docker load`, prove the loaded tag
+  resolves to image ID `sha256:178566...ba4f`, and remove neither transfer artifact nor rollback.
+  Then perform another pre-activation inventory before changing the operations/research image
+  selectors or applying migrations.
