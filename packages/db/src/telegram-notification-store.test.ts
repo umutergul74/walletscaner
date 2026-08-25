@@ -120,6 +120,43 @@ describe("TelegramNotificationStore pipeline status", () => {
     });
   });
 
+  it("does not report OK while the ready alpha lane is stale", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          checked_at: "2026-08-25T09:00:00.000Z",
+          inbox_backlog: 0,
+          dead_letters: 0,
+          alpha_queue_pending: 4_000,
+          alpha_queue_ready: 2_000,
+          alpha_queue_failed: 0,
+          alpha_queue_quarantined: 1,
+          alpha_queue_background_pending: 1_000,
+          alpha_queue_elevated_pending: 2_900,
+          alpha_queue_signal_pending: 100,
+          alpha_queue_oldest_ready_age_seconds: 7_200,
+          alpha_queue_oldest_signal_ready_age_seconds: 60,
+          signals_24h: 0,
+          qualified_pools_24h: 0,
+          last_pool_age_seconds: 3,
+          last_wallet_trade_age_seconds: 60,
+          database_bytes: String(10 * 1024 ** 3),
+          open_coverage_incident_count: 0,
+          open_coverage_incidents: []
+        }
+      ]
+    });
+    const store = new TelegramNotificationStore({ query } as never);
+
+    await expect(store.getPipelineStatus("evidence-v1")).resolves.toMatchObject({
+      pipelineStatus: "degraded",
+      alphaQueueReady: 2_000,
+      alphaQueueQuarantined: 1,
+      alphaQueueOldestReadyAgeSeconds: 7_200,
+      alphaQueueOldestSignalReadyAgeSeconds: 60
+    });
+  });
+
   it("uses canonical exact-pool coverage in both bounded suppression and candidate admission", async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const store = new TelegramNotificationStore({ query } as never);

@@ -339,6 +339,23 @@ export async function processWalletAlphaQueue(
         continue;
       }
 
+      const bounds = await repository.probeWalletAlphaEvidenceBounds(
+        item,
+        minimumObservedAt,
+        maximumTradeEventsPerWallet,
+        maximumEntriesPerWallet,
+        maximumOutcomesPerWallet
+      );
+      if (bounds.tradeEventsExceeded) {
+        throw evidenceLimitError(item.walletAddress, "trade-events", maximumTradeEventsPerWallet);
+      }
+      if (bounds.entriesExceeded) {
+        throw evidenceLimitError(item.walletAddress, "entries", maximumEntriesPerWallet);
+      }
+      if (bounds.outcomesExceeded) {
+        throw evidenceLimitError(item.walletAddress, "outcomes", maximumOutcomesPerWallet);
+      }
+
       const [ledgerTrades, entries, outcomes, matchingCreators] = await Promise.all([
         repository.listWalletTradeEventsForWallets(
           walletAddresses,
@@ -448,7 +465,8 @@ export async function processWalletAlphaQueue(
         !(await repository.failWalletAlphaWork(
           item,
           message,
-          oversized ? oversizedRetrySeconds : 300
+          oversized ? oversizedRetrySeconds : 300,
+          oversized ? "evidence_limit" : "transient"
         ))
       ) {
         throw new Error(
@@ -527,6 +545,16 @@ export async function refreshWalletAlphaSignals(
 
 class WalletAlphaEvidenceLimitError extends Error {}
 
+function evidenceLimitError(
+  walletAddress: string,
+  evidence: string,
+  limit: number
+): WalletAlphaEvidenceLimitError {
+  return new WalletAlphaEvidenceLimitError(
+    `Wallet ${walletAddress} exceeded ${evidence} safety limit ${limit}.`
+  );
+}
+
 function assertEvidenceWithinLimit(
   walletAddress: string,
   evidence: string,
@@ -534,9 +562,7 @@ function assertEvidenceWithinLimit(
   limit: number
 ): void {
   if (rows <= limit) return;
-  throw new WalletAlphaEvidenceLimitError(
-    `Wallet ${walletAddress} exceeded ${evidence} safety limit ${limit}.`
-  );
+  throw evidenceLimitError(walletAddress, evidence, limit);
 }
 
 export function renderWalletAlphaMarkdown(report: WalletAlphaReport): string {

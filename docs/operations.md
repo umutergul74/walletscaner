@@ -216,6 +216,21 @@ filesystem. `price_observations` uses the same daily-drop model with a compact b
 key table. Maintenance is advisory-lock protected, bounded by row batches and a 30-second runtime,
 and must retain capacity above measured ingress.
 
+Partition maintenance checks `pg_inherits` before issuing DDL, so an already-attached daily
+partition is a catalog read rather than a repeated parent-table lock. If a payload partition is
+genuinely missing, the transaction takes the `chain_event_inbox` lock before the payload-parent
+lock, matching canonical admission order, and uses
+`MAINTENANCE_PARTITION_LOCK_TIMEOUT_MS` (1.5 seconds by default). A missing current-day partition is
+critical and fails the run; a future partition that cannot be created within the short lock budget
+is deferred. An orphan relation with the expected child name is never attached implicitly.
+
+Canonical claim is a single-statement idempotent lease operation. PostgreSQL deadlock,
+serialization, lock-timeout and transient-shutdown SQLSTATEs are retried with bounded exponential
+backoff and jitter; the statement either commits the lease or advances no row/cursor state. The
+worker exposes retry count, last SQLSTATE and next-retry timing in health telemetry. Exhausting the
+bounded claim retry keeps ingestion alive and fail-closed instead of converting a transient
+database arbitration failure into a provider reconnect/restart loop.
+
 `MAINTENANCE_DRY_RUN=true` is the safe shadow/deployment default. Keep it enabled while verifying the
 eligible row counts, deletion query plans, database backup and shared-host headroom. Set it to
 `false` only after an explicit retention approval; then run one bounded maintenance cycle, verify
@@ -289,6 +304,15 @@ unrelated daily partitions instead of probing every partition for every inbox ro
 archive segment must retain the configured Object Lock reserve before either compaction or inbox
 retirement can proceed.
 
+When the oldest verified, retention-eligible raw payload exceeds the configured boundary by more
+than `MAINTENANCE_COMPACTION_PRIORITY_LAG_SECONDS` (one hour by default), maintenance reserves the
+majority of its bounded run for payload compaction and skips the competing processed-inbox metadata
+stage for that cycle. Metadata retirement resumes automatically after compaction returns inside the
+one-hour envelope. Every cycle atomically replaces
+`reports/operational-maintenance-latest.json`; the report records inventory, per-stage counts,
+timeouts and duration without becoming canonical state. Acceptance is based on boundary lag and
+rows/hour exceeding measured ingress, not on one successful batch.
+
 The durable price write path belongs only to `evidence-sampler` and uses 120-second compact pool
 buckets. It runs through direct Node/tsx; the 2026-07-28 restart canary measured about 45.8 MiB
 instead of 78.3 MiB with the previous npm wrapper. `solana-ingestion` retains the faster in-process
@@ -310,6 +334,13 @@ On this one-CPU host, wallet-alpha runs Node/tsx directly and sets
 `PGOPTIONS=-c max_parallel_workers_per_gather=0` only for its own database sessions. It leases one
 wallet at a time and defaults to 10,000 trade, 2,000 entry and 4,000 outcome rows per wallet plus a
 240-second cycle deadline. Crossing a row ceiling quarantines only that wallet for a long retry.
+Before materializing or sorting any one-wallet history, a five-second index-bounded upper-limit
+probe checks whether trades, entries or outcomes exceed their configured ceilings. An
+`evidence_limit` failure is persisted as an explicit quarantine class. Migration 047 preserves the
+future `not_before` quarantine when new score-changing or signal-lane evidence revises the same
+coalesced row, so a hot pathological wallet cannot cancel its own delay or be retried twice in one
+cycle. Successful completion clears the quarantine; unrelated transient failures remain visible as
+ordinary failed work.
 Before those full reads, the production worker peeks at no more than 100 unlocked queue revisions
 without leasing them and runs one five-second-timeout admission prefetch. Each wallet's two lateral
 index probes stop after at most six trade rows and three entry rows. The cached result is keyed by
@@ -327,6 +358,12 @@ poll. The service still has one wallet in flight, a 112 MiB Node heap, a 160 MiB
 and a 7% CPU ceiling. Operational acceptance requires `listener=listening`, bounded lane-specific
 oldest age, no growing failed count, and measured signal-lane enqueue-to-refresh latency; total
 pending alone is not an incident if the signal lane remains current and background drains.
+Telegram status combines pipeline freshness with the bounded operations report. It includes
+signal/score/background lane counts, oldest ready and signal-ready ages, non-quarantine failures,
+quarantined wallets, disk free space and raw-payload compaction lag. A missing/stale operational
+report, signal-lane age above five minutes, ready-work age above one hour, non-quarantine failure,
+database warning or existing discovery/inbox fault keeps the aggregate state `DEGRADED`. This is a
+truthful research/operations status; it never changes alpha admission or live-execution state.
 The generated gate processes 99 normal wallets behind one 10,001-trade pathological wallet in
 under 0.5 seconds at about 123.5 MiB RSS under the 112 MiB heap/160 MiB container boundaries. This
 does not replace a shared-host canary. The final shared-host bounded-probe cycle completed 26 queue

@@ -524,6 +524,14 @@ export interface WalletAlphaAdmissionProbe extends WalletAlphaWorkCandidate {
   entryCount: number;
 }
 
+export interface WalletAlphaEvidenceBounds {
+  tradeEventsExceeded: boolean;
+  entriesExceeded: boolean;
+  outcomesExceeded: boolean;
+}
+
+export type WalletAlphaWorkFailureClass = "transient" | "evidence_limit";
+
 export interface WalletAlphaWorkClaimOptions {
   strategyVersion: string;
   workerId: string;
@@ -702,11 +710,19 @@ export interface EvidenceRepository {
     minimumTradeEvents: number,
     minimumEntries: number
   ): Promise<WalletAlphaAdmissionProbe[]>;
+  probeWalletAlphaEvidenceBounds(
+    item: WalletAlphaWorkItem,
+    minObservedAt: string,
+    maximumTradeEvents: number,
+    maximumEntries: number,
+    maximumOutcomes: number
+  ): Promise<WalletAlphaEvidenceBounds>;
   completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean>;
   failWalletAlphaWork(
     item: WalletAlphaWorkItem,
     error: string,
-    retrySeconds?: number
+    retrySeconds?: number,
+    failureClass?: WalletAlphaWorkFailureClass
   ): Promise<boolean>;
   getWalletAlphaWorkSummary(strategyVersion: string): Promise<WalletAlphaWorkSummary>;
   getWalletAlphaStatusCounts(strategyVersion: string): Promise<WalletAlphaStatusCounts>;

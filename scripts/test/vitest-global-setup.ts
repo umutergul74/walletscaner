@@ -7,9 +7,11 @@ export default async function setup(): Promise<void> {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   try {
     // PostgreSQL extensions are database-wide, while integration fixtures use
-    // isolated schemas in parallel. Installing pgcrypto once in public keeps
-    // migration 001 idempotent and makes digest() visible to every fixture.
+    // isolated schemas in parallel. Install every extension used by migrations
+    // once before file workers start; concurrent CREATE EXTENSION IF NOT EXISTS
+    // commands can otherwise race on pg_extension_name_index.
     await pool.query("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public");
+    await pool.query("CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA public");
   } finally {
     await pool.end();
   }

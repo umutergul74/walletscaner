@@ -107,6 +107,7 @@ describe("wallet alpha report", () => {
     }
     await repository.saveWalletTradeEvent(walletTrade("ZHealthyWallet", "healthy", 1_000));
     const scopedLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
+    const boundedProbes = vi.spyOn(repository, "probeWalletAlphaEvidenceBounds");
 
     const result = await processWalletAlphaQueue(
       repository,
@@ -136,11 +137,20 @@ describe("wallet alpha report", () => {
       signalPending: 0,
       oldestPendingAt: expect.any(String)
     });
-    expect(scopedLoads.mock.calls.map(([wallets]) => wallets)).toEqual([
-      ["AHeavyWallet"],
-      ["ZHealthyWallet"]
-    ]);
+    expect(boundedProbes).toHaveBeenCalledTimes(2);
+    // The pathological wallet is rejected by an index-bounded count probe;
+    // its 101 full rows are never sorted/materialized into the worker heap.
+    expect(scopedLoads.mock.calls.map(([wallets]) => wallets)).toEqual([["ZHealthyWallet"]]);
     expect(await repository.listWalletAlphaScores("evidence-v1")).toHaveLength(1);
+
+    await repository.saveWalletTradeEvent(walletTrade("AHeavyWallet", "heavy-new", 2_000));
+    expect(
+      await repository.claimWalletAlphaWork({
+        strategyVersion: "evidence-v1",
+        workerId: "quarantine-probe",
+        limit: 1
+      })
+    ).toEqual([]);
   });
 
   it("completes low-evidence work without scoring it", async () => {

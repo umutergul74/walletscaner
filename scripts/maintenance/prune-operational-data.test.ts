@@ -55,6 +55,15 @@ describe("operational maintenance SQL contract", () => {
     );
   });
 
+  it("prioritizes overdue payload compaction over competing inbox metadata retirement", async () => {
+    const source = await readFile(scriptPath, "utf8");
+
+    expect(source).toContain("chain_event_payloads_overdue");
+    expect(source).toContain("MAINTENANCE_COMPACTION_PRIORITY_LAG_SECONDS");
+    expect(source).toContain("if (!eligible.rows[0]?.chain_event_payloads_overdue)");
+    expect(source).toContain("maintenanceStartedAt + totalBudgetMs * 0.78");
+  });
+
   it("uses one pinned PostgreSQL session for the advisory lock lifecycle", async () => {
     const source = await readFile(scriptPath, "utf8");
 

@@ -1387,7 +1387,8 @@ export class PostgresRepository
            locked_at = NULL,
            lock_expires_at = NULL,
            attempt_count = 0,
-           last_error = NULL
+           last_error = NULL,
+           quarantine_reason = NULL
        WHERE chain = $1
          AND wallet_address = $2
          AND strategy_version = $3
@@ -1400,7 +1401,8 @@ export class PostgresRepository
   async failWalletAlphaWork(
     item: WalletAlphaWorkItem,
     error: string,
-    retrySeconds = 300
+    retrySeconds = 300,
+    failureClass: "transient" | "evidence_limit" = "transient"
   ): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE wallet_alpha_work_queue
@@ -1408,7 +1410,8 @@ export class PostgresRepository
            locked_at = NULL,
            lock_expires_at = NULL,
            not_before = NOW() + make_interval(secs => $4::integer),
-           last_error = LEFT($5, 4_000)
+           last_error = LEFT($5, 4_000),
+           quarantine_reason = $7
        WHERE chain = $1
          AND wallet_address = $2
          AND strategy_version = $3
@@ -1419,10 +1422,80 @@ export class PostgresRepository
         item.strategyVersion,
         clampLimit(retrySeconds, 300, 86_400),
         error,
-        item.lockedBy
+        item.lockedBy,
+        failureClass === "evidence_limit" ? "evidence_limit" : null
       ]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async probeWalletAlphaEvidenceBounds(
+    item: WalletAlphaWorkItem,
+    minObservedAt: string,
+    maximumTradeEvents: number,
+    maximumEntries: number,
+    maximumOutcomes: number
+  ): Promise<{
+    tradeEventsExceeded: boolean;
+    entriesExceeded: boolean;
+    outcomesExceeded: boolean;
+  }> {
+    const tradeLimit = clampLimit(maximumTradeEvents, 10_000, 100_000);
+    const entryLimit = clampLimit(maximumEntries, 2_000, 50_000);
+    const outcomeLimit = clampLimit(maximumOutcomes, 4_000, 100_000);
+    return this.withTransaction(async (client) => {
+      await client.query("SET LOCAL statement_timeout = '5s'");
+      const result = await client.query<{
+        trade_events_exceeded: boolean;
+        entries_exceeded: boolean;
+        outcomes_exceeded: boolean;
+      }>(
+        `SELECT
+           EXISTS (
+             SELECT 1
+             FROM wallet_trade_events trade
+             WHERE trade.chain = $1
+               AND trade.wallet_address = $2
+               AND trade.strategy_version = $3
+             OFFSET $5 LIMIT 1
+           ) AS trade_events_exceeded,
+           EXISTS (
+             SELECT 1
+             FROM wallet_entry_signals entry
+             WHERE entry.chain = $1
+               AND entry.wallet_address = $2
+               AND entry.strategy_version = $3
+               AND entry.observed_at >= $4
+             OFFSET $6 LIMIT 1
+           ) AS entries_exceeded,
+           EXISTS (
+             SELECT 1
+             FROM wallet_signal_outcomes outcome
+             JOIN wallet_entry_signals entry
+               ON entry.idempotency_key = outcome.entry_idempotency_key
+             WHERE entry.chain = $1
+               AND entry.wallet_address = $2
+               AND entry.strategy_version = $3
+               AND outcome.strategy_version = $3
+               AND outcome.observed_at >= $4
+             OFFSET $7 LIMIT 1
+           ) AS outcomes_exceeded`,
+        [
+          item.chain,
+          item.walletAddress,
+          item.strategyVersion,
+          minObservedAt,
+          tradeLimit,
+          entryLimit,
+          outcomeLimit
+        ]
+      );
+      return {
+        tradeEventsExceeded: Boolean(result.rows[0]?.trade_events_exceeded),
+        entriesExceeded: Boolean(result.rows[0]?.entries_exceeded),
+        outcomesExceeded: Boolean(result.rows[0]?.outcomes_exceeded)
+      };
+    });
   }
 
   async getWalletAlphaWorkSummary(strategyVersion: string): Promise<WalletAlphaWorkSummary> {

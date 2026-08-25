@@ -114,6 +114,14 @@ export interface PipelineStatusNotification {
   inboxBacklog: number;
   deadLetters: number;
   alphaQueuePending: number;
+  alphaQueueReady?: number;
+  alphaQueueFailed?: number;
+  alphaQueueQuarantined?: number;
+  alphaQueueBackgroundPending?: number;
+  alphaQueueElevatedPending?: number;
+  alphaQueueSignalPending?: number;
+  alphaQueueOldestReadyAgeSeconds?: number;
+  alphaQueueOldestSignalReadyAgeSeconds?: number;
   signals24h: number;
   qualifiedPools24h: number;
   lastPoolAgeSeconds?: number;
@@ -122,6 +130,17 @@ export interface PipelineStatusNotification {
   openCoverageIncidentCount?: number;
   openCoverageIncidents?: IngestionCoverageIncidentStatus[];
   coverageTransition?: IngestionCoverageIncidentTransition;
+  operationalHealth?: {
+    checkedAt: string;
+    status: "ok" | "degraded" | "down" | "unavailable";
+    reasons: string[];
+    diskAvailableBytes?: number;
+    diskUsedPercent?: number;
+    databaseBytes?: number;
+    chainPayloadCompactionLagSeconds?: number;
+    backupAgeSeconds?: number;
+    backupOffsiteAcknowledged?: boolean;
+  };
 }
 
 export interface IngestionCoverageIncidentStatus {

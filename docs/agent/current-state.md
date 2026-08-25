@@ -3,6 +3,40 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-25 pipeline/storage hardening release (pre-rollout)
+
+- **Implemented locally / production rollout pending:** canonical claim no longer turns a transient
+  PostgreSQL deadlock/serialization/lock failure into an unhandled ingestion restart. The
+  single-statement lease is retried with bounded backoff and exposes safe SQLSTATE telemetry.
+- **Implemented locally / production rollout pending:** recurring partition maintenance performs a
+  catalog check for attached children and issues no DDL for existing partitions. A genuinely
+  missing payload partition uses the canonical inbox-to-payload lock order and short lock timeout;
+  a missing current partition fails closed.
+- **Implemented locally / production rollout pending:** migration 047 records an `evidence_limit`
+  wallet-alpha quarantine. New evidence revisions cannot shorten an active quarantine, and a cheap
+  index-bounded probe rejects an oversized wallet before full history materialization/sort/FIFO.
+- **Implemented locally / production rollout pending:** raw-payload compaction receives the majority
+  of the 30-second maintenance budget while its boundary is more than one hour late. Competing inbox
+  metadata retirement is deferred until the compaction boundary catches up. Every cycle writes a
+  bounded atomic maintenance report.
+- **Implemented locally / production rollout pending:** Telegram status reports alpha lane counts,
+  ready/error/quarantine state, oldest ready ages and the bounded operations/storage report. Missing
+  or stale operations evidence fails closed; database size policy remains owned by the configurable
+  operations monitor rather than a second hard-coded notifier threshold.
+- **Verification:** TypeScript, ESLint, production workspace build and 63 targeted unit/PostgreSQL 16
+  tests pass. The real PostgreSQL 16 gate includes the former partition/claim lock cycle and active
+  quarantine revision coalescing. The complete Windows suite previously passed 413 tests; its four
+  zstd-dependent cases require the exact Linux image gate before rollout.
+- **Recovery point:** dump `memecoin_alpha_20260824T150923Z.dump` is 1,692,713,492 bytes and has
+  SHA-256 `13e1fdeddef5f6ea90482e3d592aeaa45b280070de2c95f642fc3117215cd574`.
+  Server/local bytes, PostgreSQL 16 archive-list and off-site acknowledgement passed at
+  2026-08-25 09:13 UTC. No server/B2 object or canonical evidence was deleted.
+
+Production acceptance still requires the exact Linux/zstd gate, additive migration verification,
+targeted service recreation, a restart/OOM/co-tenant-safe ingestion/alpha canary and at least one
+normal recurring maintenance cycle whose compaction throughput exceeds measured ingress. Do not
+label this release operational before those observations pass.
+
 ## Last verified boundary
 
 - Observation: 2026-08-24 17:09 UTC, exact-finalized repair-proof rollout and live discovery

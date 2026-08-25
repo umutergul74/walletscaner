@@ -66,6 +66,7 @@ import {
   reconcileSolanaFinalityCycle
 } from "./solana-finality.js";
 import { discoveryBackfillProfile } from "./discovery-backfill-profile.js";
+import { canonicalClaimRetryDecision } from "./postgres-retry.js";
 
 interface ProgramConfig {
   programId: string;
@@ -375,6 +376,11 @@ const canonicalParserDiagnostics = {
   claimedEventCount: 0,
   completedEventCount: 0,
   failedEventCount: 0,
+  claimErrorCount: 0,
+  consecutiveClaimErrorCount: 0,
+  lastClaimErrorCode: null as string | null,
+  lastClaimErrorAt: null as string | null,
+  claimRetryAt: null as string | null,
   lastClaimDurationMs: 0,
   lastClaimedEventCount: 0
 };
@@ -712,6 +718,7 @@ let historicalSolUsdRateLimitStreak = 0;
 const buyDefinitions = buildBuyDefinitions();
 const canonicalWorkerId = `solana-parser:${process.pid}`;
 let canonicalDrainRunning = false;
+let canonicalClaimBlockedUntilMs = 0;
 let finalityCycleRunning = false;
 let poolSamplingRunning = false;
 let webhookSyncRunning = false;
@@ -961,6 +968,7 @@ const healthTimer = setInterval(() => {
       storageGate: storageGateDiagnostics,
       canonicalParser: {
         ...canonicalParserDiagnostics,
+        claimRetryRemainingMs: Math.max(0, canonicalClaimBlockedUntilMs - Date.now()),
         processConcurrency: canonicalEventProcessConcurrency,
         claimLimit: canonicalEventClaimLimit,
         leaseSeconds: canonicalEventLeaseSeconds
@@ -1227,16 +1235,52 @@ function ratio(numerator: number, denominator: number): number | null {
 }
 
 async function drainCanonicalInbox(): Promise<void> {
-  if (canonicalDrainRunning || storageGateDiagnostics.paused) return;
+  if (
+    canonicalDrainRunning ||
+    storageGateDiagnostics.paused ||
+    Date.now() < canonicalClaimBlockedUntilMs
+  ) {
+    return;
+  }
   canonicalDrainRunning = true;
   try {
     while (true) {
       const claimStartedAt = Date.now();
-      const claimed = await repository.claimChainEvents({
-        workerId: canonicalWorkerId,
-        limit: canonicalEventClaimLimit,
-        leaseSeconds: canonicalEventLeaseSeconds
-      });
+      let claimed: CanonicalChainEvent[];
+      try {
+        claimed = await repository.claimChainEvents({
+          workerId: canonicalWorkerId,
+          limit: canonicalEventClaimLimit,
+          leaseSeconds: canonicalEventLeaseSeconds
+        });
+        canonicalParserDiagnostics.consecutiveClaimErrorCount = 0;
+        canonicalParserDiagnostics.lastClaimErrorCode = null;
+        canonicalParserDiagnostics.claimRetryAt = null;
+        canonicalClaimBlockedUntilMs = 0;
+      } catch (error) {
+        canonicalParserDiagnostics.claimErrorCount += 1;
+        canonicalParserDiagnostics.consecutiveClaimErrorCount += 1;
+        const retry = canonicalClaimRetryDecision(
+          error,
+          canonicalParserDiagnostics.consecutiveClaimErrorCount
+        );
+        canonicalClaimBlockedUntilMs = Date.now() + retry.delayMs;
+        canonicalParserDiagnostics.lastClaimErrorCode = retry.code;
+        canonicalParserDiagnostics.lastClaimErrorAt = new Date().toISOString();
+        canonicalParserDiagnostics.claimRetryAt = new Date(
+          canonicalClaimBlockedUntilMs
+        ).toISOString();
+        console.error(
+          JSON.stringify({
+            type: "canonical-claim-retry",
+            postgresCode: retry.code,
+            transient: retry.transient,
+            consecutiveFailures: canonicalParserDiagnostics.consecutiveClaimErrorCount,
+            retryDelayMs: retry.delayMs
+          })
+        );
+        break;
+      }
       canonicalParserDiagnostics.claimCount += 1;
       canonicalParserDiagnostics.claimedEventCount += claimed.length;
       canonicalParserDiagnostics.lastClaimDurationMs = Date.now() - claimStartedAt;

@@ -280,6 +280,14 @@ export class TelegramNotificationStore {
       inbox_backlog: number;
       dead_letters: number;
       alpha_queue_pending: number;
+      alpha_queue_ready: number;
+      alpha_queue_failed: number;
+      alpha_queue_quarantined: number;
+      alpha_queue_background_pending: number;
+      alpha_queue_elevated_pending: number;
+      alpha_queue_signal_pending: number;
+      alpha_queue_oldest_ready_age_seconds: number | null;
+      alpha_queue_oldest_signal_ready_age_seconds: number | null;
       signals_24h: number;
       qualified_pools_24h: number;
       last_pool_age_seconds: number | null;
@@ -313,6 +321,47 @@ export class TelegramNotificationStore {
          (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
           WHERE strategy_version = $2
             AND revision > completed_revision) AS alpha_queue_pending,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision
+            AND not_before <= NOW()
+            AND (lock_expires_at IS NULL OR lock_expires_at <= NOW())) AS alpha_queue_ready,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision
+            AND last_error IS NOT NULL
+            AND quarantine_reason IS NULL) AS alpha_queue_failed,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision
+            AND quarantine_reason IS NOT NULL
+            AND not_before > NOW()) AS alpha_queue_quarantined,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision AND priority = 0) AS alpha_queue_background_pending,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision AND priority = 1) AS alpha_queue_elevated_pending,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision AND priority = 2) AS alpha_queue_signal_pending,
+         (SELECT EXTRACT(EPOCH FROM (NOW() - MIN(pending_since)))
+          FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision
+            AND not_before <= NOW()
+            AND quarantine_reason IS NULL
+            AND (lock_expires_at IS NULL OR lock_expires_at <= NOW()))
+            AS alpha_queue_oldest_ready_age_seconds,
+         (SELECT EXTRACT(EPOCH FROM (NOW() - MIN(pending_since)))
+          FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND revision > completed_revision
+            AND priority = 2
+            AND not_before <= NOW()
+            AND quarantine_reason IS NULL
+            AND (lock_expires_at IS NULL OR lock_expires_at <= NOW()))
+            AS alpha_queue_oldest_signal_ready_age_seconds,
          (SELECT COUNT(*)::integer FROM wallet_alpha_signals
           WHERE detected_at >= NOW() - INTERVAL '24 hours') AS signals_24h,
          (SELECT COUNT(*)::integer FROM telegram_notification_outbox
@@ -351,11 +400,23 @@ export class TelegramNotificationStore {
     const lastPoolAgeSeconds = nullableNumber(row.last_pool_age_seconds);
     const lastWalletTradeAgeSeconds = nullableNumber(row.last_wallet_trade_age_seconds);
     const openCoverageIncidentCount = Number(row.open_coverage_incident_count ?? 0);
+    const alphaQueueReady = Number(row.alpha_queue_ready ?? 0);
+    const alphaQueueFailed = Number(row.alpha_queue_failed ?? 0);
+    const alphaQueueOldestReadyAgeSeconds = nullableNumber(
+      row.alpha_queue_oldest_ready_age_seconds
+    );
+    const alphaQueueOldestSignalReadyAgeSeconds = nullableNumber(
+      row.alpha_queue_oldest_signal_ready_age_seconds
+    );
+    const databaseBytes = Number(row.database_bytes);
     const openCoverageIncidents = parseCoverageIncidents(row.open_coverage_incidents);
     const pipelineStatus =
       backlog <= 100 &&
       deadLetters === 0 &&
       openCoverageIncidentCount === 0 &&
+      alphaQueueFailed === 0 &&
+      (alphaQueueOldestReadyAgeSeconds ?? 0) <= 3_600 &&
+      (alphaQueueOldestSignalReadyAgeSeconds ?? 0) <= 300 &&
       (lastPoolAgeSeconds ?? Number.POSITIVE_INFINITY) <= 300
         ? "ok"
         : "degraded";
@@ -365,11 +426,21 @@ export class TelegramNotificationStore {
       inboxBacklog: backlog,
       deadLetters,
       alphaQueuePending: Number(row.alpha_queue_pending),
+      alphaQueueReady,
+      alphaQueueFailed,
+      alphaQueueQuarantined: Number(row.alpha_queue_quarantined ?? 0),
+      alphaQueueBackgroundPending: Number(row.alpha_queue_background_pending ?? 0),
+      alphaQueueElevatedPending: Number(row.alpha_queue_elevated_pending ?? 0),
+      alphaQueueSignalPending: Number(row.alpha_queue_signal_pending ?? 0),
+      ...(alphaQueueOldestReadyAgeSeconds !== undefined ? { alphaQueueOldestReadyAgeSeconds } : {}),
+      ...(alphaQueueOldestSignalReadyAgeSeconds !== undefined
+        ? { alphaQueueOldestSignalReadyAgeSeconds }
+        : {}),
       signals24h: Number(row.signals_24h),
       qualifiedPools24h: Number(row.qualified_pools_24h),
       ...(lastPoolAgeSeconds !== undefined ? { lastPoolAgeSeconds } : {}),
       ...(lastWalletTradeAgeSeconds !== undefined ? { lastWalletTradeAgeSeconds } : {}),
-      databaseBytes: Number(row.database_bytes),
+      databaseBytes,
       openCoverageIncidentCount,
       openCoverageIncidents
     };
@@ -453,9 +524,7 @@ export class TelegramNotificationStore {
         ...(row.slot_lag !== null ? { slotLag: Number(row.slot_lag) } : {}),
         ...(row.silence_ms !== null ? { silenceMs: Number(row.silence_ms) } : {}),
         coverageDisposition:
-          row.transition === "coverage-reconciled"
-            ? "reconciled"
-            : "alpha_excluded_unreconciled"
+          row.transition === "coverage-reconciled" ? "reconciled" : "alpha_excluded_unreconciled"
       };
       const sourceKey = `coverage-incident:${row.transition}:${row.idempotency_key}`;
       if (await this.enqueueStatus(sourceKey, { ...status, coverageTransition: transition })) {

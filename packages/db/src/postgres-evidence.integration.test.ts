@@ -17,6 +17,7 @@ import {
   buildWalletAlphaReport,
   processWalletAlphaQueue
 } from "../../../scripts/research/wallet-alpha-report-builder";
+import { ensurePayloadPartitions } from "../../../scripts/maintenance/partition-maintenance";
 import { PostgresRepository } from "./postgres-repository";
 import { TelegramNotificationStore } from "./telegram-notification-store";
 
@@ -50,6 +51,60 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     const first = await telegramStore.initializeStartedAt(5);
     const second = await telegramStore.initializeStartedAt(0);
     expect(second).toBe(first);
+  });
+
+  it("creates a missing payload partition without inverting the canonical inbox lock order", async () => {
+    const event = {
+      idempotencyKey: "partition-lock-order-event",
+      chain: "solana" as const,
+      signature: "partition-lock-order-signature",
+      slot: 1,
+      eventType: "swap",
+      occurredAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      commitment: "confirmed" as const,
+      source: "integration-test",
+      decoderVersion: "integration-v1",
+      payload: { address: "PartitionLockAddress", transaction: {} }
+    };
+    expect(await repository.insertChainEvent(event)).toBe(true);
+    const blocker = await testPool.connect();
+    const partitionName = "chain_event_payloads_20361231";
+    await testPool.query(`DROP TABLE IF EXISTS ${partitionName}`);
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SET LOCAL lock_timeout = '2s'");
+      await blocker.query(
+        `UPDATE chain_event_inbox SET last_error = NULL WHERE idempotency_key = $1`,
+        [event.idempotencyKey]
+      );
+
+      const partitionCreation = ensurePayloadPartitions(testPool, -1, {
+        now: new Date("2037-01-01T12:00:00.000Z"),
+        lockTimeoutMs: 5_000,
+        statementTimeoutMs: 5_000
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // This parent read would deadlock with the previous payload-parent ->
+      // inbox DDL order. It remains immediately available because creation is
+      // waiting on the inbox before acquiring the payload-parent lock.
+      await expect(
+        blocker.query("SELECT 1 FROM chain_event_payloads WHERE FALSE")
+      ).resolves.toBeDefined();
+      await blocker.query("COMMIT");
+      await expect(partitionCreation).resolves.toMatchObject({ created: 1 });
+    } finally {
+      try {
+        await blocker.query("ROLLBACK");
+      } catch {
+        // The successful path already committed.
+      }
+      blocker.release();
+      await testPool.query(`DROP TABLE IF EXISTS ${partitionName}`);
+      await testPool.query("DELETE FROM chain_event_inbox WHERE idempotency_key = $1", [
+        event.idempotencyKey
+      ]);
+    }
   });
 
   it("delivers one risk-passed, liquid pool notification exactly once", async () => {
@@ -231,6 +286,97 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     });
     expect(claimed[0]?.walletAddress).toBe("IndexedReadyEarlier");
     expect(await repository.completeWalletAlphaWork(claimed[0]!)).toBe(true);
+  });
+
+  it("bounds pathological wallet evidence before full load and preserves its quarantine", async () => {
+    const strategyVersion = "evidence-quarantine-v1";
+    const walletAddress = "EvidenceQuarantineWallet";
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      idempotency_key: `quarantine-trade-${index}`,
+      chain: "solana",
+      wallet_address: walletAddress,
+      token_address: `QuarantineToken${index}`,
+      side: "buy",
+      base_amount: "1",
+      execution_price_usd: 1,
+      quote_value_usd: 1,
+      data_quality: "observed-execution",
+      signature: `quarantine-signature-${index}`,
+      slot: index + 1,
+      provider: "integration-test",
+      observed_at: "2026-08-25T00:00:00.000Z",
+      strategy_version: strategyVersion,
+      raw: {}
+    }));
+    await testPool.query(
+      `INSERT INTO wallet_trade_events (
+         idempotency_key, chain, wallet_address, token_address, side,
+         base_amount, execution_price_usd, quote_value_usd, data_quality, signature, slot, provider,
+         observed_at, strategy_version, raw
+       )
+       SELECT *
+       FROM jsonb_to_recordset($1::jsonb) AS trade(
+         idempotency_key text, chain text, wallet_address text, token_address text,
+         side text, base_amount numeric, execution_price_usd numeric,
+         quote_value_usd numeric, data_quality text,
+         signature text, slot bigint, provider text, observed_at timestamptz,
+         strategy_version text, raw jsonb
+       )`,
+      [JSON.stringify(rows)]
+    );
+    await testPool.query(
+      `SELECT enqueue_wallet_alpha_work(
+         'solana', $1, $2, 0::smallint, 'quarantine-integration'
+       )`,
+      [walletAddress, strategyVersion]
+    );
+
+    const [item] = await repository.claimWalletAlphaWork({
+      strategyVersion,
+      workerId: "quarantine-worker",
+      limit: 1,
+      leaseSeconds: 60
+    });
+    expect(item).toBeDefined();
+    await expect(
+      repository.probeWalletAlphaEvidenceBounds(item!, "2026-08-24T00:00:00.000Z", 100, 100, 100)
+    ).resolves.toMatchObject({ tradeEventsExceeded: true });
+    expect(
+      await repository.failWalletAlphaWork(item!, "evidence ceiling", 3_600, "evidence_limit")
+    ).toBe(true);
+
+    const before = await testPool.query<{ revision: string; not_before: Date }>(
+      `SELECT revision, not_before
+       FROM wallet_alpha_work_queue
+       WHERE wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    await testPool.query(
+      `SELECT enqueue_wallet_alpha_work(
+         'solana', $1, $2, 2::smallint, 'risk-passed-source-entry'
+       )`,
+      [walletAddress, strategyVersion]
+    );
+    const after = await testPool.query<{
+      revision: string;
+      not_before: Date;
+      quarantine_reason: string;
+    }>(
+      `SELECT revision, not_before, quarantine_reason
+       FROM wallet_alpha_work_queue
+       WHERE wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(Number(after.rows[0]?.revision)).toBe(Number(before.rows[0]?.revision) + 1);
+    expect(after.rows[0]?.not_before).toEqual(before.rows[0]?.not_before);
+    expect(after.rows[0]?.quarantine_reason).toBe("evidence_limit");
+    expect(
+      await repository.claimWalletAlphaWork({
+        strategyVersion,
+        workerId: "quarantine-bypass-probe",
+        limit: 1
+      })
+    ).toEqual([]);
   });
 
   it("does not join wallet outcomes across strategy boundaries", async () => {

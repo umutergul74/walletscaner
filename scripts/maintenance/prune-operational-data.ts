@@ -1,9 +1,15 @@
 import "dotenv/config";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import pg from "pg";
 import {
   archiveRetirementPolicyStatus,
   retireVerifiedPayloadPartitions
 } from "@memecoin-alpha/db/archive-retention";
+import {
+  ensurePayloadPartitions,
+  ensurePricePartitions,
+  type PartitionEnsureResult
+} from "./partition-maintenance.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for operational maintenance.");
@@ -44,12 +50,21 @@ const payloadPartitionFutureDays = positiveInt(
   process.env.CHAIN_EVENT_PAYLOAD_PARTITION_FUTURE_DAYS,
   8
 );
+const partitionLockTimeoutMs = positiveInt(
+  process.env.MAINTENANCE_PARTITION_LOCK_TIMEOUT_MS,
+  1_500
+);
+const compactionPriorityLagSeconds = positiveInt(
+  process.env.MAINTENANCE_COMPACTION_PRIORITY_LAG_SECONDS,
+  3_600
+);
 const dryRun = parseBoolean(process.env.MAINTENANCE_DRY_RUN, false);
 const archiveRetirementEnabled = parseBoolean(process.env.ARCHIVE_RETIREMENT_ENABLED, false);
 const archiveMinimumRemainingDays = positiveInt(
   process.env.ARCHIVE_OBJECT_LOCK_MIN_REMAINING_DAYS,
   7
 );
+const maintenanceReportPath = "reports/operational-maintenance-latest.json";
 const pool = new pg.Pool({
   connectionString: databaseUrl,
   // One pinned session owns the advisory lock while the second connection
@@ -77,6 +92,7 @@ try {
     const eligible = await pool.query<{
       price_observations: boolean;
       chain_event_payloads: boolean;
+      chain_event_payloads_overdue: boolean;
       chain_events: boolean;
       swaps: boolean;
       solana_signature_queue: boolean;
@@ -95,6 +111,13 @@ try {
             AND COALESCE(processed_at, received_at) <
                 NOW() - make_interval(hours => $4::integer))
            AS chain_event_payloads,
+         EXISTS(SELECT 1 FROM chain_event_inbox
+          WHERE status = 'processed'
+            AND payload_compacted_at IS NULL
+            AND COALESCE(processed_at, received_at) <
+                NOW() - make_interval(hours => $4::integer)
+                      - make_interval(secs => $10::integer))
+           AS chain_event_payloads_overdue,
          EXISTS(SELECT 1 FROM chain_event_inbox
           WHERE status IN ('processed', 'rolled_back')
             AND COALESCE(processed_at, received_at) <
@@ -135,7 +158,8 @@ try {
         walletEvidenceRetentionDays,
         signatureQueueRetentionDays,
         finalityRetentionDays,
-        gapRepairSignatureRetentionDays
+        gapRepairSignatureRetentionDays,
+        compactionPriorityLagSeconds
       ]
     );
     const archivePolicy = await archiveRetirementPolicyStatus(pool, archiveMinimumRemainingDays);
@@ -164,10 +188,15 @@ try {
     let archiveBlockedPayloadPartitions = 0;
     let heldUnresolvedPayloads = 0;
     let retiredPricePartitions = 0;
+    let payloadPartitionEnsure: PartitionEnsureResult = { existing: 0, created: 0, deferred: 0 };
+    let pricePartitionEnsure: PartitionEnsureResult = { existing: 0, created: 0, deferred: 0 };
     const maintenanceStartedAt = Date.now();
     const totalBudgetMs = maxRunSeconds * 1_000;
     if (!dryRun) {
-      await ensurePayloadPartitions(payloadPartitionFutureDays);
+      payloadPartitionEnsure = await ensurePayloadPartitions(pool, payloadPartitionFutureDays, {
+        lockTimeoutMs: partitionLockTimeoutMs,
+        statementTimeoutMs
+      });
       const retired = await retireVerifiedPayloadPartitions(
         pool,
         rawPayloadRetentionHours,
@@ -177,7 +206,10 @@ try {
       retiredPayloadPartitions = retired.partitions;
       heldUnresolvedPayloads = retired.heldPayloads;
       archiveBlockedPayloadPartitions = retired.blockedPartitions;
-      await ensurePricePartitions(payloadPartitionFutureDays);
+      pricePartitionEnsure = await ensurePricePartitions(pool, payloadPartitionFutureDays, {
+        lockTimeoutMs: partitionLockTimeoutMs,
+        statementTimeoutMs
+      });
       retiredPricePartitions = await retirePricePartitions(priceRetentionDays);
       deletedPriceObservations = await pruneInBatches(
         `WITH doomed AS (
@@ -293,8 +325,9 @@ try {
         "solana-finality"
       );
       if (archiveMutationsEnabled) {
-        deletedChainEvents = await pruneInBatches(
-          `WITH eligible_archive AS MATERIALIZED (
+        if (!eligible.rows[0]?.chain_event_payloads_overdue) {
+          deletedChainEvents = await pruneInBatches(
+            `WITH eligible_archive AS MATERIALIZED (
            SELECT archive.range_start, archive.range_end
            FROM archive_segments AS archive
            WHERE archive.source_kind = 'chain-event-payloads'
@@ -334,12 +367,17 @@ try {
          DELETE FROM chain_event_inbox AS target
          USING doomed
          WHERE target.ctid = doomed.ctid`,
-          inboxRetentionDays,
-          maintenanceStartedAt + totalBudgetMs * 0.52,
-          inboxBatchSize,
-          [archiveMinimumRemainingDays],
-          "chain-event-inbox"
-        );
+            inboxRetentionDays,
+            // Inbox metadata retirement is useful but must not consume the
+            // payload-compaction capacity that returns hot JSON space. If the
+            // earlier bounded stages run long, skip this cycle and preserve the
+            // later compaction budget.
+            maintenanceStartedAt + totalBudgetMs * 0.48,
+            inboxBatchSize,
+            [archiveMinimumRemainingDays],
+            "chain-event-inbox"
+          );
+        }
         compactedChainEventPayloads = await pruneInBatches(
           `WITH eligible_archive AS MATERIALIZED (
            SELECT archive.range_start, archive.range_end
@@ -417,14 +455,14 @@ try {
          FROM candidates
          WHERE target.ctid = candidates.ctid`,
           rawPayloadRetentionHours,
-          maintenanceStartedAt + totalBudgetMs * 0.6,
+          maintenanceStartedAt + totalBudgetMs * 0.78,
           compactBatchSize,
           [inboxRetentionDays, archiveMinimumRemainingDays],
           "chain-event-payloads"
         );
       }
       const rejectedEvidence = await pruneRejectedWalletEvidence(
-        maintenanceStartedAt + totalBudgetMs * 0.68
+        maintenanceStartedAt + totalBudgetMs * 0.82
       );
       deletedRejectedWalletOutcomes = rejectedEvidence.outcomes;
       deletedRejectedWalletEntries = rejectedEvidence.entries;
@@ -441,7 +479,7 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.72,
+        maintenanceStartedAt + totalBudgetMs * 0.85,
         batchSize,
         [],
         "wallet-outcomes"
@@ -463,7 +501,7 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.76,
+        maintenanceStartedAt + totalBudgetMs * 0.88,
         batchSize,
         [],
         "wallet-entries"
@@ -477,22 +515,22 @@ try {
            LIMIT $2
            FOR UPDATE SKIP LOCKED
          ), queued AS (
-           INSERT INTO wallet_alpha_work_queue (
-             chain, wallet_address, strategy_version, revision, updated_at, not_before
+           SELECT enqueue_wallet_alpha_work(
+             chain,
+             wallet_address,
+             strategy_version,
+             0::smallint,
+             'trade-retention'
            )
-           SELECT DISTINCT chain, wallet_address, strategy_version, 1, NOW(), NOW()
-           FROM doomed
-           ON CONFLICT (chain, wallet_address, strategy_version) DO UPDATE SET
-             revision = wallet_alpha_work_queue.revision + 1,
-             updated_at = NOW(),
-             not_before = LEAST(wallet_alpha_work_queue.not_before, NOW())
-           RETURNING 1
+           FROM (
+             SELECT DISTINCT chain, wallet_address, strategy_version FROM doomed
+           ) wallets
          )
          DELETE FROM wallet_trade_events AS target
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.88,
+        maintenanceStartedAt + totalBudgetMs * 0.93,
         batchSize,
         [],
         "wallet-trades"
@@ -614,86 +652,103 @@ try {
       [rawPayloadRetentionHours]
     );
 
-    console.log(
-      JSON.stringify({
-        type: "operational-maintenance",
-        status: dryRun ? "dry-run" : "completed",
-        checkedAt: new Date().toISOString(),
-        retentionDays: {
-          priceObservations: priceRetentionDays,
-          processedChainEvents: inboxRetentionDays,
-          entryCandidateSwaps: swapRetentionDays,
-          completedSolanaSignatures: signatureQueueRetentionDays,
-          completedGapRepairSignatures: gapRepairSignatureRetentionDays,
-          solanaFinality: finalityRetentionDays,
-          rawChainEventPayloadHours: rawPayloadRetentionHours,
-          walletAlphaScores: scoreRetentionDays,
-          walletEvidence: walletEvidenceRetentionDays,
-          rejectedWalletEvidence: rejectedWalletEvidenceRetentionDays
-        },
-        eligibleBeforeRun: {
-          priceObservations: Boolean(eligible.rows[0]?.price_observations),
-          chainEventPayloads: Boolean(eligible.rows[0]?.chain_event_payloads),
-          chainEvents: Boolean(eligible.rows[0]?.chain_events),
-          swaps: Boolean(eligible.rows[0]?.swaps),
-          solanaSignatureQueue: Boolean(eligible.rows[0]?.solana_signature_queue),
-          gapRepairSignatures: Boolean(
-            eligible.rows[0]?.ingestion_gap_repair_signatures
-          ),
-          solanaFinality: Boolean(eligible.rows[0]?.solana_transaction_finality),
-          walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores)
-        },
-        archiveRetirement: {
-          runtimeEnabled: archiveRetirementEnabled,
-          policyReady: archivePolicy.ready,
-          mutationsEnabled: archiveMutationsEnabled,
-          activatedAt: archivePolicy.activatedAt ?? null,
-          futureCanaryRangeStart: archivePolicy.futureCanaryRangeStart ?? null,
-          retirementEnabledAt: archivePolicy.retirementEnabledAt ?? null
-        },
-        deleted: {
-          priceObservations: deletedPriceObservations,
-          compactedChainEventPayloads,
-          chainEvents: deletedChainEvents,
-          swaps: deletedSwaps,
-          solanaSignatures: deletedSolanaSignatures,
-          gapRepairSignatures: deletedGapRepairSignatures,
-          solanaFinalities: deletedSolanaFinalities,
-          walletAlphaScores: deletedWalletAlphaScores,
-          walletAlphaScoresHardExpiry: deletedExpiredWalletAlphaScores,
-          walletAlphaScoresSuperseded: deletedSupersededWalletAlphaScores,
-          rejectedWalletOutcomes: deletedRejectedWalletOutcomes,
-          rejectedWalletEntries: deletedRejectedWalletEntries,
-          walletOutcomes: deletedWalletOutcomes,
-          walletEntries: deletedWalletEntries,
-          walletTrades: deletedWalletTrades,
-          walletEpisodes: deletedWalletEpisodes,
-          retiredPricePartitions,
-          retiredPayloadPartitions,
-          heldUnresolvedPayloads,
-          archiveBlockedPayloadPartitions
-        },
-        databaseBytes: Number(eligible.rows[0]?.database_bytes ?? 0),
-        priceRetention: {
-          oldestObservedAt: priceRetentionState.rows[0]?.oldest_observed_at?.toISOString() ?? null,
-          lagSeconds: Number(priceRetentionState.rows[0]?.retention_lag_seconds ?? 0)
-        },
-        chainPayloadCompaction: {
-          oldestUncompactedAt:
-            chainPayloadState.rows[0]?.oldest_uncompacted_at?.toISOString() ?? null,
-          lagSeconds: Number(chainPayloadState.rows[0]?.compaction_lag_seconds ?? 0)
-        },
-        batchSize,
-        inboxBatchSize,
-        compactBatchSize,
-        maxBatches,
-        maxRunSeconds,
-        statementTimeoutMs,
-        inventoryTimeoutMs,
-        queryTimeoutCount,
-        queryTimeoutsByStage
-      })
-    );
+    const maintenanceReport = {
+      type: "operational-maintenance",
+      status: dryRun ? "dry-run" : "completed",
+      checkedAt: new Date().toISOString(),
+      durationMs: Date.now() - maintenanceStartedAt,
+      retentionDays: {
+        priceObservations: priceRetentionDays,
+        processedChainEvents: inboxRetentionDays,
+        entryCandidateSwaps: swapRetentionDays,
+        completedSolanaSignatures: signatureQueueRetentionDays,
+        completedGapRepairSignatures: gapRepairSignatureRetentionDays,
+        solanaFinality: finalityRetentionDays,
+        rawChainEventPayloadHours: rawPayloadRetentionHours,
+        walletAlphaScores: scoreRetentionDays,
+        walletEvidence: walletEvidenceRetentionDays,
+        rejectedWalletEvidence: rejectedWalletEvidenceRetentionDays
+      },
+      eligibleBeforeRun: {
+        priceObservations: Boolean(eligible.rows[0]?.price_observations),
+        chainEventPayloads: Boolean(eligible.rows[0]?.chain_event_payloads),
+        chainEventPayloadsOverdue: Boolean(eligible.rows[0]?.chain_event_payloads_overdue),
+        chainEvents: Boolean(eligible.rows[0]?.chain_events),
+        swaps: Boolean(eligible.rows[0]?.swaps),
+        solanaSignatureQueue: Boolean(eligible.rows[0]?.solana_signature_queue),
+        gapRepairSignatures: Boolean(eligible.rows[0]?.ingestion_gap_repair_signatures),
+        solanaFinality: Boolean(eligible.rows[0]?.solana_transaction_finality),
+        walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores)
+      },
+      archiveRetirement: {
+        runtimeEnabled: archiveRetirementEnabled,
+        policyReady: archivePolicy.ready,
+        mutationsEnabled: archiveMutationsEnabled,
+        activatedAt: archivePolicy.activatedAt ?? null,
+        futureCanaryRangeStart: archivePolicy.futureCanaryRangeStart ?? null,
+        retirementEnabledAt: archivePolicy.retirementEnabledAt ?? null
+      },
+      deleted: {
+        priceObservations: deletedPriceObservations,
+        compactedChainEventPayloads,
+        chainEvents: deletedChainEvents,
+        swaps: deletedSwaps,
+        solanaSignatures: deletedSolanaSignatures,
+        gapRepairSignatures: deletedGapRepairSignatures,
+        solanaFinalities: deletedSolanaFinalities,
+        walletAlphaScores: deletedWalletAlphaScores,
+        walletAlphaScoresHardExpiry: deletedExpiredWalletAlphaScores,
+        walletAlphaScoresSuperseded: deletedSupersededWalletAlphaScores,
+        rejectedWalletOutcomes: deletedRejectedWalletOutcomes,
+        rejectedWalletEntries: deletedRejectedWalletEntries,
+        walletOutcomes: deletedWalletOutcomes,
+        walletEntries: deletedWalletEntries,
+        walletTrades: deletedWalletTrades,
+        walletEpisodes: deletedWalletEpisodes,
+        retiredPricePartitions,
+        retiredPayloadPartitions,
+        heldUnresolvedPayloads,
+        archiveBlockedPayloadPartitions
+      },
+      databaseBytes: Number(eligible.rows[0]?.database_bytes ?? 0),
+      priceRetention: {
+        oldestObservedAt: priceRetentionState.rows[0]?.oldest_observed_at?.toISOString() ?? null,
+        lagSeconds: Number(priceRetentionState.rows[0]?.retention_lag_seconds ?? 0)
+      },
+      chainPayloadCompaction: {
+        oldestUncompactedAt:
+          chainPayloadState.rows[0]?.oldest_uncompacted_at?.toISOString() ?? null,
+        lagSeconds: Number(chainPayloadState.rows[0]?.compaction_lag_seconds ?? 0)
+      },
+      partitionEnsure: {
+        payload: payloadPartitionEnsure,
+        price: pricePartitionEnsure,
+        lockTimeoutMs: partitionLockTimeoutMs
+      },
+      compactionPriorityLagSeconds,
+      batchSize,
+      inboxBatchSize,
+      compactBatchSize,
+      maxBatches,
+      maxRunSeconds,
+      statementTimeoutMs,
+      inventoryTimeoutMs,
+      queryTimeoutCount,
+      queryTimeoutsByStage
+    };
+    try {
+      await mkdir("reports", { recursive: true });
+      await writeFile(`${maintenanceReportPath}.tmp`, JSON.stringify(maintenanceReport, null, 2));
+      await rename(`${maintenanceReportPath}.tmp`, maintenanceReportPath);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          type: "operational-maintenance-report-error",
+          message: error instanceof Error ? error.message : String(error)
+        })
+      );
+    }
+    console.log(JSON.stringify(maintenanceReport));
   }
 } finally {
   try {
@@ -832,44 +887,6 @@ function isStatementTimeout(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "57014";
 }
 
-async function ensurePayloadPartitions(futureDays: number): Promise<void> {
-  const today = utcDayStart(new Date());
-  for (let offset = -1; offset <= futureDays; offset += 1) {
-    const lower = addUtcDays(today, offset);
-    const upper = addUtcDays(lower, 1);
-    const name = payloadPartitionName(lower);
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${name}
-         PARTITION OF chain_event_payloads
-         FOR VALUES FROM ('${timestampBoundary(lower)}')
-                    TO ('${timestampBoundary(upper)}')`
-    );
-  }
-}
-
-async function ensurePricePartitions(futureDays: number): Promise<void> {
-  const today = utcDayStart(new Date());
-  for (let offset = 0; offset <= futureDays; offset += 1) {
-    const lower = addUtcDays(today, offset);
-    const upper = addUtcDays(lower, 1);
-    const name = pricePartitionName(lower);
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${name}
-         PARTITION OF price_observations
-         FOR VALUES FROM ('${timestampBoundary(lower)}')
-                    TO ('${timestampBoundary(upper)}')`
-    );
-    await pool.query(
-      `ALTER TABLE ${name} SET (
-         autovacuum_vacuum_scale_factor = 0.03,
-         autovacuum_analyze_scale_factor = 0.02,
-         autovacuum_vacuum_threshold = 2000,
-         autovacuum_analyze_threshold = 1000
-       )`
-    );
-  }
-}
-
 async function retirePricePartitions(retentionDays: number): Promise<number> {
   const result = await pool.query<{ relname: string }>(
     `SELECT child.relname
@@ -890,14 +907,6 @@ async function retirePricePartitions(retentionDays: number): Promise<number> {
   return partitions;
 }
 
-function payloadPartitionName(date: Date): string {
-  return `chain_event_payloads_${date.toISOString().slice(0, 10).replaceAll("-", "")}`;
-}
-
-function pricePartitionName(date: Date): string {
-  return `price_observations_${date.toISOString().slice(0, 10).replaceAll("-", "")}`;
-}
-
 function pricePartitionDate(name: string): Date | undefined {
   const match = /^price_observations_(\d{4})(\d{2})(\d{2})$/.exec(name);
   if (!match) return undefined;
@@ -911,8 +920,4 @@ function utcDayStart(date: Date): Date {
 
 function addUtcDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 86_400_000);
-}
-
-function timestampBoundary(date: Date): string {
-  return `${date.toISOString().slice(0, 10)} 00:00:00+00`;
 }

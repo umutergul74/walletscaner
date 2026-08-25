@@ -132,10 +132,24 @@ export function formatPipelineStatusAlert(status: PipelineStatusNotification): s
   const lastPool = formatAge(status.lastPoolAgeSeconds);
   const lastTrade = formatAge(status.lastWalletTradeAgeSeconds);
   const coverageIncidents = status.openCoverageIncidents ?? [];
+  const operational = status.operationalHealth;
   return [
     `📊 Walletscaner durum: ${status.pipelineStatus.toUpperCase()}`,
     `Inbox backlog / dead-letter: ${status.inboxBacklog} / ${status.deadLetters}`,
     `Alpha iş kuyruğu: ${status.alphaQueuePending.toLocaleString("en-US")}`,
+    ...(status.alphaQueueSignalPending !== undefined
+      ? [
+          `Alpha lane S/E/B: ${status.alphaQueueSignalPending.toLocaleString("en-US")} / ${(status.alphaQueueElevatedPending ?? 0).toLocaleString("en-US")} / ${(status.alphaQueueBackgroundPending ?? 0).toLocaleString("en-US")}`
+        ]
+      : []),
+    ...(status.alphaQueueReady !== undefined
+      ? [
+          `Alpha hazır / hata / karantina: ${status.alphaQueueReady.toLocaleString("en-US")} / ${(status.alphaQueueFailed ?? 0).toLocaleString("en-US")} / ${(status.alphaQueueQuarantined ?? 0).toLocaleString("en-US")}`
+        ]
+      : []),
+    ...(status.alphaQueueOldestReadyAgeSeconds !== undefined
+      ? [`En eski hazır alpha işi: ${formatAge(status.alphaQueueOldestReadyAgeSeconds)}`]
+      : []),
     `Son 24s sinyal: ${status.signals24h}`,
     `Son 24s sıkı filtre token adayı: ${status.qualifiedPools24h}`,
     `Son pool yaşı: ${lastPool}`,
@@ -146,6 +160,22 @@ export function formatPipelineStatusAlert(status: PipelineStatusNotification): s
         `Coverage dışı: ${shortAddress(incident.programAddress)} | gap ${incident.gapStartedAt} | ${incident.reason}`
     ),
     `Veritabanı: ${(status.databaseBytes / 1024 ** 3).toFixed(2)} GiB`,
+    ...(operational
+      ? [
+          `Operasyon/depolama: ${operational.status.toUpperCase()}`,
+          ...(operational.diskAvailableBytes !== undefined
+            ? [
+                `Disk boş: ${(operational.diskAvailableBytes / 1024 ** 3).toFixed(2)} GiB (${(operational.diskUsedPercent ?? 0).toFixed(1)}% kullanım)`
+              ]
+            : []),
+          ...(operational.chainPayloadCompactionLagSeconds !== undefined
+            ? [
+                `Payload compaction gecikmesi: ${formatAge(operational.chainPayloadCompactionLagSeconds)}`
+              ]
+            : []),
+          ...operational.reasons.slice(0, 3).map((reason) => `Durum nedeni: ${reason}`)
+        ]
+      : []),
     "",
     "Observe-only mod; canlı işlem kapalıdır."
   ].join("\n");

@@ -63,6 +63,7 @@ import type {
   TokenRiskReport,
   WalletAlphaCoverageSummary,
   WalletAlphaAdmissionProbe,
+  WalletAlphaEvidenceBounds,
   WalletAlphaDetail,
   WalletAlphaRankingQuery,
   WalletAlphaSignalQuery,
@@ -71,6 +72,7 @@ import type {
   WalletAlphaWorkCandidate,
   WalletAlphaWorkItem,
   WalletAlphaWorkPriority,
+  WalletAlphaWorkFailureClass,
   WalletAlphaWorkSummary,
   WalletPositionEpisode,
   WalletPositionLedgerSnapshot,
@@ -94,6 +96,7 @@ interface MemoryWalletAlphaWork {
   lockedBy?: string;
   lockExpiresAt?: string;
   lastError?: string;
+  quarantineReason?: "evidence_limit";
 }
 
 const COVERAGE_INCIDENT_REASONS = new Set([
@@ -201,6 +204,9 @@ export class MemoryRepository
     const key = `${chain}:${walletAddress}:${strategyVersion}`;
     const now = nowIso();
     const existing = this.walletAlphaWork.get(key);
+    const quarantineActive = Boolean(
+      existing?.quarantineReason && new Date(existing.notBefore).getTime() > Date.now()
+    );
     const wasPending = Boolean(existing && existing.revision > existing.completedRevision);
     const nextPriority = (
       wasPending ? Math.max(existing?.priority ?? 0, priority) : priority
@@ -216,14 +222,15 @@ export class MemoryRepository
       revision: (existing?.revision ?? 0) + 1,
       completedRevision: existing?.completedRevision ?? 0,
       updatedAt: now,
-      notBefore: now,
+      notBefore: quarantineActive ? existing!.notBefore : now,
       attemptCount: existing?.attemptCount ?? 0,
       priority: nextPriority,
       priorityReason: nextPriorityReason,
       pendingSince: wasPending ? (existing?.pendingSince ?? now) : now,
       ...(existing?.lockedBy ? { lockedBy: existing.lockedBy } : {}),
       ...(existing?.lockExpiresAt ? { lockExpiresAt: existing.lockExpiresAt } : {}),
-      ...(existing?.lastError ? { lastError: existing.lastError } : {})
+      ...(existing?.lastError ? { lastError: existing.lastError } : {}),
+      ...(quarantineActive ? { quarantineReason: existing!.quarantineReason } : {})
     });
   }
 
@@ -806,13 +813,48 @@ export class MemoryRepository
     delete work.lockedBy;
     delete work.lockExpiresAt;
     delete work.lastError;
+    delete work.quarantineReason;
     return true;
+  }
+
+  async probeWalletAlphaEvidenceBounds(
+    item: WalletAlphaWorkItem,
+    minObservedAt: string,
+    maximumTradeEvents: number,
+    maximumEntries: number,
+    maximumOutcomes: number
+  ): Promise<WalletAlphaEvidenceBounds> {
+    const minimumTime = new Date(minObservedAt).getTime();
+    const entries = [...this.walletEntrySignals.values()].filter(
+      (entry) =>
+        entry.walletAddress === item.walletAddress &&
+        entry.strategyVersion === item.strategyVersion &&
+        new Date(entry.observedAt).getTime() >= minimumTime
+    );
+    const entryKeys = new Set(entries.map((entry) => entry.idempotencyKey));
+    return {
+      tradeEventsExceeded:
+        [...this.walletTradeEvents.values()].filter(
+          (trade) =>
+            trade.walletAddress === item.walletAddress &&
+            trade.strategyVersion === item.strategyVersion
+        ).length > maximumTradeEvents,
+      entriesExceeded: entries.length > maximumEntries,
+      outcomesExceeded:
+        [...this.walletSignalOutcomes.values()].filter(
+          (outcome) =>
+            outcome.strategyVersion === item.strategyVersion &&
+            entryKeys.has(outcome.entryIdempotencyKey) &&
+            new Date(outcome.observedAt).getTime() >= minimumTime
+        ).length > maximumOutcomes
+    };
   }
 
   async failWalletAlphaWork(
     item: WalletAlphaWorkItem,
     error: string,
-    retrySeconds = 300
+    retrySeconds = 300,
+    failureClass: WalletAlphaWorkFailureClass = "transient"
   ): Promise<boolean> {
     const work = this.walletAlphaWork.get(
       `${item.chain}:${item.walletAddress}:${item.strategyVersion}`
@@ -820,6 +862,8 @@ export class MemoryRepository
     if (!work || work.lockedBy !== item.lockedBy) return false;
     work.notBefore = new Date(Date.now() + Math.max(1, retrySeconds) * 1_000).toISOString();
     work.lastError = error.slice(0, 4_000);
+    if (failureClass === "evidence_limit") work.quarantineReason = "evidence_limit";
+    else delete work.quarantineReason;
     delete work.lockedBy;
     delete work.lockExpiresAt;
     return true;

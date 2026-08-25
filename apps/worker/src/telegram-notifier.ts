@@ -22,6 +22,7 @@ import {
   formatWalletAlphaAlert,
   sendTelegramMessage
 } from "../../bot/src/alerts.js";
+import { readOperationalHealthSummary } from "./operational-health-summary.js";
 
 const excludedTokenAddresses = [
   "11111111111111111111111111111111",
@@ -165,8 +166,16 @@ async function processNotificationOutbox(): Promise<number> {
 }
 
 async function enqueueStatus(sourceKey: string): Promise<void> {
-  const status = await store.getPipelineStatus(walletAlphaStrategyVersion);
-  await store.enqueueStatus(sourceKey, status);
+  const [status, operationalHealth] = await Promise.all([
+    store.getPipelineStatus(walletAlphaStrategyVersion),
+    readOperationalHealthSummary()
+  ]);
+  await store.enqueueStatus(sourceKey, {
+    ...status,
+    pipelineStatus:
+      status.pipelineStatus === "ok" && operationalHealth.status === "ok" ? "ok" : "degraded",
+    operationalHealth
+  });
 }
 
 function formatNotification(message: TelegramNotificationMessage): string {

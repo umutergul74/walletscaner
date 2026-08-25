@@ -1,4 +1,13 @@
 {
+"current_release_hardening": {
+"state": "implemented-locally-production-rollout-pending",
+"date": "2026-08-25",
+"scope": "canonical PostgreSQL claim retry, partition lock-order safety, wallet-alpha evidence-limit quarantine, compaction-capacity priority, and aggregate Telegram operations status",
+"migration": "047_wallet_alpha_evidence_quarantine.sql (additive; preserves active quarantine across coalesced revisions)",
+"verification": "TypeScript, ESLint, workspace production build and 63 targeted unit/PostgreSQL16 tests pass; exact Linux zstd tests and live canary remain release gates",
+"recovery_point": "memecoin_alpha_20260824T150923Z.dump; 1692713492 bytes; SHA-256 13e1fdeddef5f6ea90482e3d592aeaa45b280070de2c95f642fc3117215cd574; local/server bytes, PostgreSQL16 archive-list and off-site acknowledgement verified 2026-08-25T09:13:42Z",
+"invariants": "no live execution, no source-evidence deletion, no B2 delete/lifecycle action, no shared-host/global Docker mutation"
+},
 "pipeline": {
 "canonical_flow": "program discovery -> PostgreSQL chain_event_inbox -> leased decode/normalize/enrich -> wallet trade evidence -> FIFO ledger -> wallet-alpha score -> transactional signal_outbox -> paper/alert/API",
 "ingestion_method": "websocket",
