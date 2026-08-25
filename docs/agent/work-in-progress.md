@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:00:00Z
+updated_at_utc: 2026-08-25T22:04:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -395,3 +395,13 @@ blindly repeat the last mutation.
   Compose file with rollback proof, then start machine-ledger phase `derived-cache-reclaim` as
   `in_progress`. Stop wallet alpha gracefully, rerun all transactional guards through exact R34,
   and restart/verify it whether reclaim succeeds or fails. No canonical/B2 deletion is permitted.
+- Source correction commit is `9a8ea1e`. The server rollout ledger is revision 3,
+  `derived-cache-reclaim=in_progress`, SHA-256
+  `79586ecf118fd2909108402b91a19ee1db1e8db420a8af5796654fffb080cac5`.
+- Server Compose was replaced atomically after exact pre/post hash checks. Current SHA-256 is
+  `a745ac3977b939c61baf72cae18c00cc189be4e2a8c330d1a5ffd8a5479d52bb`; the immediately previous
+  R34 Compose is preserved with SHA-256 `e47d9186...` in the existing rollback directory. Rendered
+  `derived-ledger-reclaim` selects exact R34. No running container changed from this file update.
+- Next exact action: refresh disk, live execution, backup receipt and qualified-wallet gates once
+  more; stop only wallet alpha; execute the guarded derived-only transaction with explicit receipt,
+  SHA and approval values; then restart wallet alpha in a finally-equivalent operational sequence.
