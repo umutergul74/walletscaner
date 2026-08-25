@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:38:00Z
+updated_at_utc: 2026-08-25T21:39:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
+last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
 ---
 
 # Walletscaner Work In Progress
@@ -104,6 +104,11 @@ blindly repeat the last mutation.
   `walletscaner_storage_lab` in container `walletscaner-pg16-r31`; the restored database is about
   11 GB. Migrations 050 and 051 applied successfully. Compact receipt count is still zero, so the
   populated materializer benchmark has not yet run.
+- Restore-progress messages showing 1.6, 3.1 and 7.3 GB were intermediate filesystem observations,
+  not separate or abandoned restores. The still-running clone was rechecked after the later
+  interruption at 12,357,852,183 database bytes (11.51 GiB), including a 4,058,816,512-byte
+  `wallet_trade_events` relation. The completed benchmark rows below are present in that same
+  clone, proving the restore advanced from the 7.3 GB intermediate point rather than being skipped.
 - No production command or mutation occurred during this phase. The next exact action is to export,
   independently validate and locally mark one full wallet-evidence day on the populated clone,
   then run the materializer and measure counts, parity, runtime and relation sizes. Only after that
@@ -271,3 +276,25 @@ blindly repeat the last mutation.
 - Next exact action: recreate only operations monitor on R34 and verify that it emits a current
   report using the new schema without query errors. Then recreate wallet alpha so future derived
   persistence retains only open lots.
+
+## Interruption audit at 2026-08-25 21:39 UTC
+
+- The prior turn was interrupted after the production operations monitor had been recreated but
+  before its post-mutation checkpoint was committed. The pre-mutation checkpoint above made that
+  ambiguity explicit. On resume, the service was not recreated again: live inspection proved
+  container `e1f6b8bf3215` had already run R34 for nine minutes with restart 0/OOM false.
+- The R34 monitor produced new reports at 21:27 and 21:32 UTC using migrations 050/051. The second
+  report observed inbox backlog 7/dead-letter 0, fresh pool/wallet evidence, database
+  16,427,727,895 bytes and 16,848,568,320 bytes free disk. Its degraded state is fail-closed and is
+  explained by catch-up/storage runway plus wallet archive lag, not a monitor crash.
+- R34 archive writer seeded ten bounded historical wallet days and exported one in 9.699 seconds.
+  R34 verifier independently verified that cohort in 5.591 seconds. There are nine wallet cohorts
+  still pending, zero archive dead letters and one newly verified compact-eligible day. No
+  canonical source row was retired.
+- Production service boundary now proven: archive writer/verifier/materializer/monitor use exact
+  R34; ingestion remains R30, wallet alpha remains R29, evidence sampler/data maintenance remain
+  R29 and Telegram remains R23. Migrations 050/051 remain checksum-correct.
+- Next exact action: verify the materializer's first delayed cycle and compact parity receipt. Only
+  after it succeeds, recreate wallet alpha alone on R34 so future ledger persistence keeps open
+  lots without touching canonical trades. Immediately record its container/image/limits and then
+  begin a bounded post-rollout canary.
