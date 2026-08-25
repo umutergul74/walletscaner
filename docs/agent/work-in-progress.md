@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:10:00Z
+updated_at_utc: 2026-08-25T21:17:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -191,3 +191,17 @@ blindly repeat the last mutation.
   tested R34 image, stage every artifact under a `.partial` name, verify local/server hashes and
   atomically rename. Loading/staging is not activation. Before migration, refresh backup, free
   disk, selected live-execution value, service identities and migration level once more.
+- Immutable-image routing correction is committed as `37ea707`. The exact tested image was tagged
+  locally as `walletscaner-worker:storage-r34-20260826`, exported and compressed to 463,144,001
+  bytes. Its transfer SHA-256 is
+  `69cfaa79bda475d43557d86212dabf8d8e8cd9534caf6897fd8d11793b2756e1`; the contained Docker image
+  ID remains `sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`.
+- The image now exists on the server only as
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r34-20260826.tar.zst.partial`. Server byte
+  count and SHA-256 match the local artifact exactly. Free disk after transfer is 18,261,045,248
+  bytes. No image was loaded, no production source file was replaced, no migration ran and no
+  service was recreated.
+- Next exact action: stage migration 050, migration 051, Compose and the guarded env updater as
+  `.partial` files; independently match every hash; then create a bounded rollback directory and
+  atomically rename the reviewed files plus image artifact. Loading remains separate from
+  activation.
