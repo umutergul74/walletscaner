@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:20:46Z
+updated_at_utc: 2026-08-25T22:22:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: R34 storage shadow operational; derived cache reclaimed; artifact cleanup completed at server ledger revision 8
+last_safe_checkpoint: R34 storage shadow operational; server ledger revision 9 observes 24h/7d storage gates with canonical retirement disabled
 ---
 
 # Walletscaner Work In Progress
@@ -516,3 +516,17 @@ blindly repeat the last mutation.
   `storage-shadow-observation=in_progress`. Its evidence must state that canonical retirement is
   disabled and that only one wallet archive day is currently verified. Do not treat starting the
   clock as validation.
+- Live PostgreSQL refresh before opening the phase found 24 verified chain-payload days; wallet
+  evidence has one verified and nine pending days. Compact shadow has one verified day, zero
+  mismatch/retry days and latest verified range end 2026-07-07 00:00 UTC. Database size is
+  15,125,945,367 bytes and invalid-index count is zero.
+- Server machine ledger revision 9 is now
+  `storage-shadow-observation=in_progress`, SHA-256
+  `b3d98e772c112b656ea7f8735b56b8177c052bd480f559de72094fc772e4f0f1`. Its evidence records
+  canonical retirement false, 18,644,029,440 free disk bytes, one verified/nine pending archive
+  days, one compact verified/zero mismatch days and the 16,436-item rebuild sample.
+- Next exact action is read-only observation, not another rollout mutation: capture current
+  migrations, service identities/restarts/OOM/live flag, archive/compact receipts, rebuild slope,
+  latest health report, database/filesystem growth and backup evidence. Keep this phase in progress
+  until both a clean post-catch-up 24-hour slope and seven future shadow days pass; do not authorize
+  canonical retirement from elapsed time alone.
