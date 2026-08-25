@@ -134,6 +134,26 @@ cheaper archive path. Do not create an unbounded JSON store.
 
 ## Engineering workflow
 
+### Interruption-safe execution
+
+For every multi-step change, production operation, long test, migration, deploy or task likely to
+cross a tool/session limit, maintain `docs/agent/work-in-progress.md` as the durable resume point.
+Update it before the first mutation and immediately after every externally visible checkpoint. It
+must record UTC time, exact objective and exclusions, verified pre-state, completed actions,
+artifact/migration hashes, backup and rollback points, current git state, unresolved gates and the
+next exact read-only verification or action. Never put a secret or full environment value in it.
+
+Make each mutation atomic, bounded, idempotent where possible and independently verifiable. Stage
+then hash artifacts; use database transactions and guarded file replacement; separate apply from
+verify; never hide several irreversible operations in one opaque command. At a coherent checkpoint,
+commit source/tests/docs before starting the next phase. If interrupted, first read the checkpoint,
+inspect git status/log and refresh live state; determine whether the prior operation completed
+before retrying it. Never blindly rerun a migration, deployment, upload or cleanup.
+
+When work completes, mark the checkpoint `complete` with the final commit, deployed artifact,
+verification evidence and remaining measurable gates. The next substantive task replaces it with a
+fresh `active` checkpoint; completed history belongs in current-state or a rollout report.
+
 ### Before editing
 
 1. Inspect `git status --short --branch` and preserve unrelated/user changes.
@@ -211,6 +231,7 @@ Do not lower risk/tail gates or tune a frozen cohort to manufacture a signal.
   scoring, risk and research contracts.
 - `docs/operations.md`, `docs/storage_lifecycle.md`: production, retention, archive and rollout.
 - `docs/agent/current-state.md`: dated compact runtime/research handoff.
+- `docs/agent/work-in-progress.md`: interruption-safe active checkpoint; verify before resuming.
 - `scripts/migrations/*.sql`: ordered database contract; applied migrations are immutable.
 - `docker-compose.server.yml`: intended server topology.
 - `reports/`: generated evidence, not canonical PostgreSQL state.

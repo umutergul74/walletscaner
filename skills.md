@@ -40,14 +40,18 @@ separately authorized production rollout. A skill never expands the user's autho
 
 Use this sequence for every route:
 
-1. Define the exact question or outcome.
-2. Read the listed sources and inspect current implementation.
-3. Verify runtime/data state when the claim depends on it.
-4. Write down the invariant and measurable acceptance criteria.
-5. Reproduce or characterize the baseline.
-6. Implement the smallest coherent change when implementation is authorized.
-7. Run route-specific checks and the repository validation gate.
-8. Report evidence, limitations, operational impact, and next gate.
+1. Read `docs/agent/work-in-progress.md`; on resume, verify its git/runtime facts before any repeat.
+2. Define the exact question or outcome.
+3. Read the listed sources and inspect current implementation.
+4. Verify runtime/data state when the claim depends on it.
+5. Write down the invariant and measurable acceptance criteria.
+6. For multi-step or mutable work, write an `active` durable checkpoint before changing state.
+7. Reproduce or characterize the baseline.
+8. Implement the smallest coherent change when implementation is authorized, checkpointing every
+   externally visible phase.
+9. Run route-specific checks and the repository validation gate.
+10. Mark the checkpoint complete and report evidence, limitations, operational impact, and next
+    measurable gate.
 
 Use precise status language:
 
@@ -406,12 +410,17 @@ Read-only triage order:
 Mutation protocol:
 
 1. Obtain explicit authority for the exact operation.
-2. Record pre-state for both Compose projects.
+2. Record pre-state, artifact hashes, rollback and the next exact action in
+   `docs/agent/work-in-progress.md`.
 3. Verify backup/rollback and headroom.
 4. Target only `walletscaner` and named services.
 5. Avoid host-wide changes and avoid `down` when `stop` satisfies the request.
 6. Wait for graceful shutdown/start; record forced exits separately.
 7. Verify Walletscaner state, persistent mounts/data, and Robinhoodscaner health afterward.
+
+After interruption, never infer that the last command failed or succeeded. Compare the checkpoint
+with schema migrations, container/image IDs, file hashes and bounded health state before deciding
+whether to continue, skip or roll back.
 
 Never restart the intentionally paused stack merely to run a diagnostic.
 
