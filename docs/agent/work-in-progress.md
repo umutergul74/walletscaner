@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:54:00Z
+updated_at_utc: 2026-08-25T21:56:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -364,3 +364,13 @@ blindly repeat the last mutation.
   next phase remaining a seven-day operational shadow plus a clean 24-hour capacity slope. This is
   **Operational**, not **Validated**. Canonical wallet evidence retirement remains disabled and no
   source deletion is authorized by the canary result.
+- The first completion dry-run was rejected because a shell variable did not preserve the quoted
+  multi-word next action; revision 1 remained byte-for-byte unchanged. The explicit-argument retry
+  passed dry-run and apply. Server ledger is now revision 2, phase `post-rollout-canary`, status
+  `completed`, SHA-256
+  `70d26facf5e696b66d8c18201dc8caedfdf0b3629f135addce1c8f0070b2adbb`.
+- Overall task status remains `active`: the operational shadow is running, but sustainable
+  equilibrium and canonical retirement are not validated. Before waiting seven days, measure the
+  reconstructible derived-ledger cache reclaim candidate and its exact current backup/qualified
+  wallet gates; do not execute it unless every guard passes and the action is recorded as a new
+  machine-ledger phase.
