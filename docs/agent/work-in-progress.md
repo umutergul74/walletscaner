@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T20:59:54Z
+updated_at_utc: 2026-08-25T21:02:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: migration 051 compact shadow implemented; populated PostgreSQL 16 restore is complete; production unchanged
+last_safe_checkpoint: compact shadow committed as 0f12784 with exact image/tests; production unchanged
 ---
 
 # Walletscaner Work In Progress
@@ -134,9 +134,13 @@ blindly repeat the last mutation.
   of which is included in the worker image. Those seven files then passed 17/17 in the Windows host
   environment, and the workspace production build passed. The final tested artifact is
   `walletscaner-worker@sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`.
-  Production remains unchanged. Next exact step: remove only the generated local 24-Aug benchmark
-  artifact, commit this coherent compact phase, then refresh production backup/headroom/service and
-  protected co-tenant inventory before any deploy.
+  The generated local 24-Aug benchmark artifact was removed after recording its hashes and counts.
+- Coherent source/tests/docs commit: `0f12784` (`feat: materialize verified wallet evidence
+  compactly`). Production remains unchanged. Next exact step is a read-only production preflight:
+  refresh host disk/RAM/load, both Compose project names/statuses, Walletscaner live-execution state,
+  migration level, newest off-site-acknowledged dump, B2/archive manifests and current database
+  growth. Do not deploy unless all hard gates still pass and the exact R34 artifact is staged and
+  hash-verified.
 
 ## Local implementation checkpoint
 
