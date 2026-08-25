@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:39:00Z
+updated_at_utc: 2026-08-25T21:41:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -298,3 +298,12 @@ blindly repeat the last mutation.
   after it succeeds, recreate wallet alpha alone on R34 so future ledger persistence keeps open
   lots without touching canonical trades. Immediately record its container/image/limits and then
   begin a bounded post-rollout canary.
+- The first delayed production materializer cycle completed in 3,531 ms with processed 1,
+  verified 1, failed 0 and a durable `verified` compact receipt for the 2026-07-06 UTC cohort.
+  It materialized 494 mature followability facts; this cohort had zero episode/open-lot facts.
+  Compact mismatch count is zero, the process is running with restart 0/OOM false and is idle at
+  this checkpoint.
+- Next exact action is now authorized by the preceding gate: recreate only `wallet-alpha` with
+  `--no-build --no-deps`, verify exact R34 image, 160 MiB/0.10 CPU, live execution false,
+  restart/OOM, queue continuity and bounded logs. Do not truncate the old derived cache during
+  this rollout.
