@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:33:00Z
+updated_at_utc: 2026-08-25T21:36:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -256,3 +256,11 @@ blindly repeat the last mutation.
 - Next exact action: allow a brief bounded writer observation and verify its manifest/log/resource
   state. Then recreate verifier, materializer, operations monitor and wallet alpha individually,
   checking each identity and hard limit before continuing.
+- The writer is bounded at about 4.04% CPU and 40.82 MiB while preparing its first eligible wallet
+  cohort. It has no restart/OOM evidence. A read-only telemetry probe requested a nonexistent
+  `attempt_count` column and failed without mutation; subsequent queries must use the real schema.
+- Archive verifier is now R34: container ID begins `991e36b72a96`, exact image ID, running,
+  restart 0, OOM false, 128 MiB, CPU 0.04 and live execution false. Its old container began
+  `4d00f872c681`.
+- Next exact action: add the new compact materializer scheduler with `--no-build --no-deps`, verify
+  its 80 MiB/0.05 CPU/live-false boundary, then checkpoint before monitor and wallet-alpha rollout.
