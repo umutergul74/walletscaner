@@ -17,6 +17,11 @@ describe("server archive scheduler images", () => {
       "wallet-evidence-materializer-scheduler",
       "archive-database-backup-writer"
     );
+    const derivedReclaim = serviceBlock(
+      compose,
+      "derived-ledger-reclaim",
+      "archive-retirement-approval"
+    );
     const operationsImage =
       "${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}";
 
@@ -25,6 +30,10 @@ describe("server archive scheduler images", () => {
     expect(materializer).toContain(`image: ${operationsImage}`);
     expect(materializer).toContain('cpus: "0.05"');
     expect(materializer).toContain("mem_limit: 80m");
+    expect(derivedReclaim).toContain(`image: ${operationsImage}`);
+    expect(derivedReclaim).toContain('cpus: "0.02"');
+    expect(derivedReclaim).toContain("mem_limit: 64m");
+    expect(derivedReclaim).toContain("./archive-staging/database-backup:/app/archive-staging:ro");
   });
 });
 

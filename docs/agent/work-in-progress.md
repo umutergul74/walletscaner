@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:56:00Z
+updated_at_utc: 2026-08-25T22:00:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -374,3 +374,24 @@ blindly repeat the last mutation.
   reconstructible derived-ledger cache reclaim candidate and its exact current backup/qualified
   wallet gates; do not execute it unless every guard passes and the action is recorded as a new
   machine-ledger phase.
+- Read-only reclaim sizing found `wallet_position_episodes` at 627,097,600 bytes/about 428,047
+  rows and `wallet_position_lots` at 897,835,008 bytes/about 813,155 rows. These are reconstructible
+  derived caches; canonical `wallet_trade_events` remains 4,491,526,144 bytes/about 2,042,285 rows
+  and is outside this reclaim.
+- An index-only latest-score query completed under a 30-second ceiling: zero current
+  watch/candidate/validated-paper wallets, 16,442 observed, 141 excluded and 210,477 insufficient.
+  The qualifying-wallet hard gate is therefore currently clear, but it must be rechecked inside the
+  reclaim transaction.
+- The available immutable B2 database receipt is
+  `postgres-backup-verified-20260814T052837Z.json`, SHA-256
+  `8870b05fade98784e9280087b6392b159f3191ae240b2a5ee479beac5336bd9b`, independently full-GET/
+  SHA/PG16-list verified, with attested GOVERNANCE retention until 2026-09-13. The newer 25 August
+  server dump additionally has its sidecar and off-site acknowledgement. Policy attestation is not
+  mislabelled as API-verified retention.
+- Pre-execution inspection caught that `derived-ledger-reclaim` inherited the floating/local image.
+  It now explicitly selects `WALLETSCANER_OPERATIONS_IMAGE`, with a Compose test proving R34,
+  64 MiB/0.02 CPU and the read-only receipt mount. Focused tests 4/4, typecheck and ESLint pass.
+- Next exact action: commit this source correction, stage/hash/atomically replace only the server
+  Compose file with rollback proof, then start machine-ledger phase `derived-cache-reclaim` as
+  `in_progress`. Stop wallet alpha gracefully, rerun all transactional guards through exact R34,
+  and restart/verify it whether reclaim succeeds or fails. No canonical/B2 deletion is permitted.

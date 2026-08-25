@@ -476,6 +476,7 @@ services:
 
   derived-ledger-reclaim:
     <<: *app
+    image: ${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}
     profiles: ["archive-admin"]
     command: ["node", "--import", "tsx", "scripts/maintenance/reclaim-derived-ledger-cache.ts"]
     restart: "no"
