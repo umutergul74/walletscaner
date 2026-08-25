@@ -773,6 +773,14 @@ the ledger. Long file transfers use a `.partial` artifact plus resumable SFTP. D
 mutations start only after the newest custom-format dump has matching local/server bytes and SHA-256,
 independent PostgreSQL 16 `pg_restore --list` success and a read-back offsite acknowledgement.
 
+Use `scripts/deploy/release-checkpoint.py` for the machine-readable part of that ledger. It performs
+optimistic revision checks, validates phase transitions, rejects secret-shaped evidence keys and
+writes by fsync plus atomic rename. Dry-run is the default. Write `planned`/`in_progress` before a
+mutation and `completed`/`failed` immediately after its independent verification. If a session ends
+between them, leave the phase unresolved and reconcile it against actual migration checksums,
+artifact hashes and container IDs before retrying. Keep the human reasoning and exact next action in
+`docs/agent/work-in-progress.md` as well.
+
 For the migration-038 discovery-coverage release:
 
 1. Pass `npm ci`, repository typecheck, ESLint, the complete PostgreSQL 16 plus zstd test suite and

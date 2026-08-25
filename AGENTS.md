@@ -150,6 +150,12 @@ commit source/tests/docs before starting the next phase. If interrupted, first r
 inspect git status/log and refresh live state; determine whether the prior operation completed
 before retrying it. Never blindly rerun a migration, deployment, upload or cleanup.
 
+For production rollouts, also maintain an atomic machine-readable ledger with
+`scripts/deploy/release-checkpoint.py`. Record a revision-checked `planned` or `in_progress` phase
+before its mutation and `completed` or `failed` immediately after verification. A stale revision
+must abort. The ledger supplements `docs/agent/work-in-progress.md`; neither replaces comparison
+with actual migration, artifact and container state after an interruption.
+
 When work completes, mark the checkpoint `complete` with the final commit, deployed artifact,
 verification evidence and remaining measurable gates. The next substantive task replaces it with a
 fresh `active` checkpoint; completed history belongs in current-state or a rollout report.

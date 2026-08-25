@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:45:00Z
+updated_at_utc: 2026-08-25T21:49:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -326,3 +326,13 @@ blindly repeat the last mutation.
   including a second health sample and exact service identity/resource inventory. If those pass,
   document the rollout as operational-shadow, not storage-validated; seven future days and a clean
   24-hour equilibrium slope are still required before any canonical retirement.
+- Interruption hardening is now implemented locally in `scripts/deploy/release-checkpoint.py`.
+  It maintains an fsync-plus-atomic-rename JSON ledger, requires an exact expected revision,
+  validates `planned -> in_progress -> completed/failed` transitions, rejects secret-shaped
+  evidence keys and defaults to dry-run. Three ledger tests plus the archive Compose test pass;
+  typecheck, ESLint and Python compilation pass. `AGENTS.md` and operations guidance now require
+  both this machine ledger and the human WIP checkpoint for production phases.
+- Next exact action after committing this coherent tooling change: hash and stage only the ledger
+  script on the server, dry-run then create an `in_progress` `post-rollout-canary` ledger at
+  revision 1. This is an inert operational record, not a service change. Then finish the read-only
+  R34 canary and mark that phase completed only if actual runtime evidence passes.
