@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:27:00Z
+updated_at_utc: 2026-08-25T21:29:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -239,3 +239,11 @@ blindly repeat the last mutation.
   `WALLETSCANER_RESEARCH_IMAGE` with the already dry-run guarded updater, verify the resulting file
   hash and rendered exact target images, then recreate named services one at a time with
   `--no-build --no-deps`. Stop and roll back on image/resource/live-execution mismatch.
+- The guarded env update applied exactly once. `.env.server` now has SHA-256
+  `8e3f9dac0fccb524bdbed831986420daa826e1f0e60c42217a5a3c8931be60a4`. Operations and research
+  select `walletscaner-worker:storage-r34-20260826`; ingestion remains R30, signal remains R23 and
+  `ENABLE_LIVE_EXECUTION=false`. No container was recreated by this file change.
+- Rollback for configuration is the updater with the exact inverse expected/set pair or the
+  preserved pre-rollout file state; do not overwrite the whole secret-bearing env file from an
+  unverified copy. Next exact action is rendered Compose verification followed by named service
+  recreates, one checkpoint at a time.
