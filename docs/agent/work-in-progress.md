@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:40:00Z
+updated_at_utc: 2026-08-25T22:44:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -498,3 +498,11 @@ blindly repeat the last mutation.
   `/opt/walletscaner/deploy/walletscaner-worker-storage-r35-20260826.tar.zst`; then prove both paths
   absent, both Docker image IDs present and disk gain near 926,245,234 bytes before closing revision
   8. No wildcard or image prune is allowed.
+- Exact artifact cleanup succeeded. Both paths are absent; R34 and R35 still resolve to exact image
+  IDs `sha256:178566...ba4f` and `sha256:621489...14cfc`. Host free disk is now
+  18,700,431,360 bytes (75% used), a gain of about 905 MB from the immediately preceding sample;
+  small concurrent database growth explains the difference from nominal tar bytes.
+- Next exact action: close machine-ledger revision 8 as `release-artifact-cleanup=completed`, then
+  open `storage-shadow-observation=in_progress` revision 9. The observation phase must track archive
+  catch-up/restore parity, compact mismatch, rebuild backlog, DB/disk slope and 8 GiB reserve over a
+  clean 24 hours and seven future days. It must not authorize canonical retirement by itself.
