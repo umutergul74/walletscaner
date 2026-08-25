@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:24:00Z
+updated_at_utc: 2026-08-25T21:27:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -226,3 +226,16 @@ blindly repeat the last mutation.
   pre-activation inventory followed by a dry-run of the guarded env update. Only if the expected
   R29 operations/research tags match will those two selectors be atomically moved to R34; ingestion
   R30 and signal/Telegram R23 must remain unchanged.
+- Pre-activation gates passed again. The env updater dry-run matched exact R29 operations/research
+  values and would produce `.env.server` SHA-256
+  `8e3f9dac0fccb524bdbed831986420daa826e1f0e60c42217a5a3c8931be60a4`; no env write has happened.
+  Image-internal migration hashes match the staged source hashes.
+- Migrations 050 and 051 were applied once through an R34 `solana-ingestion` one-shot using
+  `--rm --no-deps` and an explicit `ENABLE_LIVE_EXECUTION=false`. Both recorded checksums match
+  exactly, all five compact/archive tables exist, invalid-index count is zero and the database is
+  16,407,870,487 bytes. This is an additive schema checkpoint; no source row or B2 object was
+  deleted or altered.
+- Next exact action: update only `WALLETSCANER_OPERATIONS_IMAGE` and
+  `WALLETSCANER_RESEARCH_IMAGE` with the already dry-run guarded updater, verify the resulting file
+  hash and rendered exact target images, then recreate named services one at a time with
+  `--no-build --no-deps`. Stop and roll back on image/resource/live-execution mismatch.
