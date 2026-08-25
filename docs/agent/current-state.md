@@ -3,6 +3,43 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-26 wallet-evidence storage shadow (R34 operational, validation waiting)
+
+- **Operational — bounded hot/cold shadow:** migrations 050/051 are deployed with repository-exact
+  checksums. Archive writer, independent verifier, compact materializer, operations monitor and
+  wallet-alpha run immutable R34 image
+  `sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`.
+  Ingestion remains R30, sampler/maintenance R29 and Telegram R23. All 12 Walletscaner services were
+  running with restart 0/OOM false and selected workers reported `ENABLE_LIVE_EXECUTION=false` at
+  the 2026-08-25 22:24 UTC boundary.
+- **Operational — archive/compact first cohort:** one full wallet-evidence UTC day is independently
+  uploaded/restored/verified in B2 and one matching compact day has passed parity. Nine seeded
+  historical wallet days remain pending; compact mismatch/retry count and archive dead-letter count
+  are zero. Canonical wallet retirement is not implemented or enabled by this shadow.
+- **Operational — guarded derived-cache reclaim:** the reconstructible
+  `wallet_position_episodes`/`wallet_position_lots` cache was reclaimed only after an immutable B2
+  backup receipt, zero-qualified-wallet gate and transaction-safe rehearsal. Canonical
+  `wallet_trade_events` remains present at an approximately 2,042,285-row catalog estimate and
+  4,496,990,208 relation bytes. Wallet-alpha restarted on R34 and is rebuilding current derived
+  state; the queue sample moved from 16,840 to 16,423 with failures remaining at one pre-existing
+  item and P2/signal work at zero.
+- **Operational — recovery/headroom:** the current 2,053,352,363-byte PostgreSQL dump has a SHA
+  sidecar and off-site acknowledgement. Exact server transfer tars were removed only after local
+  SHA-identical copies and loaded R34/R35 image IDs were proven. Host free disk is 18,594,758,656
+  bytes and the database is 15,149,702,167 bytes at the boundary above.
+- **Waiting — storage validation:** the latest health report is intentionally `degraded`. Its recent
+  24-hour window includes image transfers, archive catch-up and the derived reclaim/rebuild, so it
+  reports a conservative 2.06 GB/day disk-consumption slope and 4.88 days above the 8 GiB reserve.
+  A clean post-catch-up 24-hour slope plus seven future shadow days are still required. The transient
+  load-per-CPU alert fell from 3.14 to 1.17; bounded Walletscaner stats showed no OOM/restart or
+  sustained CPU saturation. Do not call storage validated or authorize canonical retirement from
+  elapsed time alone.
+- **Interruption-safe boundary:** server rollout ledger revision 9 is
+  `storage-shadow-observation=in_progress`, SHA-256
+  `b3d98e772c112b656ea7f8735b56b8177c052bd480f559de72094fc772e4f0f1`. The human resume point is
+  `docs/agent/work-in-progress.md`; every future resume must compare both records with live state
+  before retrying an operation.
+
 ## 2026-08-25 pipeline/storage hardening release (R29/R30 rollout)
 
 - **Operational — scoped release:** `solana-ingestion` runs immutable R30

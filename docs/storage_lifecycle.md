@@ -20,6 +20,22 @@ This is not yet a steady-state proof. The admitted wallet-evidence tables cover 
 calendar days while their configured scoring horizon is 95 days. A healthy process, verified raw
 archive and 10 GiB free therefore do not prove that the 95-day hot model fits the fixed disk.
 
+### Production shadow update — 2026-08-26
+
+Migrations 050/051 and immutable R34 are now operational on the shared host. One wallet-evidence
+day has passed independent B2 restore verification and its compact-shadow parity; nine historical
+days remain in the bounded archive queue and mismatch/dead-letter counts are zero. The guarded
+derived-only reclaim returned about 1.51 GB to the filesystem while preserving the canonical
+wallet-trade relation and requeueing 16,442 current observed wallets for bounded rebuild. Exact
+release-transfer files were then removed without pruning their loaded rollback images. Host free
+space is about 18.6 GB.
+
+This is still a shadow, not a retirement cutover. No canonical wallet trade, entry or outcome is
+deleted by migrations 050/051 or the materializer, and no wallet-evidence retirement reader/gate is
+enabled. The observation must first complete archive catch-up, a clean post-catch-up 24-hour growth
+window and seven future days while preserving the 8 GiB reserve. The rollout/reclaim window's
+current 24-hour slope is intentionally rejected as equilibrium evidence.
+
 ## Measured growth risk
 
 The settled active UTC days 2026-08-14 and 2026-08-15 averaged approximately:
