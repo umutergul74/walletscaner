@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:31:00Z
+updated_at_utc: 2026-08-25T22:36:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -468,3 +468,21 @@ blindly repeat the last mutation.
   and alpha restart, mark revision 6 failed and stop. If it succeeds, prove canonical counts remain,
   derived relations are empty immediately after commit, filesystem space returned and alpha R34
   restarted before marking revision 6 completed.
+- The guarded R35 retry completed and committed. It proved canonical trade source present,
+  qualified wallets 0, pre-reclaim derived estimates 428,047 episodes/813,155 lots and reclaimed
+  627,417,088 episode bytes plus 898,252,800 lot bytes. Exactly 16,442 current observed wallets were
+  requeued. The immutable B2 receipt/SHA and seven-day remaining-retention guards passed.
+- The finally-equivalent trap sequence restarted normal wallet alpha on R34 (not R35): running,
+  live false, restart 0/OOM false, 160 MiB/0.10 CPU. Its new cycles report zero failures while
+  rebuilding only current derived state.
+- Post-check: canonical `wallet_trade_events` exists with unchanged catalog estimate 2,042,285 and
+  4,496,007,168 relation bytes. At observation time the rebuilt derived state was only 2,308 lots
+  and 2,254 episodes (about 2.51 MB and 3.33 MB). Database size is 15,014,452,247 bytes. Host free
+  disk rose from 16,303,284,224 after R35 loading to 17,816,268,800 bytes, returning about 1.51 GB
+  to the filesystem.
+- Queue after requeue is 16,794 pending, one active lease, one pre-existing error and P2/signal lane
+  zero. This is bounded rebuild work, not data loss; keep monitoring its slope and resource limits.
+- Next exact action: mark machine-ledger revision 6 `derived-cache-reclaim=completed` with these
+  measurements. Then, as a separate revision-controlled phase, remove only the two verified server
+  image-transfer tar files after rechecking loaded R34/R35 image IDs and local transfer copies. Do
+  not prune Docker images or touch database/B2 files.
