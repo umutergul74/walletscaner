@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:04:00Z
+updated_at_utc: 2026-08-25T22:08:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -405,3 +405,17 @@ blindly repeat the last mutation.
 - Next exact action: refresh disk, live execution, backup receipt and qualified-wallet gates once
   more; stop only wallet alpha; execute the guarded derived-only transaction with explicit receipt,
   SHA and approval values; then restart wallet alpha in a finally-equivalent operational sequence.
+- The first guarded reclaim attempt failed closed before `TRUNCATE`: its combined preflight query
+  exceeded the 30-second statement timeout. The transaction rolled back. Post-check proved the
+  derived tables remain populated (801,294 exact lots and 431,318 exact episodes; about 898 MB and
+  627 MB), database 16,494,107,671 bytes. No canonical or B2 data changed.
+- The remote shell's EXIT trap restarted wallet alpha on exact R34. It is running, live execution
+  false, restart 0/OOM false and resumed bounded queue processing. This validates the failure path.
+- Root cause: one preflight statement combined three large exact counts with the latest-score scan;
+  the standalone latest-score gate needs about 24 seconds at current volume, leaving insufficient
+  budget. The correct fix is not a larger timeout: use a fast source `EXISTS` plus relation sizes,
+  materialize latest wallet statuses once into a transaction-local temporary table and reuse it for
+  both the qualified-wallet guard and observed-wallet requeue.
+- Next exact action: mark machine-ledger revision 4 as `derived-cache-reclaim=failed` with timeout
+  and data-intact evidence. Then implement/test the bounded preflight change locally before opening
+  a new revision-controlled retry. Do not rerun the current image/script.
