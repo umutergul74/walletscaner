@@ -798,7 +798,10 @@ describe("DiscoverySupervisor", () => {
           probeLatestActivity: async () => ({ signature: "newer-head", slot: 1_050 }),
           probeSignatureStatus: async (signature) => {
             expect(signature).toBe("covered-head");
-            return { slot: 1_010, confirmationStatus: targetConfirmationStatus, succeeded: true };
+            // A failed transaction is still a finalized, immutable ordering
+            // boundary. Replay classifies it as no discovery event; coverage
+            // proof must not require the transaction itself to succeed.
+            return { slot: 1_010, confirmationStatus: targetConfirmationStatus, succeeded: false };
           }
         }
       ],
@@ -1125,6 +1128,36 @@ describe("fetchConfirmedSolanaSlot", () => {
         params: [["repair-target"], { searchTransactionHistory: true }]
       }
     ]);
+  });
+
+  it("preserves failed transaction status without rejecting its finalized boundary", async () => {
+    const status = await fetchSolanaSignatureStatus({
+      rpcUrl: "https://rpc.example",
+      provider: "provider",
+      signature: "failed-repair-target",
+      timeoutMs: 1_000,
+      retries: 0,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              value: [
+                {
+                  slot: 123_401,
+                  confirmations: null,
+                  err: { InstructionError: [3, { Custom: 13 }] },
+                  confirmationStatus: "finalized"
+                }
+              ]
+            }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    });
+
+    expect(status).toEqual({ slot: 123_401, confirmationStatus: "finalized", succeeded: false });
   });
 });
 

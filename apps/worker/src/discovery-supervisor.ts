@@ -960,13 +960,6 @@ export class DiscoverySupervisor {
           };
           return false;
         }
-        if (!targetStatus.succeeded) {
-          state.lastGapRepairResult = {
-            ...previous,
-            error: "exact-repair-target-failed-on-chain"
-          };
-          return false;
-        }
         if (targetStatus.slot !== previous.coveredThroughSlot) {
           state.lastGapRepairResult = {
             ...previous,
@@ -1028,6 +1021,7 @@ export class DiscoverySupervisor {
               coveredThroughSignature: previous.coveredThroughSignature,
               coveredThroughSlot: previous.coveredThroughSlot,
               targetConfirmationStatus: targetStatus.confirmationStatus,
+              targetTransactionSucceeded: targetStatus.succeeded,
               targetVerifiedAt: closedAt,
               coverageDisposition: "reconciled"
             }
