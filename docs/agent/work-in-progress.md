@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:21:00Z
+updated_at_utc: 2026-08-25T21:24:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -217,3 +217,12 @@ blindly repeat the last mutation.
   resolves to image ID `sha256:178566...ba4f`, and remove neither transfer artifact nor rollback.
   Then perform another pre-activation inventory before changing the operations/research image
   selectors or applying migrations.
+- The verified artifact was loaded at low CPU/I/O priority. Server tag
+  `walletscaner-worker:storage-r34-20260826` resolves exactly to
+  `sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`. Loading consumed
+  Docker layer space and left 16,863,121,408 bytes free (77% used), still above the 8 GiB hard
+  reserve. The transfer artifact and rollback files remain intact.
+- No container has been recreated and migration level remains 049. Next exact action is a fresh
+  pre-activation inventory followed by a dry-run of the guarded env update. Only if the expected
+  R29 operations/research tags match will those two selectors be atomically moved to R34; ingestion
+  R30 and signal/Telegram R23 must remain unchanged.
