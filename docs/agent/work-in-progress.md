@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:49:00Z
+updated_at_utc: 2026-08-25T21:51:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -336,3 +336,12 @@ blindly repeat the last mutation.
   script on the server, dry-run then create an `in_progress` `post-rollout-canary` ledger at
   revision 1. This is an inert operational record, not a service change. Then finish the read-only
   R34 canary and mark that phase completed only if actual runtime evidence passes.
+- Rollout-ledger tooling commit is `7eed5f4`. Server script SHA-256 is
+  `a907032e824f79ae97d378fc51c1f66276105402dc58015fa0901a0a690158ef`, identical to local.
+  After a successful dry-run, `/opt/walletscaner/deploy/storage-r34-rollout-state.json` was created
+  atomically at revision 1 with phase `post-rollout-canary`, status `in_progress` and SHA-256
+  `d8bc2a8ff1d1826ae272be0d6b4046f53d894a6fde498366276bcfb10f0c9d86`. It records only non-secret
+  image/migration/cycle/archive evidence.
+- On any further interruption, inspect that server ledger revision plus this file, then reconcile
+  both with actual migrations and containers. Do not mark the phase completed merely because the
+  ledger exists. Next exact action is the final bounded read-only canary snapshot.
