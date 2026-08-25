@@ -30,10 +30,11 @@ before every operational claim or mutation.
 - **Waiting — storage validation:** the latest health report is intentionally `degraded`. Its recent
   24-hour window includes image transfers, archive catch-up and the derived reclaim/rebuild, so it
   reports a conservative 2.06 GB/day disk-consumption slope and 4.88 days above the 8 GiB reserve.
-  A clean post-catch-up 24-hour slope plus seven future shadow days are still required. The transient
-  load-per-CPU alert fell from 3.14 to 1.17; bounded Walletscaner stats showed no OOM/restart or
-  sustained CPU saturation. Do not call storage validated or authorize canonical retirement from
-  elapsed time alone.
+  A clean post-catch-up 24-hour slope plus seven future shadow days are still required. Point-in-time
+  load-per-CPU samples oscillated 3.14 -> 1.17 -> 2.35; bounded Walletscaner stats and `vmstat`
+  showed no OOM/restart or continuous hard CPU saturation, but the observation gate must keep
+  measuring it. Do not call storage validated or authorize canonical retirement from elapsed time
+  alone.
 - **Interruption-safe boundary:** server rollout ledger revision 9 is
   `storage-shadow-observation=in_progress`, SHA-256
   `b3d98e772c112b656ea7f8735b56b8177c052bd480f559de72094fc772e4f0f1`. The human resume point is
