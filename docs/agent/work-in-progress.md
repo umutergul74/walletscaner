@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:41:00Z
+updated_at_utc: 2026-08-25T21:43:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -307,3 +307,13 @@ blindly repeat the last mutation.
   `--no-build --no-deps`, verify exact R34 image, 160 MiB/0.10 CPU, live execution false,
   restart/OOM, queue continuity and bounded logs. Do not truncate the old derived cache during
   this rollout.
+- Wallet alpha was recreated alone. Old container `cf9463ad96ce` used R29 image ID
+  `sha256:ecfc1960...`; new container `d87ca91a1b72` uses exact R34 image ID
+  `sha256:178566f7...`, is running with restart 0/OOM false, 160 MiB memory, CPU 0.10,
+  112 MiB Node heap, PostgreSQL parallel gather disabled and live execution false. No table was
+  truncated and no canonical or derived row was deleted as part of the recreate.
+- All intended R34 runtime targets are now activated. Next exact action is a bounded post-rollout
+  canary: verify wallet queue progress/no lost leases, archive/compact progression, monitor
+  freshness, ingestion freshness/backlog, resource ceilings, service restarts/OOM, disk/DB growth,
+  backup evidence and unchanged non-target image identities. Do not delete artifacts or source data
+  during this canary.
