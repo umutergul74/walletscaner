@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:36:00Z
+updated_at_utc: 2026-08-25T22:40:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -486,3 +486,15 @@ blindly repeat the last mutation.
   measurements. Then, as a separate revision-controlled phase, remove only the two verified server
   image-transfer tar files after rechecking loaded R34/R35 image IDs and local transfer copies. Do
   not prune Docker images or touch database/B2 files.
+- Machine ledger revision 6 records `derived-cache-reclaim=completed`, SHA-256
+  `69158cbc26a8e7ad940533550b61ae7b9edba25bda8059f83c669c8dfa55e178`.
+- Both server transfer tars exactly match retained local copies: R34 is 463,144,001 bytes/SHA
+  `69cfaa79...`, R35 is 463,101,233 bytes/SHA `3de19534...`. Loaded server image IDs remain exact.
+  Server free disk before artifact cleanup is 17,795,112,960 bytes.
+- Machine ledger revision 7 is `release-artifact-cleanup=in_progress`, SHA-256
+  `51340b3bed01a1082f997fc8a12c0907c8a68c2d1f8064fa31dc1269a88d4f48`.
+- Next exact action: delete only
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r34-20260826.tar.zst` and
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r35-20260826.tar.zst`; then prove both paths
+  absent, both Docker image IDs present and disk gain near 926,245,234 bytes before closing revision
+  8. No wildcard or image prune is allowed.
