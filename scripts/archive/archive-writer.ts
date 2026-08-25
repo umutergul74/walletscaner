@@ -24,24 +24,33 @@ const deadline = startedAt + config.maxRunSeconds * 1_000;
 
 try {
   if (config.dryRun) {
-    const plan = await store.previewEligiblePartitions(
-      config.settleHours,
-      Math.max(config.maxSegmentsPerRun * 4, 10)
-    );
+    const previewLimit = Math.max(config.maxSegmentsPerRun * 4, 10);
+    const [chainPayloads, walletEvidence] = await Promise.all([
+      store.previewEligiblePartitions(config.settleHours, previewLimit),
+      store.previewEligibleWalletEvidenceSegments(
+        config.walletEvidenceSettleHours,
+        previewLimit
+      )
+    ]);
     console.log(
       JSON.stringify({
         type: "archive-writer",
         status: "dry-run",
         checkedAt: new Date().toISOString(),
-        eligiblePartitions: plan,
+        eligiblePartitions: { chainPayloads, walletEvidence },
         summary: await store.summary()
       })
     );
   } else {
     await mkdir(config.stagingDirectory, { recursive: true, mode: 0o700 });
-    const seeded = await store.seedEligibleDailySegments(
+    const seedLimit = Math.max(config.maxSegmentsPerRun * 4, 10);
+    const seededChainPayloads = await store.seedEligibleDailySegments(
       config.settleHours,
-      Math.max(config.maxSegmentsPerRun * 4, 10)
+      seedLimit
+    );
+    const seededWalletEvidence = await store.seedEligibleWalletEvidenceSegments(
+      config.walletEvidenceSettleHours,
+      seedLimit
     );
     const objectStore = new S3CompatibleArchiveStore(config);
     let processed = 0;
@@ -122,6 +131,7 @@ try {
               "source-sha256": artifact.sourceSha256,
               "source-row-count": artifact.sourceRowCount.toString(),
               "canonical-metadata-row-count": artifact.canonicalMetadataRowCount.toString(),
+              "record-type-counts": JSON.stringify(artifact.recordTypeCounts),
               "source-bytes": artifact.sourceBytes.toString(),
               "source-start": segment.rangeStart,
               "source-end": segment.rangeEnd,
@@ -171,7 +181,11 @@ try {
         status: failed > 0 ? "degraded" : "completed",
         checkedAt: new Date().toISOString(),
         workerId,
-        seeded,
+        seeded: seededChainPayloads + seededWalletEvidence,
+        seededBySource: {
+          chainEventPayloads: seededChainPayloads,
+          walletEvidence: seededWalletEvidence
+        },
         processed,
         succeeded,
         failed,

@@ -367,7 +367,7 @@ describe("MemoryRepository", () => {
     });
     expect(await repo.getWalletAlphaDetail("LedgerWallet", strategyVersion)).toMatchObject({
       episodes: [{ id: "episode-1", status: "realized", remainingRawAmount: "0" }],
-      lots: [{ id: "lot-1", status: "realized", remainingRawAmount: "0" }]
+      lots: []
     });
 
     await repo.replaceWalletPositionLedger({ ...snapshot, episodes: [], lots: [] });

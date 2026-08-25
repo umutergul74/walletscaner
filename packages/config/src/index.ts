@@ -32,6 +32,12 @@ const archiveEnvSchema = z.object({
   ARCHIVE_DRY_RUN: booleanFromEnv.default("true"),
   ARCHIVE_STAGING_DIR: z.string().min(1).default("/app/archive-staging"),
   ARCHIVE_SETTLE_HOURS: z.coerce.number().int().min(1).max(48).default(6),
+  ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS: z.coerce
+    .number()
+    .int()
+    .min(24)
+    .max(720)
+    .default(72),
   ARCHIVE_LEASE_SECONDS: z.coerce.number().int().min(60).max(7_200).default(1_800),
   ARCHIVE_RETRY_SECONDS: z.coerce.number().int().min(30).max(86_400).default(300),
   ARCHIVE_MAX_SEGMENTS_PER_RUN: z.coerce.number().int().min(1).max(7).default(1),
@@ -94,6 +100,7 @@ export function loadArchiveRuntimeConfig(
     dryRun: parsed.ARCHIVE_DRY_RUN,
     stagingDirectory: parsed.ARCHIVE_STAGING_DIR,
     settleHours: parsed.ARCHIVE_SETTLE_HOURS,
+    walletEvidenceSettleHours: parsed.ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS,
     leaseSeconds: parsed.ARCHIVE_LEASE_SECONDS,
     retrySeconds: parsed.ARCHIVE_RETRY_SECONDS,
     maxSegmentsPerRun: parsed.ARCHIVE_MAX_SEGMENTS_PER_RUN,

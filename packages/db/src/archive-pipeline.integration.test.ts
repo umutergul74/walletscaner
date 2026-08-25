@@ -129,9 +129,11 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
     }
     expect(artifact.sourceRowCount).toBe(1);
     expect(artifact.canonicalMetadataRowCount).toBe(1);
+    expect(artifact.recordTypeCounts).toEqual({ chain_event_payload: 1 });
     await expect(validateArchiveArtifact({ filePath, expected: artifact })).resolves.toMatchObject({
       sourceRowCount: 1,
-      canonicalMetadataRowCount: 1
+      canonicalMetadataRowCount: 1,
+      recordTypeCounts: { chain_event_payload: 1 }
     });
     expect(
       await store.markUploadForVerification({
@@ -174,6 +176,121 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       `SELECT 1 FROM chain_event_inbox WHERE idempotency_key = 'archive-event-late'`
     );
     expect(lateInbox.rowCount).toBe(0);
+  });
+
+  it("archives exact wallet evidence and preserves a verified generation across corrections", async () => {
+    const rangeStart = utcDayOffset(-5);
+    const observedAt = new Date(rangeStart.getTime() + 3_600_000).toISOString();
+    await testPool.query(
+      `INSERT INTO wallet_trade_events (
+         idempotency_key, chain, wallet_address, token_address, quote_token_address,
+         pool_address, side, base_amount, quote_amount, execution_price_usd,
+         quote_value_usd, data_quality, signature, slot, provider, observed_at,
+         strategy_version, raw
+       ) VALUES (
+         'wallet-trade-archive-1', 'solana', 'WalletArchive111', 'TokenArchive111',
+         'So11111111111111111111111111111111111111112', 'PoolArchive111',
+         'buy', 10, 2, 0.2, 2, 'observed-execution', 'wallet-trade-signature',
+         10, 'archive-test', $1, 'evidence-v1', '{"full":"trade"}'::jsonb
+       )`,
+      [observedAt]
+    );
+    await testPool.query(
+      `INSERT INTO wallet_entry_signals (
+         idempotency_key, chain, wallet_address, token_address, pool_address,
+         observed_entry_price_usd, observed_liquidity_usd, cohort,
+         repeat_wallet_count, flow_evidence, signature, slot, provider,
+         observed_at, strategy_version
+       ) VALUES (
+         'wallet-entry-archive-1', 'solana', 'WalletArchive111', 'TokenArchive111',
+         'PoolArchive111', 0.2, 10000, 'safe', 1, '{"full":"entry"}'::jsonb,
+         'wallet-entry-signature', 11, 'archive-test', $1, 'evidence-v1'
+       )`,
+      [observedAt]
+    );
+    await testPool.query(
+      `INSERT INTO wallet_signal_outcomes (
+         idempotency_key, entry_idempotency_key, chain, horizon_minutes, status,
+         outcome_price_usd, frozen_at, gross_return_pct, net_return_pct,
+         estimated_round_trip_cost_pct, exit_strategy, rugged, signature, slot,
+         provider, observed_at, strategy_version, raw
+       ) VALUES (
+         'wallet-outcome-archive-1', 'wallet-entry-archive-1', 'solana', 60,
+         'mature', 0.3, $1, 50, 47, 3, 'fixed-horizon', false,
+         'wallet-outcome-signature', 12, 'archive-test', $1, 'evidence-v1',
+         '{"full":"outcome"}'::jsonb
+       )`,
+      [observedAt]
+    );
+
+    await expect(store.seedEligibleWalletEvidenceSegments(24, 1)).resolves.toBe(1);
+    const segment = await store.claimWriter({
+      workerId: "wallet-archive-writer-test",
+      leaseSeconds: 300
+    });
+    expect(segment?.sourceKind).toBe("wallet-evidence");
+    const directory = await mkdtemp(join(tmpdir(), "walletscanner-wallet-pg-archive-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "wallet-segment.jsonl.zst");
+    const client = await testPool.connect();
+    let artifact;
+    try {
+      artifact = await exportArchiveSegment({ client, segment: segment!, outputPath: filePath });
+    } finally {
+      client.release();
+    }
+    expect(artifact.recordTypeCounts).toEqual({
+      wallet_trade_event: 1,
+      wallet_entry_signal: 1,
+      wallet_signal_outcome: 1
+    });
+    await expect(validateArchiveArtifact({ filePath, expected: artifact })).resolves.toMatchObject({
+      sourceRowCount: 3,
+      canonicalMetadataRowCount: 3
+    });
+    expect(
+      await store.markUploadForVerification({
+        segment: segment!,
+        workerId: "wallet-archive-writer-test",
+        artifact,
+        uploadSucceeded: true
+      })
+    ).toBe(true);
+    const verifier = await store.claimVerifier({
+      workerId: "wallet-archive-verifier-test",
+      leaseSeconds: 300
+    });
+    const retainUntil = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    expect(
+      await store.completeVerification({
+        segment: verifier!,
+        workerId: "wallet-archive-verifier-test",
+        receipt: {
+          objectLockMode: "GOVERNANCE",
+          objectLockEvidence: "api-verified",
+          retainUntil
+        },
+        minimumRetainUntil: new Date(Date.now() + 7 * 86_400_000).toISOString()
+      })
+    ).toBe(true);
+
+    await testPool.query(
+      `UPDATE wallet_trade_events
+       SET raw = raw || '{"corrected":true}'::jsonb
+       WHERE idempotency_key = 'wallet-trade-archive-1'`
+    );
+    const active = await testPool.query<{ revision: number; status: string }>(
+      `SELECT revision, status FROM archive_segments
+       WHERE source_kind='wallet-evidence' AND range_start=$1`,
+      [rangeStart.toISOString()]
+    );
+    expect(active.rows[0]).toMatchObject({ revision: 2, status: "pending" });
+    const generation = await testPool.query(
+      `SELECT 1 FROM archive_segment_generations
+       WHERE segment_id=$1 AND revision=1`,
+      [segment!.id]
+    );
+    expect(generation.rowCount).toBe(1);
   });
 
   it("invalidates an in-flight revision when its source window changes", async () => {
@@ -223,13 +340,15 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
     await testPool.query(
       `INSERT INTO archive_segments (
          source_kind, range_start, range_end, status, object_key,
-         source_row_count, canonical_metadata_row_count, source_bytes, source_sha256,
+         source_row_count, canonical_metadata_row_count, record_type_counts,
+         source_bytes, source_sha256,
          archive_bytes, archive_sha256, content_md5_base64, object_lock_mode,
          object_lock_evidence,
          retain_until, uploaded_at, verified_at
        ) VALUES (
          'chain-event-payloads', $1, $2, 'verified', $3,
-         1, 1, 1, $4, 1, $5, $6, 'GOVERNANCE', 'attested-default-policy',
+         1, 1, '{"chain_event_payload":1}'::jsonb, 1, $4, 1, $5, $6,
+         'GOVERNANCE', 'attested-default-policy',
          NOW() + INTERVAL '30 days', NOW(), NOW()
        )`,
       [

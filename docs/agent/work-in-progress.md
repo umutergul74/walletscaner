@@ -1,9 +1,9 @@
 ---
-status: complete
-updated_at_utc: 2026-08-25T18:55:00Z
+status: active
+updated_at_utc: 2026-08-25T19:44:00Z
 owner: codex
-task: finish R30/R29 pipeline hardening and make future work interruption-safe
-last_safe_checkpoint: source commits, migration 049 and final production verification are complete
+task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
+last_safe_checkpoint: migration 050 wallet-evidence archive foundation implemented and tested locally; production unchanged
 ---
 
 # Walletscaner Work In Progress
@@ -12,75 +12,94 @@ This is the durable resume point for an interrupted multi-step task. It contains
 does not grant production authority. On resume, verify every recorded fact before continuing; never
 blindly repeat the last mutation.
 
-## Current scope and boundaries
+## Objective and acceptance criteria
 
-- Finish the evidence-v1 retry/backlog correction without deleting canonical evidence.
-- Persist an interruption-safe workflow for future engineering and production work.
+- Keep the host above the 8 GiB hard reserve and target a steady free-space band near or above the
+  current roughly 17 GiB, without emergency manual deletion.
+- Keep only latency-critical/reconstructive hot state in PostgreSQL; move replay/audit detail to B2
+  through immutable, independently restored and verified segments.
+- Make archive, verification, compaction/retirement, retry and monitoring autonomous, bounded and
+  fail closed.
+- Prove deletion/retirement capacity exceeds peak ingress and a clean 24-hour post-catch-up slope
+  before calling storage validated.
+
+## Non-negotiable boundaries
+
 - Keep `ENABLE_LIVE_EXECUTION=false`.
-- Do not inspect or change the protected co-tenant, global Docker state, volumes, B2 lifecycle or
-  credentials.
+- Do not delete canonical wallet or chain evidence until exact B2 object, SHA, restore, coverage,
+  compact-fact parity and reader dual-read gates pass for that cohort.
+- No B2 delete/lifecycle/bucket/Object Lock change, `VACUUM FULL`, global Docker prune, volume
+  mutation, destructive DDL or protected co-tenant operation.
+- PostgreSQL remains the current hot-window and compact operational system of record.
 
-## Completed and verified
+## Known safe baseline
 
-- R30 ingestion and R29 sampler/alpha/maintenance/operations are running; restart/OOM were zero at
-  the last observation.
-- Migration `049_wallet_alpha_transient_retry_backoff.sql` was rehearsed on disposable PostgreSQL
-  16, whose evidence integration passed 32/32.
-- Migration 049 is deployed in production with checksum
-  `0250d3f480a2283deba2e435ed0ca3f931d6974fd1e43dd4a38d3d25185ff085`.
-- A production transaction canary proved revision increment, unchanged retry `not_before`, retained
-  error provenance and zero residual canary rows after rollback.
-- Latest short sample: evidence-v1 P0/P1/P2 pending `1,871 / 6,548 / 0`; one evidence-limit wallet
-  remains intentionally quarantined. This is not yet the one-hour equilibrium gate.
-- Typecheck, ESLint and workspace production build pass. Migration contract tests pass 3/3.
-- The exact post-049 Node 24/Linux image passed 89/89 files and 428/428 tests with disposable
-  PostgreSQL 16, zstd, test-only Python and the reviewed Compose file. The two schema-heavy suites
-  passed sequentially (32/32 and 4/4) after their all-parallel setup exceeded only the test hook.
-- The interruption-safe contract is now present in `AGENTS.md`, `skills.md` and the production-ops
-  skill; this file is the first active checkpoint under that contract.
-- Server dump `memecoin_alpha_20260825T150924Z.dump` remains locally verified at 2,053,352,363
-  bytes; its newest generation still awaits off-site acknowledgement. About 17.2 GB host disk was
-  free at the last observation.
-- Final production observation at 18:52 UTC: database 16,142,654,487 bytes; inbox had nine normal
-  pending rows and no terminal/dead-letter state; pool freshness was seven seconds. Evidence-v1
-  P0/P1/P2 was `1,911 / 5,649 / 0`, with 30 transient-retry rows and one evidence-limit quarantine.
-  The only open coverage incident was CPMM, whose 15,941-signature exact replay had reached 2,800.
-- All inspected Walletscaner containers were running with restart `0`, OOM `false`, reviewed
-  CPU/RAM limits and `ENABLE_LIVE_EXECUTION=false`. The Compose hash remained
-  `ae54b1e10b92246405f0026e56eb1a463b22dac35056839342658d5c970d1bcd`.
-
-## Current source state
-
-- Base commit before this task: `954aaa4` (`ops: finalize R30 pipeline rollout`).
-- Migration 049, tests and synchronized runtime documents are committed as `bca83d5`
-  (`fix: preserve wallet alpha retry backoff`).
-- The interruption-safe agent/skill contract is committed as `9c33624`
-  (`docs: add interruption-safe work checkpoints`).
+- Source HEAD before this task: `50f060d`; branch was 19 commits ahead of origin.
+- Previous production observation: database 16,142,654,487 bytes, about 17.2 GiB host disk free,
+  verified server dump 2,053,352,363 bytes, newest dump off-site acknowledgement still waiting.
+- Raw `chain_event_payloads` daily B2 archive/verification/retirement is operational.
+- The unresolved gap is the 95-day detailed wallet trade/entry/outcome model. A populated clone
+  benchmark measured a 92.62% reduction for compact facts plus three-day staging, but live
+  archive/dual-read/cutover gates are not implemented.
 - The untracked `deploy/.tmp-pipeline-storage-r28-2dc66ab.tar817264887` is a stale local transfer
   artifact. It is not production data and must not be committed or confused with an R30 rollback
   image.
 
-## Recovery and rollback
+## Current phase
 
-- Migration 049 changes only `enqueue_wallet_alpha_work` and `normalize_wallet_alpha_work` plus its
-  trigger definition; it deletes no row. Forward repair is a new numbered migration, never editing
-  049 after deployment.
-- R30/R29/R23 immutable images remain available. No service restart was required for migration 049.
-- Current verified server dump and the prior verified off-host generation are recovery points.
+1. Read-only inventory: relation/index/TOAST sizes, age distribution, daily rows/bytes, WAL,
+   retention owners, B2 manifests, compaction lag, dump/archive state and disk slope.
+2. Map every consumer of trades, entries, outcomes, lots and episodes; define minimum hot/compact
+   fields and deterministic replay/restore contracts.
+3. Select the smallest design that continuously returns filesystem space; reject plain DELETE from
+   unpartitioned relations as a permanent solution.
+4. Implement additive schema/archive/compact-state changes and tests locally; rehearse on a
+   populated PostgreSQL 16 clone.
+5. Deploy only after backup/off-site/headroom gates; shadow dual-write/read first. Source retirement
+   remains disabled until cohort restore/parity and future canary gates pass.
 
-## Completion state
+## Verified live inventory at 2026-08-25 19:22 UTC
 
-- There is no pending production mutation, service recreation, migration, upload or data cleanup.
-- The source handoff is complete. The only remaining working-tree artifact is the pre-existing stale
-  local R28 transfer tar named above; it is intentionally uncommitted and unrelated to production.
-- A future substantive task must replace this completed checkpoint with a fresh `active` objective
-  before its first mutation.
+- Host `/` had 18,820,648,960 bytes free (17.53 GiB); PostgreSQL was 16,193,281,047 bytes
+  (15.08 GiB). The latest hourly sample at 19:12 UTC was 16,183,409,687 database bytes and
+  17,140,256,768 free disk bytes. From 01:10 to 19:12 UTC the database grew about 1.70 GB, so the
+  current backfill-heavy slope is materially above the older 0.58 GB/day estimate and cannot be
+  treated as steady state.
+- Largest relations: trades 4,468,891,648 bytes; entries 1,545,306,112; outcomes 1,477,165,056;
+  lots 891,969,536; scores 847,462,400; episodes 623,755,264. These six total about 9.18 GiB.
+- Raw daily payload partitions were 609 MiB for August 23, 998 MiB for August 24 and 1,056 MiB for
+  the still-open August 25 partition. This is consistent with the 48-hour hot raw-payload window;
+  old verified daily partitions are being dropped rather than retained indefinitely.
+- B2 raw archive had 24 independently verified/Object-Locked segments from July 31 through the end
+  of August 24: 932,555 rows, 20,028,508,873 source bytes and 1,516,093,140 compressed bytes. No
+  pending/retry/dead-letter segment existed. The August 24 writer took 4,359 seconds under its 4%
+  CPU ceiling, so raw throughput still exceeds one daily cohort but leaves limited shared archive
+  budget for a second source unless scheduling is made source-aware.
+- New wallet evidence is accelerating during catch-up: August 24 produced 58,252 trades / 14,206
+  entries / 27,620 outcomes; the partial August 25 day already had 65,709 / 16,472 / 33,755.
+- The newest 2,053,352,363-byte server dump now has its off-site verified acknowledgement (written
+  2026-08-25 19:14 UTC). No backup file was deleted.
+- `archive_segments`, the writer, verifier and retirement policy currently support only
+  `chain-event-payloads`. There is no wallet-evidence B2 manifest, exact exporter, restored
+  validator, compact materializer or partition-drop path in production.
 
-## Remaining gates, not failures
+## Recovery and resume
 
-- Observe a clean one-hour negative evidence-v1 backlog slope after migration 049.
-- Let the one open CPMM historical repair converge or remain explicitly alpha-excluded.
-- Reach zero chain-payload compaction lag, then measure a clean 24-hour storage slope above the
-  8 GiB reserve.
-- Obtain byte-identical off-site acknowledgement for the newest dump.
-- Alpha remains unvalidated: zero signals and no profitable chronological paper cohort.
+- No production mutation has occurred in this task; there is nothing to roll back.
+- First resume action: inspect this file, `git status/log`, current-state and live read-only storage
+  metrics. Do not repeat an upload, migration, archive run or cleanup without checking its durable
+  manifest/migration/hash first.
+
+## Local implementation checkpoint
+
+- Added migration 050, `wallet-evidence-daily-v1` exact exports and immutable
+  `archive_segment_generations`; no retirement policy for wallet evidence was added.
+- Writer/verifier now require independent restored record-type counts as well as source/archive
+  SHA-256. Chain payload claims retain priority over wallet catch-up.
+- FIFO derived persistence now keeps scalar episodes and only non-realized lots. No production
+  cache has been truncated or deleted yet.
+- Local TypeScript and ESLint passed. Archive/unit/maintenance tests passed 25/25. Disposable
+  PostgreSQL 16 archive plus evidence integration passed 37/37, including a three-record wallet
+  artifact and correction revision that preserved generation 1.
+- Production has not received migration 050 or this image. Next safe step is a coherent commit,
+  then exact Linux-image tests and populated-clone export sizing before any deploy.

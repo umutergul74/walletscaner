@@ -9,6 +9,7 @@ export function archiveMetadata(segment: ArchiveSegment): Record<string, string>
   if (
     segment.sourceRowCount === undefined ||
     segment.canonicalMetadataRowCount === undefined ||
+    !segment.recordTypeCounts ||
     segment.sourceBytes === undefined ||
     !segment.sourceSha256
   ) {
@@ -18,6 +19,7 @@ export function archiveMetadata(segment: ArchiveSegment): Record<string, string>
     "source-sha256": segment.sourceSha256,
     "source-row-count": segment.sourceRowCount.toString(),
     "canonical-metadata-row-count": segment.canonicalMetadataRowCount.toString(),
+    "record-type-counts": JSON.stringify(segment.recordTypeCounts),
     "source-bytes": segment.sourceBytes.toString(),
     "source-start": segment.rangeStart,
     "source-end": segment.rangeEnd,

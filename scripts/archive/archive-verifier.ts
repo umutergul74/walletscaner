@@ -79,6 +79,7 @@ try {
           !segment.archiveSha256 ||
           segment.sourceRowCount === undefined ||
           segment.canonicalMetadataRowCount === undefined ||
+          !segment.recordTypeCounts ||
           segment.sourceBytes === undefined ||
           !segment.sourceSha256
         ) {
@@ -114,6 +115,7 @@ try {
           expected: {
             sourceRowCount: segment.sourceRowCount,
             canonicalMetadataRowCount: segment.canonicalMetadataRowCount,
+            recordTypeCounts: segment.recordTypeCounts,
             sourceBytes: segment.sourceBytes,
             sourceSha256: segment.sourceSha256
           },

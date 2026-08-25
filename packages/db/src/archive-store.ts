@@ -10,9 +10,11 @@ export type ArchiveSegmentStatus =
   | "retry_verify"
   | "dead_letter";
 
+export type ArchiveSourceKind = "chain-event-payloads" | "wallet-evidence";
+
 export interface ArchiveSegment {
   id: number;
-  sourceKind: "chain-event-payloads";
+  sourceKind: ArchiveSourceKind;
   rangeStart: string;
   rangeEnd: string;
   revision: number;
@@ -27,6 +29,7 @@ export interface ArchiveSegment {
   objectKey?: string;
   sourceRowCount?: number;
   canonicalMetadataRowCount?: number;
+  recordTypeCounts?: Record<string, number>;
   sourceBytes?: number;
   sourceSha256?: string;
   archiveBytes?: number;
@@ -46,6 +49,7 @@ export interface ArchiveArtifactManifest {
   objectKey: string;
   sourceRowCount: number;
   canonicalMetadataRowCount: number;
+  recordTypeCounts: Record<string, number>;
   sourceBytes: number;
   sourceSha256: string;
   archiveBytes: number;
@@ -70,7 +74,7 @@ export interface ArchivePartitionPlan {
 
 interface ArchiveSegmentRow {
   id: string;
-  source_kind: "chain-event-payloads";
+  source_kind: ArchiveSourceKind;
   range_start: Date;
   range_end: Date;
   revision: number;
@@ -85,6 +89,7 @@ interface ArchiveSegmentRow {
   object_key: string | null;
   source_row_count: string | null;
   canonical_metadata_row_count: string | null;
+  record_type_counts: Record<string, unknown> | null;
   source_bytes: string | null;
   source_sha256: string | null;
   archive_bytes: string | null;
@@ -168,6 +173,69 @@ export class ArchiveStore {
     return result.rowCount ?? 0;
   }
 
+  async seedEligibleWalletEvidenceSegments(settleHours: number, limit: number): Promise<number> {
+    requirePositiveInteger(settleHours, "settleHours");
+    requirePositiveInteger(limit, "limit");
+    const result = await this.pool.query(
+      `WITH source_bounds AS (
+         SELECT MIN(first_at) AS first_at
+         FROM (
+           SELECT MIN(observed_at) AS first_at FROM wallet_trade_events
+           UNION ALL
+           SELECT MIN(observed_at) AS first_at FROM wallet_entry_signals
+           UNION ALL
+           SELECT MIN(observed_at) AS first_at FROM wallet_signal_outcomes
+         ) AS sources
+       ), eligible AS (
+         SELECT day.range_start
+         FROM source_bounds
+         CROSS JOIN LATERAL generate_series(
+           date_trunc('day', source_bounds.first_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+           date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+           INTERVAL '1 day'
+         ) AS day(range_start)
+         WHERE source_bounds.first_at IS NOT NULL
+           AND day.range_start + INTERVAL '1 day'
+               <= NOW() - make_interval(hours => $1::integer)
+           AND (
+             EXISTS (
+               SELECT 1 FROM wallet_trade_events
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+             OR EXISTS (
+               SELECT 1 FROM wallet_entry_signals
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+             OR EXISTS (
+               SELECT 1 FROM wallet_signal_outcomes
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM archive_segments AS existing
+             WHERE existing.source_kind = 'wallet-evidence'
+               AND existing.range_start = day.range_start
+               AND existing.range_end = day.range_start + INTERVAL '1 day'
+           )
+         ORDER BY day.range_start
+         LIMIT $2
+       )
+       INSERT INTO archive_segments (
+         source_kind, range_start, range_end, format_version, compression
+       )
+       SELECT
+         'wallet-evidence', range_start, range_start + INTERVAL '1 day',
+         'wallet-evidence-daily-v1', 'zstd-3'
+       FROM eligible
+       ON CONFLICT (source_kind, range_start, range_end) DO NOTHING`,
+      [settleHours, limit]
+    );
+    return result.rowCount ?? 0;
+  }
+
   async previewEligiblePartitions(
     settleHours: number,
     limit: number
@@ -203,6 +271,79 @@ export class ArchiveStore {
        FROM eligible
        LEFT JOIN archive_segments AS segment
          ON segment.source_kind = 'chain-event-payloads'
+        AND segment.range_start = eligible.range_start
+        AND segment.range_end = eligible.range_start + INTERVAL '1 day'
+       ORDER BY eligible.range_start`,
+      [settleHours, limit]
+    );
+    return result.rows.map((row) => ({
+      rangeStart: row.range_start.toISOString(),
+      rangeEnd: row.range_end.toISOString(),
+      ...(row.status ? { existingStatus: row.status } : {}),
+      ...(row.revision !== null ? { revision: row.revision } : {})
+    }));
+  }
+
+  async previewEligibleWalletEvidenceSegments(
+    settleHours: number,
+    limit: number
+  ): Promise<ArchivePartitionPlan[]> {
+    requirePositiveInteger(settleHours, "settleHours");
+    requirePositiveInteger(limit, "limit");
+    const result = await this.pool.query<{
+      range_start: Date;
+      range_end: Date;
+      status: ArchiveSegmentStatus | null;
+      revision: number | null;
+    }>(
+      `WITH source_bounds AS (
+         SELECT MIN(first_at) AS first_at
+         FROM (
+           SELECT MIN(observed_at) AS first_at FROM wallet_trade_events
+           UNION ALL
+           SELECT MIN(observed_at) AS first_at FROM wallet_entry_signals
+           UNION ALL
+           SELECT MIN(observed_at) AS first_at FROM wallet_signal_outcomes
+         ) AS sources
+       ), eligible AS (
+         SELECT day.range_start
+         FROM source_bounds
+         CROSS JOIN LATERAL generate_series(
+           date_trunc('day', source_bounds.first_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+           date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+           INTERVAL '1 day'
+         ) AS day(range_start)
+         WHERE source_bounds.first_at IS NOT NULL
+           AND day.range_start + INTERVAL '1 day'
+               <= NOW() - make_interval(hours => $1::integer)
+           AND (
+             EXISTS (
+               SELECT 1 FROM wallet_trade_events
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+             OR EXISTS (
+               SELECT 1 FROM wallet_entry_signals
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+             OR EXISTS (
+               SELECT 1 FROM wallet_signal_outcomes
+               WHERE observed_at >= day.range_start
+                 AND observed_at < day.range_start + INTERVAL '1 day'
+             )
+           )
+         ORDER BY day.range_start
+         LIMIT $2
+       )
+       SELECT
+         eligible.range_start,
+         eligible.range_start + INTERVAL '1 day' AS range_end,
+         segment.status,
+         segment.revision
+       FROM eligible
+       LEFT JOIN archive_segments AS segment
+         ON segment.source_kind = 'wallet-evidence'
         AND segment.range_start = eligible.range_start
         AND segment.range_end = eligible.range_start + INTERVAL '1 day'
        ORDER BY eligible.range_start`,
@@ -321,15 +462,16 @@ export class ArchiveStore {
              object_key = $4,
              source_row_count = $5,
              canonical_metadata_row_count = $6,
-             source_bytes = $7,
-             source_sha256 = $8,
-             archive_bytes = $9,
-             archive_sha256 = $10,
-             content_md5_base64 = $11,
-             etag = $12,
-             object_version_id = $13,
-             uploaded_at = CASE WHEN $14::boolean THEN NOW() ELSE uploaded_at END,
-             last_error = $15,
+             record_type_counts = $7::jsonb,
+             source_bytes = $8,
+             source_sha256 = $9,
+             archive_bytes = $10,
+             archive_sha256 = $11,
+             content_md5_base64 = $12,
+             etag = $13,
+             object_version_id = $14,
+             uploaded_at = CASE WHEN $15::boolean THEN NOW() ELSE uploaded_at END,
+             last_error = $16,
              updated_at = NOW()
          WHERE id = $1
            AND revision = $2
@@ -340,10 +482,10 @@ export class ArchiveStore {
        INSERT INTO archive_attempts (
          segment_id, segment_revision, stage, attempt_number, worker_id, outcome, error, details
        )
-       SELECT $1, $2, 'upload', $16, $3,
-              CASE WHEN $14::boolean THEN 'success' ELSE 'retry' END,
-              $15,
-              jsonb_build_object('objectKey', $4, 'uploadSucceeded', $14::boolean)
+       SELECT $1, $2, 'upload', $17, $3,
+              CASE WHEN $15::boolean THEN 'success' ELSE 'retry' END,
+              $16,
+              jsonb_build_object('objectKey', $4, 'uploadSucceeded', $15::boolean)
        FROM updated`,
       [
         options.segment.id,
@@ -352,6 +494,7 @@ export class ArchiveStore {
         options.artifact.objectKey,
         options.artifact.sourceRowCount,
         options.artifact.canonicalMetadataRowCount,
+        JSON.stringify(options.artifact.recordTypeCounts),
         options.artifact.sourceBytes,
         options.artifact.sourceSha256,
         options.artifact.archiveBytes,
@@ -532,7 +675,10 @@ export class ArchiveStore {
            WHERE status = ANY($1::text[])
              AND not_before <= NOW()
              AND (status <> $2 OR lease_expires_at <= NOW())
-           ORDER BY range_start, id
+           ORDER BY
+             CASE source_kind WHEN 'chain-event-payloads' THEN 0 ELSE 1 END,
+             range_start,
+             id
            LIMIT 1
            FOR UPDATE SKIP LOCKED
          )
@@ -646,6 +792,9 @@ function mapSegment(row: ArchiveSegmentRow): ArchiveSegment {
     ...(row.canonical_metadata_row_count !== null
       ? { canonicalMetadataRowCount: Number(row.canonical_metadata_row_count) }
       : {}),
+    ...(row.record_type_counts
+      ? { recordTypeCounts: parseRecordTypeCounts(row.record_type_counts) }
+      : {}),
     ...(row.source_bytes !== null ? { sourceBytes: Number(row.source_bytes) } : {}),
     ...(row.source_sha256 ? { sourceSha256: row.source_sha256 } : {}),
     ...(row.archive_bytes !== null ? { archiveBytes: Number(row.archive_bytes) } : {}),
@@ -679,6 +828,13 @@ function assertArtifact(artifact: ArchiveArtifactManifest): void {
   ) {
     throw new Error("canonicalMetadataRowCount must be bounded by sourceRowCount");
   }
+  const recordTypeTotal = Object.values(artifact.recordTypeCounts).reduce(
+    (total, count) => total + count,
+    0
+  );
+  if (recordTypeTotal !== artifact.sourceRowCount) {
+    throw new Error("recordTypeCounts must sum to sourceRowCount");
+  }
   if (!SHA256_HEX.test(artifact.sourceSha256) || !SHA256_HEX.test(artifact.archiveSha256)) {
     throw new Error("Archive artifact SHA-256 values must be lowercase hexadecimal digests");
   }
@@ -686,6 +842,18 @@ function assertArtifact(artifact: ArchiveArtifactManifest): void {
     throw new Error("Archive artifact MD5 must be a base64 digest");
   }
   if (!artifact.objectKey) throw new Error("Archive artifact object key is required");
+}
+
+function parseRecordTypeCounts(value: Record<string, unknown>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [name, count] of Object.entries(value)) {
+    const parsed = typeof count === "number" ? count : Number(count);
+    if (!name || !Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new Error("Archive record type counts are invalid");
+    }
+    counts[name] = parsed;
+  }
+  return counts;
 }
 
 function requirePositiveInteger(value: number, name: string): void {

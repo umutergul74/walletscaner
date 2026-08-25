@@ -708,12 +708,13 @@ export class MemoryRepository
     }
     for (const id of inScopeEpisodeIds) nextEpisodes.delete(id);
     for (const episode of snapshot.episodes) nextEpisodes.set(episode.id, structuredClone(episode));
-    for (const lot of snapshot.lots) nextLots.set(lot.id, structuredClone(lot));
+    const openLots = snapshot.lots.filter((lot) => lot.status !== "realized");
+    for (const lot of openLots) nextLots.set(lot.id, structuredClone(lot));
     this.walletPositionEpisodes.clear();
     this.walletPositionLots.clear();
     for (const [id, episode] of nextEpisodes) this.walletPositionEpisodes.set(id, episode);
     for (const [id, lot] of nextLots) this.walletPositionLots.set(id, lot);
-    return { episodeCount: snapshot.episodes.length, lotCount: snapshot.lots.length };
+    return { episodeCount: snapshot.episodes.length, lotCount: openLots.length };
   }
 
   async claimWalletAlphaWork(options: WalletAlphaWorkClaimOptions): Promise<WalletAlphaWorkItem[]> {

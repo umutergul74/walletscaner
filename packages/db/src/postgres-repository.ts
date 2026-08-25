@@ -1031,7 +1031,11 @@ export class PostgresRepository
       terminal_reason: episode.terminalReason ?? null,
       metadata: episode.metadata
     }));
-    const lotRows = snapshot.lots.map((lot) => ({
+    // Closed-lot detail is deterministic from canonical trades and contributes
+    // nothing to the next FIFO continuation. Persist only the compact open
+    // inventory working set; realized-lot audit detail belongs in the verified
+    // wallet-evidence archive and the episode scalar.
+    const lotRows = snapshot.lots.filter((lot) => lot.status !== "realized").map((lot) => ({
       id: lot.id,
       episode_id: lot.episodeId,
       source_event_idempotency_key: lot.sourceEventIdempotencyKey,
@@ -1121,7 +1125,7 @@ export class PostgresRepository
         );
       }
 
-      const incomingLotIds = snapshot.lots.map((lot) => lot.id);
+      const incomingLotIds = lotRows.map((lot) => lot.id);
       await client.query(
         `DELETE FROM wallet_position_lots AS lot
          USING wallet_position_episodes AS episode

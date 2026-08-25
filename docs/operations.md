@@ -463,6 +463,15 @@ one `MIN(range_start)`/`MAX(range_end)` window: on the populated host that plan 
 sorted the broad range, while the exact-day `LATERAL` plan located 500 rows in 906 ms under the
 five-second statement ceiling. Pre-archive metadata is deliberately skipped.
 
+Migration 050 adds the `wallet-evidence-daily-v1` archive source. The writer waits at least
+`ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS` (72 hours by default), counts trade/entry/outcome rows
+independently, streams one bounded zstd artifact, and stores exact per-type counts. The verifier
+must read the object back and validate Object Lock, SHA-256, byte count, line envelopes and all
+three type counts. Historical wallet catch-up never preempts a pending chain-payload segment.
+`archive_segment_generations` is append-only manifest history; do not delete generations or B2
+revisions. A verified wallet segment starts compact-shadow eligibility but does not enable source
+retirement.
+
 Docker image retention is project-scoped. After a verified deployment, run
 `scripts/deploy/prune-walletscaner-images.sh` first in its default report-only mode and then with
 `APPLY=true`, an explicit `KEEP_RELEASE_TAG` and one `KEEP_ROLLBACK_TAG`. It removes tags only from

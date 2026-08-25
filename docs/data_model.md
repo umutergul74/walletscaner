@@ -182,11 +182,20 @@ One wallet/token round-trip episode per strategy version. It records open/realiz
 
 ### `wallet_position_lots`
 
-Buy lots in FIFO order. Each row preserves original and remaining raw amount, cost, fee/slippage allocation, timestamps and state (`open`, `partially_realized`, `realized`, `transferred`).
+The hot FIFO continuation cache stores only non-realized buy lots. Each retained row preserves
+original and remaining raw amount, cost, fee/slippage allocation, timestamps and state (`open`,
+`partially_realized` or `transferred`). Realized-lot detail is deterministic from the canonical
+wallet trades and is retained in the independently restored wallet-evidence archive; its compact
+result remains on the scalar episode.
 
 The research scorer deterministically rebuilds the ledger from wallet trade evidence. Episode/lot materialization is a derived view and must be replay-idempotent: replacing the same strategy snapshot must produce the same row set and score hash.
 
 ## Wallet-alpha
+
+Migration 050 adds `wallet-evidence-daily-v1` cold artifacts over complete trade, entry and outcome
+rows. `archive_segment_generations` keeps the immutable manifest of every independently verified
+revision when late evidence invalidates the current day. These objects are recovery/research
+evidence, not executable fills and not permission to retire hot rows before compact-reader parity.
 
 - `wallet_entry_signals`: source-linked first wallet entry and risk/flow evidence.
 - `wallet_signal_outcomes`: mature/provisional/unresolved followability outcomes measured after bot observation.

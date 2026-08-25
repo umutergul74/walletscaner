@@ -78,6 +78,34 @@ working set:
    table keeps meaningful active statuses; stale `insufficient` state is reconstructible from the
    canonical queue/evidence and must have a bounded policy.
 
+### Implemented archive foundation (migration 050)
+
+Migration 050 implements the first rollout gate without retiring a source row:
+
+- the shared manifest accepts a separate `wallet-evidence` source with format
+  `wallet-evidence-daily-v1`;
+- one repeatable-read export contains the complete `wallet_trade_events`, `wallet_entry_signals`
+  and `wallet_signal_outcomes` rows for a settled UTC day;
+- an independent count for each of the three record types must equal the streamed and restored
+  count, in addition to the whole-file source SHA-256 and compressed-object SHA-256;
+- the verifier downloads the B2 object, checks Object Lock evidence, decompresses every line and
+  validates every envelope before marking the segment verified;
+- a correction to an exported day creates a new append-only revision. The manifest of every prior
+  verified revision remains in `archive_segment_generations`, so a correction cannot orphan or
+  overwrite the old full-fidelity object;
+- chain-payload work has claim priority over historical wallet-evidence catch-up. Both sources use
+  the same bounded 4% CPU archive container and one-file staging ceiling.
+
+This is **implemented**, not yet operational or retirement authority. Production must apply the
+migration, generate and independently restore wallet segments, and pass the compact/dual-read
+gates below. Until then, the 95-day detailed source retention stays unchanged.
+
+Derived FIFO storage now persists scalar episodes plus only non-realized lots. A realized lot is
+fully represented by the deterministic canonical trade archive and its episode scalar; keeping a
+second verbose realized-lot cache caused avoidable WAL and relation growth. The existing derived
+cache may be reclaimed only through its verified-backup/stopped-worker operation, after which it
+rebuilds in the smaller form.
+
 ## Populated-clone benchmark
 
 The verified 2026-08-15 production dump was serially restored into an isolated PostgreSQL 16
