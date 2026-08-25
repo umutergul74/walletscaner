@@ -66,7 +66,7 @@ services:
       - -c
       - log_lock_waits=on
     mem_limit: 256m
-    cpus: "0.18"
+    cpus: "0.21"
     cpu_shares: 256
     pids_limit: 128
     logging: *json-logging
@@ -198,7 +198,7 @@ services:
       NODE_OPTIONS: "--max-old-space-size=${WALLET_ALPHA_NODE_HEAP_MB:-112}"
       PGOPTIONS: "-c max_parallel_workers_per_gather=0"
     mem_limit: 160m
-    cpus: "0.07"
+    cpus: "0.10"
     depends_on:
       migrate:
         condition: service_completed_successfully

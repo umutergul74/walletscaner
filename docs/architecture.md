@@ -116,9 +116,12 @@ fresh post-restart WebSocket evidence. Transport-only recovery remains
   bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
   bind completion to the immutable newest signature captured when repair collection began. A
   separate `getSignatureStatuses(searchTransactionHistory=true)` call must return that exact slot
-  with successful `finalized` status; the mutable live cursor and advancing latest program head are
-  never repair proof. Only that stronger proof plus post-incident WebSocket evidence sets
-  `coverage_reconciled_at`; incomplete, capped or unresolved repair remains fail-closed.
+  with `finalized` status; the mutable live cursor and advancing latest program head are never
+  repair proof. Transaction success is not a boundary requirement: a finalized failed transaction
+  is an immutable ordered signature and replay classifies it as producing no discovery event. The
+  proof metadata retains whether that target transaction succeeded. Only exact slot/finality, full
+  replay and post-incident WebSocket evidence set `coverage_reconciled_at`; incomplete, capped or
+  unresolved repair remains fail-closed.
 
 The old bounded “top wallets become new subscriptions” loop is not part of the v2 production path. Wallet evidence is derived from transactions involving active pools, avoiding circular discovery based on wallets the scorer already knows.
 
@@ -222,16 +225,21 @@ valid only for the exact observed queue revision, so a concurrent evidence write
 one-wallet probe after claim. Revisions below both evidence floors are completed without a score,
 while their durable evidence is retained and later evidence requeues them. This keeps one-off
 traders out of the expensive scoring path without embedding evidence predicates in the ordered
-claim SQL or leasing a batch of wallets.
+claim SQL or leasing a batch of wallets. Admitted wallets then receive separate five-second,
+index-backed upper-bound probes for trades, entries and outcomes. The three relations no longer
+share one aggregate statement timeout, so normal I/O variance cannot repeatedly reject an otherwise
+bounded wallet; a timeout is reported with its exact relation and remains retryable.
 
 The queue has one revision-safe row per wallet and strategy, not duplicate hot/cold queues. Priority
 `2` is restricted to a source-linked, controlled-flow entry with known and passed critical token
-risk; priority `1` covers score-changing entries, sells and outcomes; priority `0` covers buys,
-price enrichment and historical materialization. A producer coalesces work by incrementing the
-revision and taking the greater priority. Completion resets priority only when no newer revision
-arrived during the lease. Claims always take the highest ready priority and remain FIFO within a
-lane. PostgreSQL `NOTIFY` wakes the same bounded worker for elevated work, but the durable queue and
-30/300-second fallback polls remain the recovery truth if a notification or listener is lost.
+risk whose latest persisted wallet status is `watch`, `candidate` or `validated-paper`; risk-passed
+entries from unqualified wallets remain priority `1`. Other score-changing entries, sells and
+outcomes also use priority `1`; priority `0` covers buys, price enrichment and historical
+materialization. A producer coalesces work by incrementing the revision and taking the greater
+priority. Completion resets priority only when no newer revision arrived during the lease. Claims
+always take the highest ready priority and remain FIFO within a lane. PostgreSQL `NOTIFY` wakes the
+same bounded worker for elevated work, but the durable queue and 30/300-second fallback polls remain
+the recovery truth if a notification or listener is lost.
 
 The optional `wallet-alpha-managed-v2` research path reuses the same canonical entries, trades and
 frozen outcomes, selects the managed `tp15-sl20-20m` followability series, and compares it with the

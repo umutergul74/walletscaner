@@ -213,8 +213,11 @@ metadata in `chain_event_inbox` plus the complete JSON in a daily
 dropped, any unresolved payload is copied to `chain_event_payload_holds`; pending, retrying and
 dead-letter work is therefore preserved while the high-volume partition files return to the
 filesystem. `price_observations` uses the same daily-drop model with a compact bounded idempotency
-key table. Maintenance is advisory-lock protected, bounded by row batches and a 30-second runtime,
-and must retain capacity above measured ingress.
+key table. Maintenance is advisory-lock protected, uses 250-row raw-payload compaction batches and
+a 45-second runtime ceiling, and must retain capacity above measured ingress. The smaller
+compaction batch was selected from the populated host after 500-row tail latency intermittently
+crossed the 7.5-second statement boundary and zeroed an otherwise healthy cycle; CPU and memory
+container ceilings remain unchanged.
 
 Partition maintenance checks `pg_inherits` before issuing DDL, so an already-attached daily
 partition is a catalog read rather than a repeated parent-table lock. If a payload partition is
@@ -282,16 +285,17 @@ After deployment, `evidence-sampler` was the sole writer and the live monitor re
 hour (216/hour in a later five-minute window). A 32 MB-heap recurring cycle deleted 60,000 old
 observations plus 10,000 processed inbox rows in 30 seconds. A separate one-batch canary deleted
 5,000 price rows, 5,000 processed inbox rows and 5,000 transient swaps, leaving each bounded stage
-above measured ingress. Within the shared 30-second row budget, expired three-day `swaps` run before
-processed inbox metadata. Both can remain continuously eligible, and placing inbox first caused
-swap retention to be starved by more than three hours. Do not reverse this order without a measured
-round-robin replacement. On 2026-07-16, removing only stopped stateless
+above measured ingress. Those July canaries used the original 30-second profile. Within the current
+shared 45-second row budget, expired three-day `swaps` still run before processed inbox metadata.
+Both can remain continuously eligible, and placing inbox first caused swap retention to be starved
+by more than three hours. Do not reverse this order without a measured round-robin replacement. On
+2026-07-16, removing only stopped stateless
 Walletscaner API/web images plus an older offsite-verified server dump moved host disk from 89% used
 with 7.5 GB free to 82.65% used with about 12 GB free. These are live containment measurements, not a
 long-term acceptance result. The seven-day shadow must still record hourly relation/filesystem
 growth, retention lag, WAL/backup headroom, autovacuum progress and co-tenant health.
 
-The 30-second setting bounds mutation scheduling rather than the entire process wall clock. The
+The 45-second setting bounds mutation scheduling rather than the entire process wall clock. The
 maintenance PostgreSQL connection allows at most 15 seconds for the initial read-only
 eligibility inventory and then lowers itself to a five-second mutation timeout. A timed-out pruning
 stage increments both `queryTimeoutCount` and its named `queryTimeoutsByStage` bucket, leaves earlier
@@ -318,7 +322,7 @@ backlog row already older than the three-day inbox-metadata horizon. The three-d
 metadata retirement, not whether its recoverable raw payload may first be compacted. Otherwise the
 monitor can correctly see an old raw row that the compactor has made permanently ineligible. The
 payload stage has its own bounded `MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS` (7.5 seconds by
-default) and may use up to 92% of the 30-second run only while work remains; other stages resume in
+default) and may use up to 92% of the 45-second run only while work remains; other stages resume in
 the same run when compaction finishes early. Do not increase its CPU/container ceilings to clear a
 backlog.
 
@@ -343,8 +347,10 @@ On this one-CPU host, wallet-alpha runs Node/tsx directly and sets
 `PGOPTIONS=-c max_parallel_workers_per_gather=0` only for its own database sessions. It leases one
 wallet at a time and defaults to 10,000 trade, 2,000 entry and 4,000 outcome rows per wallet plus a
 240-second cycle deadline. Crossing a row ceiling quarantines only that wallet for a long retry.
-Before materializing or sorting any one-wallet history, a five-second index-bounded upper-limit
-probe checks whether trades, entries or outcomes exceed their configured ceilings. An
+Before materializing or sorting any one-wallet history, three separate five-second index-bounded
+upper-limit probes check whether trades, entries or outcomes exceed their configured ceilings. A
+normal relation cannot consume the other two relations' statement budget, and any timeout reports
+its exact stage. An
 `evidence_limit` failure is persisted as an explicit quarantine class. Migration 047 preserves the
 future `not_before` quarantine when new score-changing or signal-lane evidence revises the same
 coalesced row, so a hot pathological wallet cannot cancel its own delay or be retried twice in one
@@ -359,14 +365,25 @@ completes only the claimed revision without materializing a ledger or score; can
 remains and a later write requeues the wallet. The ordered claim SQL itself remains evidence-free.
 A correlated evidence predicate inside that claim query caused a 56+ second production disk scan
 under backup I/O and is prohibited.
-Migration 043 adds three scheduling lanes without adding another process or duplicating queue rows.
-Risk-passed source entries are priority 2, sells/outcomes and other entry changes are priority 1,
-and background/historical changes are priority 0. Claims order by priority and then retry/age. An
+Migrations 043 and 048 add three scheduling lanes without adding another process or duplicating
+queue rows. Priority 2 is restricted to a controlled-flow, critical-risk-passed entry whose latest
+persisted wallet status is `watch`, `candidate` or `validated-paper`. Risk-passed entries from
+unqualified wallets, sells, outcomes and other score-changing entries are priority 1;
+background/historical changes are priority 0. Claims order by priority and then retry/age. An
 elevated commit wakes the worker; background bursts are intentionally coalesced until the fallback
 poll. The service still has one wallet in flight, a 112 MiB Node heap, a 160 MiB container ceiling
-and a 7% CPU ceiling. Operational acceptance requires `listener=listening`, bounded lane-specific
+and a 10% CPU ceiling. Operational acceptance requires `listener=listening`, bounded lane-specific
 oldest age, no growing failed count, and measured signal-lane enqueue-to-refresh latency; total
 pending alone is not an incident if the signal lane remains current and background drains.
+
+Cgroup evidence on the populated host showed wallet alpha throttled in 8,202 of 11,967 periods and
+PostgreSQL in 1,139,787 of 1,617,147 periods while the host remained about 71% idle. A restart-free
+quota canary raised only PostgreSQL from 18% to 21% and wallet alpha from 7% to 10%. Across its first
+two complete cycles, a comparable light cycle fell from 201.5 to 132.5 seconds and a heavy cycle
+completed 54 rather than 46 wallets inside the same 245-second ceiling; pending work moved 8,531 to
+8,495 despite concurrent ingress. These are hard ceilings rather than reservations, low CPU shares
+are unchanged, and aggregate Walletscaner limits remain below one CPU. Revert both values if a later
+one-hour queue slope is not negative.
 Telegram status combines pipeline freshness with the bounded operations report. It includes
 signal/score/background lane counts, oldest ready and signal-ready ages, non-quarantine failures,
 quarantined wallets, disk free space and raw-payload compaction lag. A missing/stale operational
@@ -377,7 +394,8 @@ The generated gate processes 99 normal wallets behind one 10,001-trade pathologi
 under 0.5 seconds at about 123.5 MiB RSS under the 112 MiB heap/160 MiB container boundaries. This
 does not replace a shared-host canary. The final shared-host bounded-probe cycle completed 26 queue
 revisions in 245.3 seconds under concurrent backup I/O: 12 scored, 14 low-evidence skips, no failures
-and 96.27 MiB RSS. Do not raise the heap or PostgreSQL CPU quota as a substitute.
+and 96.27 MiB RSS. Do not raise the heap or either accepted CPU ceiling without a new measured
+throttling and co-tenant-safe canary.
 
 Wallet outcome persistence is lifecycle-driven rather than poll-driven. The first provisional row
 is durable, repeated provisional calculations are no-ops, and the row is written again only when it
@@ -625,9 +643,12 @@ probe, restart, ACK, heartbeat, truncation, repair progress, last-signature and 
 evidence. Cumulative counters are monotonic across a supervised source restart. Transport recovery
 alone must say the gap is still unreconciled. A `coverage-reconciled` transition is permitted only
 after durable boundary reach, complete oldest-first replay, exact completion at the immutable staged
-target, an independent history-aware RPC result showing that target successful and `finalized`, and
-post-incident WebSocket evidence. Do not compare the repair target with the moving latest program
-head or live cursor; both may advance normally during a long repair.
+target, an independent history-aware RPC result showing that target at the exact slot is
+`finalized`, and post-incident WebSocket evidence. A finalized failed transaction remains a valid
+ordering boundary because complete replay has already classified it as producing no discovery
+event; record its success flag in proof metadata instead of leaving the incident open forever. Do
+not compare the repair target with the moving latest program head or live cursor; both may advance
+normally during a long repair.
 
 If `telegram-notifier` was stopped while incidents opened and recovered repeatedly, restart must
 not replay the whole historical transition stream. The notifier selects only the latest durable
@@ -879,6 +900,10 @@ activating an entire profile. Enabling a profile is an operational decision, not
   The job also requires free space at least equal to the newest dump plus
   `POSTGRES_BACKUP_MIN_FREE_BYTES` (2 GiB by default) before starting. New custom-format dumps must
   pass `pg_restore --list`; interrupted `.dump.tmp` files are cleaned only after six hours.
+  The recurring PostgreSQL 16 scheduler uses custom format with `--compress=zstd:1`,
+  `--no-owner` and `--no-acl`. Do not restore the former gzip level-6 profile: on the populated
+  constrained host it kept a full dump active for more than 100 minutes and competed with canonical
+  ingestion, alpha probes and retention I/O.
   Scheduled cycles measure the 24-hour interval from cycle start, so multi-hour dump generation no
   longer moves the next start later every day.
 - Perform a full isolated PostgreSQL 16 restore at least weekly and before deleting the last server

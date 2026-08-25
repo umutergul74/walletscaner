@@ -3,51 +3,57 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
-## 2026-08-25 pipeline/storage hardening release (pre-rollout)
+## 2026-08-25 pipeline/storage hardening release (R29/R30 rollout)
 
-- **Implemented locally / production rollout pending:** canonical claim no longer turns a transient
-  PostgreSQL deadlock/serialization/lock failure into an unhandled ingestion restart. The
-  single-statement lease is retried with bounded backoff and exposes safe SQLSTATE telemetry.
-- **Implemented locally / production rollout pending:** recurring partition maintenance performs a
-  catalog check for attached children and issues no DDL for existing partitions. A genuinely
-  missing payload partition uses the canonical inbox-to-payload lock order and short lock timeout;
-  a missing current partition fails closed.
-- **Implemented locally / production rollout pending:** migration 047 records an `evidence_limit`
-  wallet-alpha quarantine. New evidence revisions cannot shorten an active quarantine, and a cheap
-  index-bounded probe rejects an oversized wallet before full history materialization/sort/FIFO.
-- **Implemented locally / production rollout pending:** raw-payload compaction receives the majority
-  of the 30-second maintenance budget while its boundary is more than one hour late. Competing inbox
-  metadata retirement is deferred until the compaction boundary catches up. Every cycle writes a
-  bounded atomic maintenance report.
-- **Implemented locally / production rollout pending:** Telegram status reports alpha lane counts,
-  ready/error/quarantine state, oldest ready ages and the bounded operations/storage report. Missing
-  or stale operations evidence fails closed; database size policy remains owned by the configurable
-  operations monitor rather than a second hard-coded notifier threshold.
-- **Verification:** TypeScript, ESLint, production workspace build and 63 targeted unit/PostgreSQL 16
-  tests pass. The real PostgreSQL 16 gate includes the former partition/claim lock cycle and active
-  quarantine revision coalescing. The complete Windows suite previously passed 413 tests; its four
-  zstd-dependent cases require the exact Linux image gate before rollout.
-- **Recovery point:** dump `memecoin_alpha_20260824T150923Z.dump` is 1,692,713,492 bytes and has
-  SHA-256 `13e1fdeddef5f6ea90482e3d592aeaa45b280070de2c95f642fc3117215cd574`.
-  Server/local bytes, PostgreSQL 16 archive-list and off-site acknowledgement passed at
-  2026-08-25 09:13 UTC. No server/B2 object or canonical evidence was deleted.
+- **Operational — scoped release:** `solana-ingestion` runs immutable R30
+  `pipeline-storage-r30-20260825` from `039f1c5`; evidence sampler, wallet alpha, maintenance and
+  operations monitor run immutable R29 from `b3ab4c8`. Telegram remains on the compatible R23
+  notifier. Every recreated container has restart `0`, OOM `false` and its prior CPU/RAM ceiling.
+  PostgreSQL, Redis and Telegram identities remained unchanged during the scoped recreations.
+- **Validated — exact gate:** Node 24/Linux plus disposable PostgreSQL 16 passed 88/88 test files
+  and 426/426 tests. TypeScript, ESLint and the production workspace build pass. R30 additionally
+  proves that a finalized failed transaction is a valid immutable repair boundary while still
+  producing no discovery event; exact slot, full replay, finality and append-only proof gates remain.
+- **Operational — maintenance capacity:** the first normal R29 cycle compacted 6,750 archived raw
+  payloads in 43.726 seconds with zero timeout using 250-row batches and the unchanged 4% CPU/64 MiB
+  limit. Recent ingress measured 6,082 rows/hour versus about 13,500 rows/hour compaction capacity.
+  The 48-hour compaction boundary was still 11.05 hours late, so equilibrium is waiting rather than
+  claimed.
+- **Operational — bounded alpha processing:** R29 split the trades/entries/outcomes upper-bound
+  probes into separate indexed five-second statements. Observed cycles processed 72, 92 and 90
+  wallets with zero current-cycle failure; the last completed in 36.577 seconds. Migration 048 plus
+  the R29 producer reserve P2 only for latest watch/candidate/validated-paper wallets. The 207
+  legacy P2 rows were consumed/reclassified without deleting evidence and legacy P2 is zero.
+- **Operational canary — measured resource correction:** cgroup counters proved alpha and PostgreSQL
+  were quota-throttled while the host stayed about 71% idle. A restart-free 7%->10% alpha and
+  18%->21% PostgreSQL canary improved a comparable light cycle from 201.5 to 132.5 seconds and a
+  heavy cycle from 46 to 54 completed wallets; pending work moved 8,531 to 8,495 across those two
+  cycles. Container identities, memory ceilings, restart/OOM and low CPU shares did not change. A
+  negative one-hour slope is still required; otherwise revert the two CPU limits.
+- **Operational with excluded gaps — discovery:** R30 reconciled the completed Pump repair after
+  independent PublicNode and official-RPC checks proved its exact target finalized at slot
+  441,602,989; the target transaction failed and therefore emitted no pool event. Restart-created
+  PumpSwap/CPMM repairs remain bounded and their intervals stay alpha-excluded unless exact proof
+  commits. Current live transport, parser and finality are active with drop/pressure/parser/finality
+  errors zero; aggregate status remains degraded only while those durable incidents are open.
+- **Waiting — backup and storage validation:** dump `memecoin_alpha_20260825T150924Z.dump` is
+  2,053,352,363 bytes with SHA-256
+  `ba26a3c89fdb8dc671d92976659ae177a6d8f76be40a45b8b8f774bb54238160`; its sidecar and PostgreSQL
+  16 archive-list pass, but this generation is not yet off-site acknowledged. The scheduler now uses
+  zstd level 1 and blocks another generation until acknowledgement. Host headroom is about 16 GB.
 
-Production acceptance still requires the exact Linux/zstd gate, additive migration verification,
-targeted service recreation, a restart/OOM/co-tenant-safe ingestion/alpha canary and at least one
-normal recurring maintenance cycle whose compaction throughput exceeds measured ingress. Do not
-label this release operational before those observations pass.
+Do not call storage validated until compaction lag reaches zero and a clean post-catch-up 24-hour
+slope preserves the 8 GiB reserve. Do not call alpha validated: no watch-or-better signal or
+profitable chronological paper cohort has passed the documented gates.
 
 ## Last verified boundary
 
-- Observation: 2026-08-24 17:09 UTC, exact-finalized repair-proof rollout and live discovery
-  transport recovery on the shared host.
+- Observation: 2026-08-25 17:59 UTC, R30 repair-boundary canary on the shared host.
 - Live capital: `ENABLE_LIVE_EXECUTION=false`; paper v3 is paused with zero open positions and v4
   remains a non-deliverable causal shadow.
-- Releases: `solana-ingestion` runs immutable `discovery-coverage-proof-r22-20260824` (runtime
-  revision `2666a81`, source SHA-256 `13413cee1b9f...`). `telegram-notifier` and
-  `data-maintenance` run the compatible R18 tree; `evidence-sampler` and `wallet-alpha` remain on
-  immutable `wallet-alpha-priority-r13-20260824`; operations remains R9. API, web and paper-alert
-  remain stopped. Migrations 044-046 are deployed after migration 043.
+- Releases: ingestion R30; sampler/alpha/maintenance/operations R29; Telegram R23. PostgreSQL 16,
+  Redis 7 and the archive schedulers remain active. API, web, paper-alert and legacy research remain
+  stopped. Migrations through 048 are deployed.
 - Shared-host state: one Walletscaner Compose project was listed; no protected co-tenant service,
   secret or runtime was inspected or changed.
 
