@@ -291,7 +291,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
-    image: walletscaner-worker:local
+    image: ${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}
     profiles: ["archive"]
     command: ["node", "--import", "tsx", "scripts/archive/archive-writer.ts"]
     restart: "no"
@@ -342,7 +342,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
-    image: walletscaner-worker:local
+    image: ${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}
     profiles: ["archive"]
     command: ["node", "--import", "tsx", "scripts/archive/archive-verifier.ts"]
     restart: "no"

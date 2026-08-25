@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:02:00Z
+updated_at_utc: 2026-08-25T21:10:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: compact shadow committed as 0f12784 with exact image/tests; production unchanged
+last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
 ---
 
 # Walletscaner Work In Progress
@@ -155,3 +155,39 @@ blindly repeat the last mutation.
   artifact and correction revision that preserved generation 1.
 - Production has not received migration 050 or this image. Next safe step is a coherent commit,
   then exact Linux-image tests and populated-clone export sizing before any deploy.
+
+## Resume audit and production preflight at 2026-08-25 21:10 UTC
+
+- The interruption record, Git state and production state were compared before any repeat. Local
+  HEAD was `ad6b0f4`; only the pre-existing untracked
+  `deploy/.tmp-pipeline-storage-r28-2dc66ab.tar817264887` remained. Production is not a Git
+  worktree, still records migrations only through 049 and has neither
+  `archive_segment_generations` nor `wallet_evidence_compact_days`. No R34 artifact, migration or
+  materializer had been partially applied.
+- The shared host had 18,733,531,136 bytes free (75% used), about 1.078 GB available memory and
+  2.012 GB free swap. One `walletscaner` Compose project with 11 running services was listed. No
+  protected co-tenant process, file, secret or service was changed or inspected.
+- PostgreSQL was 16,394,984,471 bytes. The newest server dump remained
+  `memecoin_alpha_20260825T150924Z.dump` at 2,053,352,363 bytes with checksum sidecar and previously
+  verified off-site acknowledgement. Wallet B2 segments remain absent; the 24 existing verified
+  segments are all `chain-event-payloads`.
+- Current rollback identities remain ingestion R30, operations/research R29, Telegram R23 and the
+  existing archive image ID beginning `f9635002b9b8`. Live execution was previously and currently
+  intended false; recheck the selected container value immediately before the first server
+  mutation without printing any full environment.
+- The resume audit caught a deployment-source defect before rollout: the archive writer/verifier
+  anchors still selected `walletscaner-worker:local`, so changing `WALLETSCANER_OPERATIONS_IMAGE`
+  would not have activated the reviewed wallet archive code. Both anchors now select the immutable
+  operations image, covered by `scripts/archive/archive-scheduler-compose.test.ts`. The focused test,
+  typecheck and ESLint pass. Local Compose renders successfully.
+- Reviewed local artifact remains
+  `walletscaner-worker@sha256:178566f7955762dbfdd6b9c2e4a0269e9b6b1004f6725c5d43c93f579504ba4f`.
+  Local SHA-256 values: Compose
+  `e47d91862243e63ff6999b6059aa949a9e40e54d1779b01e2b535538d727a0bb`, migration 050
+  `fa0e8372ae65cf39e83fc1f7c92c9608bffd4b3531eb6e2ce3ffbd21d4e96886`, migration 051
+  `bceaa2f4493f4791f1125c6a74074c86184fa150d2d2c4de7069fd7f838ab856` and guarded image updater
+  `5cc7456847993197d3b291e29799c9936101134850f564e8d2570081b2ee359b`.
+- Next exact action: commit the immutable-image routing correction, export/tag/hash the already
+  tested R34 image, stage every artifact under a `.partial` name, verify local/server hashes and
+  atomically rename. Loading/staging is not activation. Before migration, refresh backup, free
+  disk, selected live-execution value, service identities and migration level once more.
