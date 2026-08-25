@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:44:00Z
+updated_at_utc: 2026-08-25T22:20:46Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
+last_safe_checkpoint: R34 storage shadow operational; derived cache reclaimed; artifact cleanup completed at server ledger revision 8
 ---
 
 # Walletscaner Work In Progress
@@ -506,3 +506,13 @@ blindly repeat the last mutation.
   open `storage-shadow-observation=in_progress` revision 9. The observation phase must track archive
   catch-up/restore parity, compact mismatch, rebuild backlog, DB/disk slope and 8 GiB reserve over a
   clean 24 hours and seven future days. It must not authorize canonical retirement by itself.
+- Server runtime and cleanup state were refreshed before closing the phase: all 12 Walletscaner
+  services are running with restart 0/OOM false; selected services report live execution false;
+  both exact transfer paths remain absent and R34/R35 image IDs remain loaded. Current free disk at
+  that sample was 18,644,029,440 bytes.
+- Machine ledger revision 8 records `release-artifact-cleanup=completed`, SHA-256
+  `469dae1c1893c45c3ece1d022c3b9fb4d77ab72bb0f63d2aa84b2fc04b4c5440`.
+- Next exact action: dry-run and open revision 9 as
+  `storage-shadow-observation=in_progress`. Its evidence must state that canonical retirement is
+  disabled and that only one wallet archive day is currently verified. Do not treat starting the
+  clock as validation.
