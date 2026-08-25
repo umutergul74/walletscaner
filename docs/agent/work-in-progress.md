@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:29:00Z
+updated_at_utc: 2026-08-25T21:33:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -247,3 +247,12 @@ blindly repeat the last mutation.
   preserved pre-rollout file state; do not overwrite the whole secret-bearing env file from an
   unverified copy. Next exact action is rendered Compose verification followed by named service
   recreates, one checkpoint at a time.
+- Rendered Compose selected R34 exactly once for each of archive writer/verifier, compact
+  materializer, operations monitor and wallet alpha. The archive writer was the first and only
+  recreated service at this checkpoint. Container ID begins `1783bc88b4db`; image ID is the exact
+  R34 SHA, state is running, restart 0, OOM false, memory 128 MiB, CPU 0.04 and live execution
+  false. The old writer container ID began `cdacea4a580c` and old archive image ID began
+  `f9635002b9b8`.
+- Next exact action: allow a brief bounded writer observation and verify its manifest/log/resource
+  state. Then recreate verifier, materializer, operations monitor and wallet alpha individually,
+  checking each identity and hard limit before continuing.
