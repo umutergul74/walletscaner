@@ -1286,6 +1286,11 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(report.mode).toBe("observe-only");
     expect(report.livePaperSignals).toEqual([]);
     expect(await repository.listWalletTradeEvents("LedgerWallet111")).toHaveLength(2);
+    expect(
+      (await repository.listWalletTradeEventsForWallets(["LedgerWallet111"], "evidence-v1")).map(
+        (trade) => trade.idempotencyKey
+      )
+    ).toEqual(["ledger-buy", "ledger-sell"]);
   });
 
   it("admits only evidence-mature wallets to production alpha claims", async () => {

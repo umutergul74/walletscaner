@@ -2570,6 +2570,18 @@ export class PostgresRepository
     maxRows?: number
   ): Promise<WalletTradeEvidence[]> {
     if (walletAddresses.length === 0) return [];
+    if (walletAddresses.length === 1) {
+      const result = await this.pool.query(
+        `SELECT * FROM wallet_trade_events
+         WHERE wallet_address = $1
+           AND strategy_version = $2
+           AND ($3::timestamptz IS NULL OR observed_at >= $3)
+         ORDER BY observed_at, slot, idempotency_key
+         LIMIT $4`,
+        [walletAddresses[0], strategyVersion, minObservedAt ?? null, maxRows ?? null]
+      );
+      return result.rows.map((row) => rowToWalletTradeEvent(row));
+    }
     const result = await this.pool.query(
       `SELECT * FROM wallet_trade_events
        WHERE wallet_address = ANY($1::text[])

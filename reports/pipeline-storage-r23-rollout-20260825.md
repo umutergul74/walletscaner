@@ -19,7 +19,7 @@
 
 ## Current phase
 
-- Status: `r24-canary-rejected-r25-candidate-first-hotfix-required`
+- Status: `r25-storage-accepted-r26-alpha-query-canary-required`
 - Completed: local gates; exact Linux zstd/PostgreSQL 16 gate; production backup, disk, migration,
   invalid-index, resource and co-tenant-safe preflight; resumable image transfer; remote SHA/image
   label verification.
@@ -40,21 +40,31 @@ Production `EXPLAIN ANALYZE` then isolated the remaining bottleneck: the query w
 and broad `received_at` ranges before reaching the oldest uncompacted row. The R25 candidate-first
 query walks `idx_chain_event_inbox_prehashed_compaction` in canonical age order, bounds the batch at
 500 and checks verified/locked archive coverage per candidate. Its read-only production plan
-selected 500 rows in 6.541 milliseconds. Storage capacity remains unaccepted until the exact R25
-image passes a mutating canary and a normal recurring cycle advances the oldest boundary above
-measured ingress.
+selected 500 rows in 6.541 milliseconds. The exact R25 image passed both its one-shot and normal
+recurring production cycles: each compacted 8,000 archive-covered payloads with zero timeout. The
+oldest uncompacted boundary advanced `2026-08-22T06:41:18.999Z -> 07:45:13.251Z -> 10:39:17.344Z`.
+At the 30-minute production interval this is 16,000 rows/hour, above the measured peak ingress.
+Only the operations selector and `data-maintenance`/`operations-monitor` were moved to R25; the
+ingestion, research and notifier services remained on identical R23 application code and were not
+restarted. Three exact temporary transfer tar files were removed after both R23 rollback and R25
+images were reverified, increasing disk headroom to approximately 18.99 GB. No canonical/B2/backup
+data or Docker image was removed.
+
+The post-storage SQL delta identified the remaining research bottleneck as the one-wallet trade
+loader: passing a one-element `ANY(text[])` forced an external sort despite the existing
+`(strategy_version, wallet_address, observed_at)` index. The R26 research-only change uses scalar
+wallet equality for one-wallet rebuilds, allowing the existing index plus bounded incremental sort;
+multi-wallet research semantics remain unchanged and no additional production index/disk is needed.
 
 ## Next safe command group
 
-1. Pass type/lint/tests and exact Linux image gates for the R25 candidate-first hotfix.
-2. Transfer and SHA-verify the immutable R25 image; no migration is required.
-3. Run an R25 one-shot canary without changing the persistent R23 image selectors.
-4. If accepted, atomically update only the operations image selector to exact R25 and recreate
-   `data-maintenance` plus `operations-monitor`; keep ingestion/research/notifier on identical R23
-   application code to avoid an unnecessary discovery restart.
-5. Run one advisory-lock-protected normal cycle and prove the
-   oldest uncompacted boundary advances with rows/hour above peak ingress.
-6. Finish restart/OOM/discovery/queue/resource and disk-headroom verification.
+1. Build and pass the exact Linux/PostgreSQL gate for R26.
+2. Transfer and SHA-verify the immutable R26 image; no migration is required.
+3. Atomically update only `WALLETSCANER_RESEARCH_IMAGE` from exact R23 to exact R26.
+4. Recreate only `wallet-alpha`; verify durable queue recovery, signal-lane latency, restart/OOM,
+   RSS/CPU and the `pg_stat_statements` delta. Do not restart ingestion or notifier.
+5. Record final discovery-repair progress, background research-lane slope, compaction catch-up and
+   disk headroom. Historical excluded intervals stay fail closed until proven repair.
 
 Do not use Compose `down`, a host build, a global prune, a volume command or a B2 delete/lifecycle
 action for this rollout.
