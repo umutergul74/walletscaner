@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:28:00Z
+updated_at_utc: 2026-08-25T22:31:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -460,3 +460,11 @@ blindly repeat the last mutation.
   machine-ledger phase from revision 4 back to `in_progress` revision 5 with `retry-image=R35`, then
   rerun the same stop/trap/restart sequence while overriding only the one-shot reclaim image to
   R35. Do not change operations/research env selectors during this retry.
+- R35 internal core/CLI SHA-256 values match local exactly (`c3224a2b...` and `690b7a9b...`). The
+  server machine ledger is revision 5, `derived-cache-reclaim=in_progress`, SHA-256
+  `6f8e7e391ee9edd69ca9345e2e3622924813a7849e3eecff0d6ea1789d24fd9b`, explicitly naming the R35
+  retry image and bounded preflight fix.
+- Next exact action is the guarded retry described above. If it errors, prove transaction rollback
+  and alpha restart, mark revision 6 failed and stop. If it succeeds, prove canonical counts remain,
+  derived relations are empty immediately after commit, filesystem space returned and alpha R34
+  restarted before marking revision 6 completed.
