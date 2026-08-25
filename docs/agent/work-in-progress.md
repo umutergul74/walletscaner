@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:25:00Z
+updated_at_utc: 2026-08-25T22:28:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -451,3 +451,12 @@ blindly repeat the last mutation.
 - Next exact action: atomically rename the verified artifact, load it at low CPU/I/O priority and
   prove the server tag resolves to exact image ID `sha256:621489...14cfc`. Preserve both the
   artifact and R34 rollback image until the guarded retry completes.
+- The verified artifact was atomically renamed and loaded at low CPU/I/O priority. Server tag
+  `walletscaner-worker:storage-r35-20260826` resolves exactly to
+  `sha256:621489c53b9114d6edcf85b32e0040e32195d6c9538da43f3b49262995814cfc`. Free disk is
+  16,303,284,224 bytes after loading. R34 remains active for normal services and retained for
+  rollback; R35 is not activated globally.
+- Next exact action: verify the reclaim core/script hashes inside server R35, transition the failed
+  machine-ledger phase from revision 4 back to `in_progress` revision 5 with `retry-image=R35`, then
+  rerun the same stop/trap/restart sequence while overriding only the one-shot reclaim image to
+  R35. Do not change operations/research env selectors during this retry.
