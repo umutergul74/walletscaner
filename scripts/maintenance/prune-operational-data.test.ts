@@ -16,21 +16,26 @@ const postgresRepositoryPath = new URL(
 );
 
 describe("operational maintenance SQL contract", () => {
-  it("selects one verified archive day before claiming a bounded payload batch", async () => {
+  it("claims the oldest bounded prehashed batch and verifies archive coverage per row", async () => {
     const source = await readFile(scriptPath, "utf8");
     const compaction = source.slice(
       source.indexOf("compactedChainEventPayloads = await pruneInBatches("),
       source.indexOf("deletedRejectedWalletOutcomes = await pruneInBatches(")
     );
 
-    expect(compaction).toContain("WITH eligible_archive AS MATERIALIZED");
-    expect(compaction).toContain("CROSS JOIN LATERAL");
-    expect(compaction).toContain("ORDER BY archive.range_start");
-    expect(compaction).toContain("LIMIT 1");
+    expect(compaction).toContain("WITH candidates AS MATERIALIZED");
+    expect(compaction).toContain("FROM chain_event_inbox AS target");
+    expect(compaction).toContain("AND EXISTS (");
+    expect(compaction).toContain("FROM archive_segments AS archive");
+    expect(compaction).toContain(
+      "ORDER BY COALESCE(target.processed_at, target.received_at),\n                    target.idempotency_key"
+    );
+    expect(compaction).toContain("LIMIT $2");
+    expect(compaction).toContain("FOR UPDATE OF target SKIP LOCKED");
     expect(compaction).toContain("NOW() + make_interval(days => $3::integer)");
-    expect(compaction).not.toContain("archive.range_end >");
-    expect(compaction).not.toContain("COALESCE(candidate.processed_at, candidate.received_at) >=");
     expect(compaction).not.toContain("COALESCE(target.processed_at, target.received_at) >=");
+    expect(compaction).not.toContain("WITH eligible_archive AS MATERIALIZED");
+    expect(compaction).not.toContain("CROSS JOIN LATERAL");
   });
 
   it("carries the canonical receive time into both payload deletes", async () => {
@@ -44,7 +49,7 @@ describe("operational maintenance SQL contract", () => {
     expect(
       compaction.match(/payload\.event_idempotency_key = candidates\.idempotency_key/g)
     ).toHaveLength(2);
-    expect(compaction).toContain("candidate.received_at, candidate.payload_sha256");
+    expect(compaction).toContain("target.received_at, target.payload_sha256");
   });
 
   it("attributes bounded statement timeouts to the failing maintenance stage", async () => {

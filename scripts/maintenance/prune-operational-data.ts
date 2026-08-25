@@ -387,52 +387,32 @@ try {
         ]);
         try {
           compactedChainEventPayloads = await pruneInBatches(
-            `WITH eligible_archive AS MATERIALIZED (
-           SELECT archive.range_start, archive.range_end
-           FROM archive_segments AS archive
-           WHERE archive.source_kind = 'chain-event-payloads'
-             AND archive.status = 'verified'
-             AND archive.object_lock_evidence IN (
-               'api-verified', 'attested-default-policy'
-             )
-             AND archive.retain_until >
-                 NOW() + make_interval(days => $3::integer)
-             AND archive.range_start <
+            `WITH candidates AS MATERIALIZED (
+           SELECT target.ctid, target.idempotency_key,
+                  target.received_at, target.payload_sha256
+           FROM chain_event_inbox AS target
+           WHERE target.status = 'processed'
+             AND target.payload_compacted_at IS NULL
+             AND target.payload_sha256 IS NOT NULL
+             AND COALESCE(target.processed_at, target.received_at) <
                  NOW() - make_interval(hours => $1::integer)
              AND EXISTS (
                SELECT 1
-               FROM chain_event_inbox AS candidate
-               WHERE candidate.status = 'processed'
-                 AND candidate.payload_compacted_at IS NULL
-                 AND candidate.payload_sha256 IS NOT NULL
-                 AND candidate.received_at >= archive.range_start
-                 AND candidate.received_at < archive.range_end
-                 AND COALESCE(candidate.processed_at, candidate.received_at) <
-                     NOW() - make_interval(hours => $1::integer)
+               FROM archive_segments AS archive
+               WHERE archive.source_kind = 'chain-event-payloads'
+                 AND archive.status = 'verified'
+                 AND archive.object_lock_evidence IN (
+                   'api-verified', 'attested-default-policy'
+                 )
+                 AND archive.retain_until >
+                     NOW() + make_interval(days => $3::integer)
+                 AND target.received_at >= archive.range_start
+                 AND target.received_at < archive.range_end
              )
-           ORDER BY archive.range_start
-           LIMIT 1
-         ), candidates AS MATERIALIZED (
-           SELECT candidate.ctid, candidate.idempotency_key,
-                  candidate.received_at, candidate.payload_sha256
-           FROM eligible_archive AS archive
-           CROSS JOIN LATERAL (
-             SELECT target.ctid, target.idempotency_key,
-                    target.received_at, target.payload_sha256,
-                    target.processed_at
-             FROM chain_event_inbox AS target
-             WHERE target.status = 'processed'
-               AND target.payload_compacted_at IS NULL
-               AND target.payload_sha256 IS NOT NULL
-               AND target.received_at >= archive.range_start
-               AND target.received_at < archive.range_end
-               AND COALESCE(target.processed_at, target.received_at) <
-                   NOW() - make_interval(hours => $1::integer)
-             ORDER BY COALESCE(target.processed_at, target.received_at),
-                      target.idempotency_key
-             LIMIT $2
-             FOR UPDATE OF target SKIP LOCKED
-           ) AS candidate
+           ORDER BY COALESCE(target.processed_at, target.received_at),
+                    target.idempotency_key
+           LIMIT $2
+           FOR UPDATE OF target SKIP LOCKED
          ), retired_hot_payload AS (
            DELETE FROM chain_event_payloads AS payload
            USING candidates

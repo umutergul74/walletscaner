@@ -19,7 +19,7 @@
 
 ## Current phase
 
-- Status: `r23-canary-partial-r24-compaction-hotfix-required`
+- Status: `r24-canary-rejected-r25-candidate-first-hotfix-required`
 - Completed: local gates; exact Linux zstd/PostgreSQL 16 gate; production backup, disk, migration,
   invalid-index, resource and co-tenant-safe preflight; resumable image transfer; remote SHA/image
   label verification.
@@ -31,18 +31,30 @@ unchanged resource limits. Wallet-alpha P2 moved `252 -> 178 -> 1`; the remainin
 failure. The first normal maintenance cycle compacted 2,500 payloads in 23.587 seconds, then its
 sixth batch hit the five-second statement timeout. Live inspection proved that its three-day lower
 bound excluded the monitor's oldest verified/recoverable uncompacted row. R23 remains operationally
-safe, but storage capacity is not accepted until R24 removes that contradictory lower bound and a
-normal/one-shot canary advances the oldest boundary above measured ingress.
+safe. R24 removed that contradictory lower bound, passed its exact-image test gate and was loaded
+on the host without changing the running image selectors. Its advisory-lock-protected one-shot
+canary completed in 11.906 seconds but compacted zero rows because the first archive/day-first query
+hit the dedicated 7.5-second statement timeout. No source row was retired by that failed stage.
+
+Production `EXPLAIN ANALYZE` then isolated the remaining bottleneck: the query walked archive days
+and broad `received_at` ranges before reaching the oldest uncompacted row. The R25 candidate-first
+query walks `idx_chain_event_inbox_prehashed_compaction` in canonical age order, bounds the batch at
+500 and checks verified/locked archive coverage per candidate. Its read-only production plan
+selected 500 rows in 6.541 milliseconds. Storage capacity remains unaccepted until the exact R25
+image passes a mutating canary and a normal recurring cycle advances the oldest boundary above
+measured ingress.
 
 ## Next safe command group
 
-1. Pass type/lint/tests and exact Linux image gates for the R24 compaction-only hotfix.
-2. Transfer and SHA-verify the immutable R24 image; no migration is required.
-3. Atomically update the same four guarded image keys from exact R23 to exact R24.
-4. Recreate only `data-maintenance`; run one advisory-lock-protected normal cycle and prove the
+1. Pass type/lint/tests and exact Linux image gates for the R25 candidate-first hotfix.
+2. Transfer and SHA-verify the immutable R25 image; no migration is required.
+3. Run an R25 one-shot canary without changing the persistent R23 image selectors.
+4. If accepted, atomically update only the operations image selector to exact R25 and recreate
+   `data-maintenance` plus `operations-monitor`; keep ingestion/research/notifier on identical R23
+   application code to avoid an unnecessary discovery restart.
+5. Run one advisory-lock-protected normal cycle and prove the
    oldest uncompacted boundary advances with rows/hour above peak ingress.
-5. Recreate the remaining five R24 services only after the maintenance canary passes, then finish
-   the 15-minute restart/OOM/discovery/queue/resource canary.
+6. Finish restart/OOM/discovery/queue/resource and disk-headroom verification.
 
 Do not use Compose `down`, a host build, a global prune, a volume command or a B2 delete/lifecycle
 action for this rollout.
