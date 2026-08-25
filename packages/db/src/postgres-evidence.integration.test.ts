@@ -24,6 +24,28 @@ import { TelegramNotificationStore } from "./telegram-notification-store";
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integrationDescribe = databaseUrl ? describe : describe.skip;
 
+function qualifiedIntegrationScore(
+  walletAddress: string,
+  strategyVersion: string
+): WalletAlphaScoreSnapshot {
+  return {
+    chain: "solana",
+    walletAddress,
+    strategyVersion,
+    calculatedAt: new Date(Date.now() - 1_000).toISOString(),
+    status: "watch",
+    profitabilityScore: 70,
+    followabilityScore: 70,
+    overallScore: 70,
+    completedPositions: 10,
+    uniqueTokens: 10,
+    activeDays: 5,
+    metrics: {} as WalletAlphaScoreSnapshot["metrics"],
+    gates: { observed: true, watch: true, candidate: false, validatedPaper: false },
+    reasons: ["integration-qualified"]
+  };
+}
+
 integrationDescribe("PostgreSQL evidence pipeline", () => {
   const adminPool = new pg.Pool({ connectionString: databaseUrl });
   const schema = `evidence_test_${Date.now()}`;
@@ -1381,6 +1403,9 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
       strategyVersion,
       raw: {}
     });
+    await repository.saveWalletAlphaScore(
+      qualifiedIntegrationScore("PrioritySafeWallet", strategyVersion)
+    );
     await repository.saveWalletEntrySignal({
       idempotencyKey: "priority-safe-entry",
       chain: "solana",
@@ -1457,7 +1482,132 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     });
   });
 
+  it("keeps a risk-passed entry from an unqualified wallet out of the signal lane", async () => {
+    const strategyVersion = "priority-unqualified-integration-v1";
+    await repository.saveWalletAlphaScore({
+      ...qualifiedIntegrationScore("PriorityObservedWallet", strategyVersion),
+      status: "observed",
+      gates: { observed: true, watch: false, candidate: false, validatedPaper: false }
+    });
+    await repository.saveWalletEntrySignal({
+      idempotencyKey: "priority-observed-entry",
+      chain: "solana",
+      walletAddress: "PriorityObservedWallet",
+      tokenAddress: "PriorityObservedMint",
+      poolAddress: "PriorityObservedPool",
+      sourceSwapIdempotencyKey: "priority-observed-swap",
+      observedEntryPriceUsd: 1,
+      observedLiquidityUsd: 25_000,
+      cohort: "controlled-flow-control",
+      repeatWalletCount: 1,
+      flowEvidence: {
+        controlledFlow: true,
+        tokenRiskKnown: true,
+        tokenRiskPassed: true
+      },
+      signature: "priority-observed-signature",
+      slot: 10_004,
+      provider: "integration-test",
+      observedAt: new Date().toISOString(),
+      strategyVersion
+    });
+
+    const work = await testPool.query<{ priority: number; priority_reason: string }>(
+      `SELECT priority, priority_reason
+       FROM wallet_alpha_work_queue
+       WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+      ["PriorityObservedWallet", strategyVersion]
+    );
+    expect(work.rows).toEqual([
+      {
+        priority: 1,
+        priority_reason: "risk-passed-unqualified-wallet-entry"
+      }
+    ]);
+  });
+
+  it("reclassifies legacy P2 rows from the latest wallet status without changing revisions", async () => {
+    const strategyVersion = "priority-migration-integration-v1";
+    await repository.saveWalletAlphaScore(
+      qualifiedIntegrationScore("PriorityMigrationQualified", strategyVersion)
+    );
+    await repository.saveWalletAlphaScore({
+      ...qualifiedIntegrationScore("PriorityMigrationObserved", strategyVersion),
+      status: "observed",
+      gates: { observed: true, watch: false, candidate: false, validatedPaper: false }
+    });
+    await testPool.query(
+      `INSERT INTO wallet_alpha_work_queue (
+         chain, wallet_address, strategy_version, revision, completed_revision,
+         priority, priority_reason, pending_since
+       ) VALUES
+         ('solana', 'PriorityMigrationQualified', $1, 7, 3, 2,
+          'risk-passed-source-entry', NOW()),
+         ('solana', 'PriorityMigrationObserved', $1, 9, 4, 2,
+          'risk-passed-source-entry', NOW()),
+         ('solana', 'PriorityMigrationNew', $1, 11, 5, 2,
+          'risk-passed-source-entry', NOW())`,
+      [strategyVersion]
+    );
+
+    const migration = await readFile(
+      "scripts/migrations/048_wallet_alpha_qualified_signal_lane.sql",
+      "utf8"
+    );
+    const migrationClient = await testPool.connect();
+    try {
+      await migrationClient.query("BEGIN");
+      await migrationClient.query(migration);
+      await migrationClient.query("COMMIT");
+    } catch (error) {
+      await migrationClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      migrationClient.release();
+    }
+
+    const rows = await testPool.query<{
+      wallet_address: string;
+      revision: string;
+      completed_revision: string;
+      priority: number;
+      priority_reason: string;
+    }>(
+      `SELECT wallet_address, revision, completed_revision, priority, priority_reason
+       FROM wallet_alpha_work_queue
+       WHERE strategy_version = $1
+       ORDER BY wallet_address`,
+      [strategyVersion]
+    );
+    expect(rows.rows).toEqual([
+      {
+        wallet_address: "PriorityMigrationNew",
+        revision: "11",
+        completed_revision: "5",
+        priority: 1,
+        priority_reason: "risk-passed-unqualified-wallet-entry"
+      },
+      {
+        wallet_address: "PriorityMigrationObserved",
+        revision: "9",
+        completed_revision: "4",
+        priority: 1,
+        priority_reason: "risk-passed-unqualified-wallet-entry"
+      },
+      {
+        wallet_address: "PriorityMigrationQualified",
+        revision: "7",
+        completed_revision: "3",
+        priority: 2,
+        priority_reason: "risk-passed-qualified-wallet-entry"
+      }
+    ]);
+  });
+
   it("emits a transaction-bound wake hint for signal-relevant work", async () => {
+    await repository.saveWalletAlphaScore(
+      qualifiedIntegrationScore("PriorityNotifyWallet", "priority-notify-v1")
+    );
     const listener = await testPool.connect();
     await listener.query("LISTEN wallet_alpha_work");
     const notification = new Promise<string>((resolve, reject) => {

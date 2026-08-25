@@ -489,22 +489,28 @@ export interface WalletAlphaWorkClassification {
 }
 
 /**
- * Keep the latency lane fail closed: only a source-linked, controlled-flow entry
- * whose critical token-risk evidence is both known and passed may enter it.
- * Everything else is still durable, but remains in the elevated research lane.
+ * Keep the latency lane fail closed. A risk-passed entry is signal-relevant only
+ * when the wallet's latest persisted score is already eligible to emit a paper
+ * signal. New/unqualified wallets remain durable in the research lane so wallet
+ * discovery cannot crowd out an actual qualified-wallet entry.
  */
 export function classifyWalletAlphaEntryWork(
-  signal: WalletEntrySignalEvidence
+  signal: WalletEntrySignalEvidence,
+  currentWalletStatus?: WalletAlphaScoreSnapshot["status"]
 ): WalletAlphaWorkClassification {
-  const isSignalRelevant =
+  const riskPassed =
     Boolean(signal.sourceSwapIdempotencyKey?.trim()) &&
     signal.cohort !== "excluded-uncontrolled-flow" &&
     signal.flowEvidence.controlledFlow === true &&
     signal.flowEvidence.tokenRiskKnown === true &&
     signal.flowEvidence.tokenRiskPassed === true;
-  return isSignalRelevant
-    ? { priority: 2, reason: "risk-passed-source-entry" }
-    : { priority: 1, reason: "entry-evidence" };
+  if (!riskPassed) return { priority: 1, reason: "entry-evidence" };
+
+  return currentWalletStatus === "watch" ||
+    currentWalletStatus === "candidate" ||
+    currentWalletStatus === "validated-paper"
+    ? { priority: 2, reason: "risk-passed-qualified-wallet-entry" }
+    : { priority: 1, reason: "risk-passed-unqualified-wallet-entry" };
 }
 
 /** Read-only queue identity used to prefetch bounded admission evidence before leasing work. */

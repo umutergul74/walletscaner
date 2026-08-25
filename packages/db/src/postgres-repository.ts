@@ -2074,7 +2074,8 @@ export class PostgresRepository
   }
 
   async saveWalletEntrySignal(signal: WalletEntrySignalEvidence): Promise<boolean> {
-    const work = classifyWalletAlphaEntryWork(signal);
+    const unqualifiedWork = classifyWalletAlphaEntryWork(signal);
+    const qualifiedWork = classifyWalletAlphaEntryWork(signal, "watch");
     const result = await this.pool.query(
       `WITH stale_exploratory_entry AS (
         SELECT idempotency_key
@@ -2114,15 +2115,38 @@ export class PostgresRepository
       WHERE wallet_entry_signals.source_swap_idempotency_key IS NULL
         AND EXCLUDED.source_swap_idempotency_key IS NOT NULL
       RETURNING chain, wallet_address, strategy_version
+      ), classified AS MATERIALIZED (
+        SELECT
+          changed.*,
+          CASE
+            WHEN latest_score.status IN ('watch', 'candidate', 'validated-paper')
+              THEN $17::smallint
+            ELSE $19::smallint
+          END AS work_priority,
+          CASE
+            WHEN latest_score.status IN ('watch', 'candidate', 'validated-paper')
+              THEN $18::text
+            ELSE $20::text
+          END AS work_reason
+        FROM changed
+        LEFT JOIN LATERAL (
+          SELECT score.status
+          FROM wallet_alpha_scores score
+          WHERE score.chain = changed.chain
+            AND score.wallet_address = changed.wallet_address
+            AND score.strategy_version = changed.strategy_version
+          ORDER BY score.calculated_at DESC
+          LIMIT 1
+        ) latest_score ON TRUE
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(
           chain,
           wallet_address,
           strategy_version,
-          $17::smallint,
-          $18
+          work_priority,
+          work_reason
         ) AS queued
-        FROM changed
+        FROM classified
       )
       SELECT
         EXISTS(SELECT 1 FROM changed) AS changed,
@@ -2144,8 +2168,10 @@ export class PostgresRepository
         signal.provider,
         signal.observedAt,
         signal.strategyVersion,
-        work.priority,
-        work.reason
+        qualifiedWork.priority,
+        qualifiedWork.reason,
+        unqualifiedWork.priority,
+        unqualifiedWork.reason
       ]
     );
     return Boolean(result.rows[0]?.changed);

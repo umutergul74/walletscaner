@@ -234,6 +234,30 @@ export class MemoryRepository
     });
   }
 
+  private latestWalletAlphaStatus(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string
+  ): WalletAlphaScoreSnapshot["status"] | undefined {
+    let latest: WalletAlphaScoreSnapshot | undefined;
+    for (const score of this.walletAlphaScores.values()) {
+      if (
+        score.chain !== chain ||
+        score.walletAddress !== walletAddress ||
+        score.strategyVersion !== strategyVersion
+      ) {
+        continue;
+      }
+      if (
+        !latest ||
+        new Date(score.calculatedAt).getTime() > new Date(latest.calculatedAt).getTime()
+      ) {
+        latest = score;
+      }
+    }
+    return latest?.status;
+  }
+
   static seeded(thresholds: RuntimeThresholds): MemoryRepository {
     const repo = new MemoryRepository();
     const signal = buildSampleSignal(thresholds);
@@ -553,7 +577,10 @@ export class MemoryRepository
         ...signal,
         idempotencyKey: existingEntry.idempotencyKey
       });
-      const work = classifyWalletAlphaEntryWork(signal);
+      const work = classifyWalletAlphaEntryWork(
+        signal,
+        this.latestWalletAlphaStatus(signal.chain, signal.walletAddress, signal.strategyVersion)
+      );
       this.enqueueWalletAlpha(
         signal.chain,
         signal.walletAddress,
@@ -565,7 +592,10 @@ export class MemoryRepository
     }
     if (this.walletEntrySignals.has(signal.idempotencyKey)) return false;
     this.walletEntrySignals.set(signal.idempotencyKey, signal);
-    const work = classifyWalletAlphaEntryWork(signal);
+    const work = classifyWalletAlphaEntryWork(
+      signal,
+      this.latestWalletAlphaStatus(signal.chain, signal.walletAddress, signal.strategyVersion)
+    );
     this.enqueueWalletAlpha(
       signal.chain,
       signal.walletAddress,

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRepository } from "@memecoin-alpha/db";
-import type { WalletEntrySignalEvidence, WalletTradeEvidence } from "@memecoin-alpha/shared";
+import type {
+  WalletAlphaScoreSnapshot,
+  WalletEntrySignalEvidence,
+  WalletTradeEvidence
+} from "@memecoin-alpha/shared";
 import {
   buildWalletAlphaReport,
   processWalletAlphaQueue,
@@ -232,6 +236,7 @@ describe("wallet alpha report", () => {
   it("processes a risk-passed source entry before historical backlog", async () => {
     const repository = new MemoryRepository();
     await repository.saveWalletTradeEvent(walletTrade("HistoricalWallet", "historical-buy", 1));
+    await repository.saveWalletAlphaScore(qualifiedScore("SafePriorityWallet"));
     await repository.saveWalletEntrySignal({
       ...unknownRiskEntry(),
       idempotencyKey: "safe-priority-entry",
@@ -277,6 +282,25 @@ describe("wallet alpha report", () => {
     });
   });
 });
+
+function qualifiedScore(walletAddress: string): WalletAlphaScoreSnapshot {
+  return {
+    chain: "solana",
+    walletAddress,
+    strategyVersion: "evidence-v1",
+    calculatedAt: "2026-07-09T00:00:00.000Z",
+    status: "watch",
+    profitabilityScore: 70,
+    followabilityScore: 70,
+    overallScore: 70,
+    completedPositions: 10,
+    uniqueTokens: 10,
+    activeDays: 5,
+    metrics: {} as WalletAlphaScoreSnapshot["metrics"],
+    gates: { observed: true, watch: true, candidate: false, validatedPaper: false },
+    reasons: ["test-qualified"]
+  };
+}
 
 function unknownRiskEntry(): WalletEntrySignalEvidence {
   return {

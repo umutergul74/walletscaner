@@ -3,10 +3,21 @@ import type { WalletEntrySignalEvidence } from "@memecoin-alpha/shared";
 import { classifyWalletAlphaEntryWork } from "./repository";
 
 describe("wallet-alpha entry work classification", () => {
-  it("reserves priority 2 for fully proven signal-relevant entries", () => {
-    expect(classifyWalletAlphaEntryWork(entry())).toEqual({
+  it("reserves priority 2 for risk-passed entries from already qualified wallets", () => {
+    expect(classifyWalletAlphaEntryWork(entry(), "watch")).toEqual({
       priority: 2,
-      reason: "risk-passed-source-entry"
+      reason: "risk-passed-qualified-wallet-entry"
+    });
+  });
+
+  it("keeps risk-passed entries from new or unqualified wallets in research", () => {
+    expect(classifyWalletAlphaEntryWork(entry())).toEqual({
+      priority: 1,
+      reason: "risk-passed-unqualified-wallet-entry"
+    });
+    expect(classifyWalletAlphaEntryWork(entry(), "observed")).toEqual({
+      priority: 1,
+      reason: "risk-passed-unqualified-wallet-entry"
     });
   });
 
@@ -49,7 +60,7 @@ describe("wallet-alpha entry work classification", () => {
   it.each(blockedCases)("keeps %s out of the signal lane", (_case, mutate) => {
     const subject = entry();
     mutate(subject);
-    expect(classifyWalletAlphaEntryWork(subject)).toEqual({
+    expect(classifyWalletAlphaEntryWork(subject, "watch")).toEqual({
       priority: 1,
       reason: "entry-evidence"
     });
