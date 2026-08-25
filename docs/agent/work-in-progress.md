@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:51:00Z
+updated_at_utc: 2026-08-25T21:54:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -345,3 +345,22 @@ blindly repeat the last mutation.
 - On any further interruption, inspect that server ledger revision plus this file, then reconcile
   both with actual migrations and containers. Do not mark the phase completed merely because the
   ledger exists. Next exact action is the final bounded read-only canary snapshot.
+- The bounded rollout canary passed its scoped operational gates. All 12 Walletscaner services are
+  running with restart 0 and OOM false. Exactly the intended archive writer/verifier/materializer,
+  operations monitor and wallet-alpha services use R34; ingestion remains R30, Telegram R23 and
+  non-target research/maintenance services R29. All selected runtime services report live execution
+  false and their Compose memory/CPU ceilings match the reviewed values.
+- Migration checksums remain exact and invalid-index count is zero. One wallet archive cohort is
+  independently verified: 792 records, 959,527 source bytes and 84,780 archive bytes. Its compact
+  receipt is verified with 494 mature followability facts, no parity mismatch and no archive dead
+  letter. The first full R34 wallet cycle passed as recorded above. Pipeline backlog/dead-letter was
+  0/0 in the latest report with fresh pool/swap/wallet evidence.
+- The current 2,053,352,363-byte dump retains its SHA sidecar and off-site acknowledgement. Host
+  free disk is about 16.84 GB, above the 8 GiB hard reserve. Overall health remains deliberately
+  degraded for historical wallet archive catch-up, database size and an approximately 3.52-day
+  recent-slope runway above reserve. That slope includes catch-up and release-layer transfer; it
+  must be remeasured over a clean 24 hours.
+- The scoped `post-rollout-canary` phase may now be marked completed at ledger revision 2, with the
+  next phase remaining a seven-day operational shadow plus a clean 24-hour capacity slope. This is
+  **Operational**, not **Validated**. Canonical wallet evidence retirement remains disabled and no
+  source deletion is authorized by the canary result.
