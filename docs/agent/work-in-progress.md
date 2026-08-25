@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-25T22:22:00Z
+status: waiting
+updated_at_utc: 2026-08-25T22:26:05Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: R34 storage shadow operational; server ledger revision 9 observes 24h/7d storage gates with canonical retirement disabled
+last_safe_checkpoint: R34 storage shadow operational and documented at c07c7e2; server ledger revision 9 waits on clean 24h/7d gates with canonical retirement disabled
 ---
 
 # Walletscaner Work In Progress
@@ -530,3 +530,25 @@ blindly repeat the last mutation.
   latest health report, database/filesystem growth and backup evidence. Keep this phase in progress
   until both a clean post-catch-up 24-hour slope and seven future shadow days pass; do not authorize
   canonical retirement from elapsed time alone.
+- The local clone was rechecked again instead of trusting earlier progress messages. The same
+  running PostgreSQL 16 container `walletscaner-pg16-r31` contains database
+  `walletscaner_storage_lab` at 12,357,852,183 bytes, a 4,058,816,512-byte
+  `wallet_trade_events` relation, one verified compact day and exact compact fact counts of 218,492
+  profitability episodes, 251,460 open-lot facts and 27,498 followability facts. This directly
+  proves the 1.6/3.1/7.3 GB observations were intermediate stages of the completed 11.51 GiB
+  restore, not a skipped or replaced restore.
+- Final bounded live snapshot: migration 050/051 checksums match the repository; 24 chain-payload
+  days and one wallet-evidence day are verified; nine wallet days remain pending; compact state is
+  one verified/zero mismatch. Canonical wallet trades remain at a 2,042,285-row catalog estimate
+  and 4,496,990,208 relation bytes. The rebuild queue is 16,423 pending, one active, one
+  pre-existing failed, P2 zero. Database size is 15,149,702,167 bytes, invalid-index count zero and
+  host free disk 18,594,758,656 bytes.
+- The latest health report remains deliberately degraded because the recent 24-hour slope contains
+  rollout transfers, archive catch-up and reclaim/rebuild activity; it is not clean equilibrium
+  evidence. The load-per-CPU sample fell from 3.14 to 1.17, all 12 services remained restart 0/OOM
+  false and bounded container stats did not show sustained saturation. Current dump
+  `memecoin_alpha_20260825T150924Z.dump` retains its SHA sidecar and off-site acknowledgement.
+- Current-state, storage lifecycle and build handoff are aligned in commit `c07c7e2`. No immediate
+  mutation remains. On the next observation, first verify server ledger revision 9/hash and actual
+  runtime state, then measure archive catch-up, compact parity, queue slope and a clean post-catch-up
+  24-hour storage window. Do not close revision 9 before the seven-future-day gate also matures.
