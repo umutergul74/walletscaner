@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:36:00Z
+updated_at_utc: 2026-08-25T21:38:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: R34 storage code and immutable-image routing verified locally; production still on migrations through 049
@@ -264,3 +264,10 @@ blindly repeat the last mutation.
   `4d00f872c681`.
 - Next exact action: add the new compact materializer scheduler with `--no-build --no-deps`, verify
   its 80 MiB/0.05 CPU/live-false boundary, then checkpoint before monitor and wallet-alpha rollout.
+- The compact materializer scheduler is newly operational in shadow mode. Container ID begins
+  `2d4c0816add0`; it uses the exact R34 image, is running with restart 0/OOM false, 80 MiB memory,
+  CPU 0.05 and live execution false. Its deliberate initial delay is 600 seconds, so no compact
+  cohort is expected yet.
+- Next exact action: recreate only operations monitor on R34 and verify that it emits a current
+  report using the new schema without query errors. Then recreate wallet alpha so future derived
+  persistence retains only open lots.
