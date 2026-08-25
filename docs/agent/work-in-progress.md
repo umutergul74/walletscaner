@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T21:43:00Z
+updated_at_utc: 2026-08-25T21:45:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -317,3 +317,12 @@ blindly repeat the last mutation.
   freshness, ingestion freshness/backlog, resource ceilings, service restarts/OOM, disk/DB growth,
   backup evidence and unchanged non-target image identities. Do not delete artifacts or source data
   during this canary.
+- The first complete R34 wallet-alpha cycle passed: 92 wallets processed, 8 low-evidence wallets
+  safely skipped, zero cycle failures, zero oversized wallets and zero signal-refresh failures in
+  237,297 ms. RSS at cycle completion was 107.52 MiB under the 160 MiB cgroup boundary. The cycle
+  ended with 333 pending, one processing and one pre-existing failed queue item; signal lane was
+  zero. Listener remained active and no signal was emitted.
+- No queue lease was lost by the recreate. Next exact action remains read-only canary verification,
+  including a second health sample and exact service identity/resource inventory. If those pass,
+  document the rollout as operational-shadow, not storage-validated; seven future days and a clean
+  24-hour equilibrium slope are still required before any canonical retirement.
