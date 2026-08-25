@@ -313,6 +313,15 @@ one-hour envelope. Every cycle atomically replaces
 timeouts and duration without becoming canonical state. Acceptance is based on boundary lag and
 rows/hour exceeding measured ingress, not on one successful batch.
 
+Compaction walks every uncompacted, retention-expired row covered by a verified archive, including a
+backlog row already older than the three-day inbox-metadata horizon. The three-day boundary controls
+metadata retirement, not whether its recoverable raw payload may first be compacted. Otherwise the
+monitor can correctly see an old raw row that the compactor has made permanently ineligible. The
+payload stage has its own bounded `MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS` (7.5 seconds by
+default) and may use up to 92% of the 30-second run only while work remains; other stages resume in
+the same run when compaction finishes early. Do not increase its CPU/container ceilings to clear a
+backlog.
+
 The durable price write path belongs only to `evidence-sampler` and uses 120-second compact pool
 buckets. It runs through direct Node/tsx; the 2026-07-28 restart canary measured about 45.8 MiB
 instead of 78.3 MiB with the previous npm wrapper. `solana-ingestion` retains the faster in-process

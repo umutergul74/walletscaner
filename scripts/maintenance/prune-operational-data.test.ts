@@ -27,7 +27,10 @@ describe("operational maintenance SQL contract", () => {
     expect(compaction).toContain("CROSS JOIN LATERAL");
     expect(compaction).toContain("ORDER BY archive.range_start");
     expect(compaction).toContain("LIMIT 1");
-    expect(compaction).toContain("NOW() + make_interval(days => $4::integer)");
+    expect(compaction).toContain("NOW() + make_interval(days => $3::integer)");
+    expect(compaction).not.toContain("archive.range_end >");
+    expect(compaction).not.toContain("COALESCE(candidate.processed_at, candidate.received_at) >=");
+    expect(compaction).not.toContain("COALESCE(target.processed_at, target.received_at) >=");
   });
 
   it("carries the canonical receive time into both payload deletes", async () => {
@@ -61,7 +64,9 @@ describe("operational maintenance SQL contract", () => {
     expect(source).toContain("chain_event_payloads_overdue");
     expect(source).toContain("MAINTENANCE_COMPACTION_PRIORITY_LAG_SECONDS");
     expect(source).toContain("if (!eligible.rows[0]?.chain_event_payloads_overdue)");
-    expect(source).toContain("maintenanceStartedAt + totalBudgetMs * 0.78");
+    expect(source).toContain("maintenanceStartedAt + totalBudgetMs * 0.92");
+    expect(source).toContain("MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS");
+    expect(source).toContain("`${compactionStatementTimeoutMs}ms`");
   });
 
   it("uses one pinned PostgreSQL session for the advisory lock lifecycle", async () => {

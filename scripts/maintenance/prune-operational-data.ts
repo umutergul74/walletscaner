@@ -42,6 +42,10 @@ const compactBatchSize = positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE,
 const maxBatches = positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50);
 const maxRunSeconds = positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 30);
 const statementTimeoutMs = positiveInt(process.env.MAINTENANCE_STATEMENT_TIMEOUT_MS, 5_000);
+const compactionStatementTimeoutMs = positiveInt(
+  process.env.MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS,
+  7_500
+);
 const inventoryTimeoutMs = positiveInt(
   process.env.MAINTENANCE_INVENTORY_STATEMENT_TIMEOUT_MS,
   15_000
@@ -378,8 +382,12 @@ try {
             "chain-event-inbox"
           );
         }
-        compactedChainEventPayloads = await pruneInBatches(
-          `WITH eligible_archive AS MATERIALIZED (
+        await pool.query("SELECT set_config('statement_timeout', $1, false)", [
+          `${compactionStatementTimeoutMs}ms`
+        ]);
+        try {
+          compactedChainEventPayloads = await pruneInBatches(
+            `WITH eligible_archive AS MATERIALIZED (
            SELECT archive.range_start, archive.range_end
            FROM archive_segments AS archive
            WHERE archive.source_kind = 'chain-event-payloads'
@@ -388,11 +396,9 @@ try {
                'api-verified', 'attested-default-policy'
              )
              AND archive.retain_until >
-                 NOW() + make_interval(days => $4::integer)
+                 NOW() + make_interval(days => $3::integer)
              AND archive.range_start <
                  NOW() - make_interval(hours => $1::integer)
-             AND archive.range_end >
-                 NOW() - make_interval(days => $3::integer)
              AND EXISTS (
                SELECT 1
                FROM chain_event_inbox AS candidate
@@ -403,8 +409,6 @@ try {
                  AND candidate.received_at < archive.range_end
                  AND COALESCE(candidate.processed_at, candidate.received_at) <
                      NOW() - make_interval(hours => $1::integer)
-                 AND COALESCE(candidate.processed_at, candidate.received_at) >=
-                     NOW() - make_interval(days => $3::integer)
              )
            ORDER BY archive.range_start
            LIMIT 1
@@ -424,8 +428,6 @@ try {
                AND target.received_at < archive.range_end
                AND COALESCE(target.processed_at, target.received_at) <
                    NOW() - make_interval(hours => $1::integer)
-               AND COALESCE(target.processed_at, target.received_at) >=
-                   NOW() - make_interval(days => $3::integer)
              ORDER BY COALESCE(target.processed_at, target.received_at),
                       target.idempotency_key
              LIMIT $2
@@ -454,15 +456,20 @@ try {
          )
          FROM candidates
          WHERE target.ctid = candidates.ctid`,
-          rawPayloadRetentionHours,
-          maintenanceStartedAt + totalBudgetMs * 0.78,
-          compactBatchSize,
-          [inboxRetentionDays, archiveMinimumRemainingDays],
-          "chain-event-payloads"
-        );
+            rawPayloadRetentionHours,
+            maintenanceStartedAt + totalBudgetMs * 0.92,
+            compactBatchSize,
+            [archiveMinimumRemainingDays],
+            "chain-event-payloads"
+          );
+        } finally {
+          await pool.query("SELECT set_config('statement_timeout', $1, false)", [
+            `${statementTimeoutMs}ms`
+          ]);
+        }
       }
       const rejectedEvidence = await pruneRejectedWalletEvidence(
-        maintenanceStartedAt + totalBudgetMs * 0.82
+        maintenanceStartedAt + totalBudgetMs * 0.94
       );
       deletedRejectedWalletOutcomes = rejectedEvidence.outcomes;
       deletedRejectedWalletEntries = rejectedEvidence.entries;
@@ -479,7 +486,7 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.85,
+        maintenanceStartedAt + totalBudgetMs * 0.95,
         batchSize,
         [],
         "wallet-outcomes"
@@ -501,7 +508,7 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.88,
+        maintenanceStartedAt + totalBudgetMs * 0.96,
         batchSize,
         [],
         "wallet-entries"
@@ -530,7 +537,7 @@ try {
          USING doomed
          WHERE target.ctid = doomed.ctid`,
         walletEvidenceRetentionDays,
-        maintenanceStartedAt + totalBudgetMs * 0.93,
+        maintenanceStartedAt + totalBudgetMs * 0.98,
         batchSize,
         [],
         "wallet-trades"
@@ -732,6 +739,7 @@ try {
       maxBatches,
       maxRunSeconds,
       statementTimeoutMs,
+      compactionStatementTimeoutMs,
       inventoryTimeoutMs,
       queryTimeoutCount,
       queryTimeoutsByStage
