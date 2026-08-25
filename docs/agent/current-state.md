@@ -35,20 +35,23 @@ before every operational claim or mutation.
   18%->21% PostgreSQL canary improved a comparable light cycle from 201.5 to 132.5 seconds and a
   heavy cycle from 46 to 54 completed wallets; pending work moved 8,531 to 8,495 across those two
   cycles. Container identities, memory ceilings, restart/OOM and low CPU shares did not change. A
-  negative one-hour slope is still required; otherwise revert the two CPU limits.
+  negative one-hour slope is still required; otherwise revert the two CPU limits. After migration
+  049, a later approximately 32-minute read-only sample moved evidence-v1 total pending from about
+  8,550 to 7,560 and P1 from 6,686 to 5,649; P2 stayed zero. This is encouraging operational
+  evidence, not yet the one-hour equilibrium gate.
 - **Operational with excluded gaps — discovery:** R30 reconciled the completed Pump repair after
   independent PublicNode and official-RPC checks proved its exact target finalized at slot
   441,602,989; the target transaction failed and therefore emitted no pool event. Restart-created
   PumpSwap reached the reviewed 20,000-signature cap and closed only as unreconciled/alpha-excluded.
   CPMM reached its exact boundary with 15,941 signatures and was replaying oldest-first; it was the
-  only open incident, at 800 completed signatures in the 18:20 UTC observation. Current live
+  only open incident, at 2,800 completed signatures in the 18:52 UTC observation. Current live
   transport remains active with no terminal inbox/dead-letter failure; aggregate status remains
   degraded until that historical CPMM interval resolves.
 - **Waiting — backup and storage validation:** dump `memecoin_alpha_20260825T150924Z.dump` is
   2,053,352,363 bytes with SHA-256
   `ba26a3c89fdb8dc671d92976659ae177a6d8f76be40a45b8b8f774bb54238160`; its sidecar and PostgreSQL
   16 archive-list pass, but this generation is not yet off-site acknowledged. The scheduler now uses
-  zstd level 1 and blocks another generation until acknowledgement. Host headroom is about 16 GB.
+  zstd level 1 and blocks another generation until acknowledgement. Host headroom is about 17.2 GB.
 
 Do not call storage validated until compaction lag reaches zero and a clean post-catch-up 24-hour
 slope preserves the 8 GiB reserve. Do not call alpha validated: no watch-or-better signal or
@@ -56,7 +59,7 @@ profitable chronological paper cohort has passed the documented gates.
 
 ## Last verified boundary
 
-- Observation: 2026-08-25 18:28 UTC, R30 plus migration-049 canary on the shared host.
+- Observation: 2026-08-25 18:52 UTC, R30 plus migration-049 canary on the shared host.
 - Live capital: `ENABLE_LIVE_EXECUTION=false`; paper v3 is paused with zero open positions and v4
   remains a non-deliverable causal shadow.
 - Releases: ingestion R30; sampler/alpha/maintenance/operations R29; Telegram R23. PostgreSQL 16,

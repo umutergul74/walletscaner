@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-25T18:54:00Z
+status: complete
+updated_at_utc: 2026-08-25T18:55:00Z
 owner: codex
 task: finish R30/R29 pipeline hardening and make future work interruption-safe
-last_safe_checkpoint: migration 049 is deployed and production canary passed
+last_safe_checkpoint: source commits, migration 049 and final production verification are complete
 ---
 
 # Walletscaner Work In Progress
@@ -41,13 +41,21 @@ blindly repeat the last mutation.
 - Server dump `memecoin_alpha_20260825T150924Z.dump` remains locally verified at 2,053,352,363
   bytes; its newest generation still awaits off-site acknowledgement. About 17.2 GB host disk was
   free at the last observation.
+- Final production observation at 18:52 UTC: database 16,142,654,487 bytes; inbox had nine normal
+  pending rows and no terminal/dead-letter state; pool freshness was seven seconds. Evidence-v1
+  P0/P1/P2 was `1,911 / 5,649 / 0`, with 30 transient-retry rows and one evidence-limit quarantine.
+  The only open coverage incident was CPMM, whose 15,941-signature exact replay had reached 2,800.
+- All inspected Walletscaner containers were running with restart `0`, OOM `false`, reviewed
+  CPU/RAM limits and `ENABLE_LIVE_EXECUTION=false`. The Compose hash remained
+  `ae54b1e10b92246405f0026e56eb1a463b22dac35056839342658d5c970d1bcd`.
 
 ## Current source state
 
 - Base commit before this task: `954aaa4` (`ops: finalize R30 pipeline rollout`).
 - Migration 049, tests and synchronized runtime documents are committed as `bca83d5`
   (`fix: preserve wallet alpha retry backoff`).
-- Remaining intended source changes are this interruption checkpoint and its agent/skill contract.
+- The interruption-safe agent/skill contract is committed as `9c33624`
+  (`docs: add interruption-safe work checkpoints`).
 - The untracked `deploy/.tmp-pipeline-storage-r28-2dc66ab.tar817264887` is a stale local transfer
   artifact. It is not production data and must not be committed or confused with an R30 rollback
   image.
@@ -60,12 +68,13 @@ blindly repeat the last mutation.
 - R30/R29/R23 immutable images remain available. No service restart was required for migration 049.
 - Current verified server dump and the prior verified off-host generation are recovery points.
 
-## Exact next actions
+## Completion state
 
-1. Commit the interruption-safe contract; do not include the stale local R28 tar.
-2. Refresh production read-only state: migration, queues, open coverage, disk, dump, container
-   restart/OOM/image/limits and live-execution false.
-3. Mark this file `status: complete` with the final commit and remaining measurable gates.
+- There is no pending production mutation, service recreation, migration, upload or data cleanup.
+- The source handoff is complete. The only remaining working-tree artifact is the pre-existing stale
+  local R28 transfer tar named above; it is intentionally uncommitted and unrelated to production.
+- A future substantive task must replace this completed checkpoint with a fresh `active` objective
+  before its first mutation.
 
 ## Remaining gates, not failures
 
