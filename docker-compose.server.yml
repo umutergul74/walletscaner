@@ -602,7 +602,8 @@ services:
           stamp=$$(date -u +%Y%m%dT%H%M%SZ)
           tmp="/backups/memecoin_alpha_$${stamp}.dump.tmp"
           final="/backups/memecoin_alpha_$${stamp}.dump"
-          pg_dump -h postgres -U postgres -d "$${POSTGRES_DB}" -Fc -Z 6 -f "$${tmp}"
+          pg_dump -h postgres -U postgres -d "$${POSTGRES_DB}" -Fc \
+            --compress=zstd:1 --no-owner --no-acl -f "$${tmp}"
           pg_restore --list "$${tmp}" >/dev/null
           mv "$${tmp}" "$${final}"
           sha256sum "$${final}" > "$${final}.sha256"
