@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:14:00Z
+updated_at_utc: 2026-08-25T22:18:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -433,3 +433,14 @@ blindly repeat the last mutation.
 - Next exact action: commit the coherent fix, build a new immutable R35 image rather than mutating
   R34, run the integration inside the exact Linux/Node image, then stage/hash/load it. Do not reopen
   ledger retry until image identity and target test evidence pass.
+- Bounded reclaim fix commit is `36dc4b4`. Immutable image
+  `walletscaner-worker:storage-r35-20260826` has image ID
+  `sha256:621489c53b9114d6edcf85b32e0040e32195d6c9538da43f3b49262995814cfc`.
+- The exact Linux/Node 24 image passed the real PostgreSQL 16 reclaim/rollback integration 2/2.
+  An initial combined image command also included two host-only suites and therefore reported four
+  expected infrastructure failures: the worker image intentionally lacks the root Compose file and
+  Python. Those same Compose/ledger suites pass 4/4 on the host; they are not image-runtime gates.
+  The exact-image core-only rerun is green and removes that ambiguity.
+- Next exact action: export/compress/hash R35, transfer by resumable `.partial`, verify server hash,
+  atomically rename and load. Loading/staging is not activation. Reopen the failed reclaim phase
+  from ledger revision 4 only after the loaded image ID matches exactly.
