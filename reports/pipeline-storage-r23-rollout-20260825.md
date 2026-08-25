@@ -19,7 +19,7 @@
 
 ## Current phase
 
-- Status: `r25-storage-accepted-r26-alpha-query-canary-required`
+- Status: `r25-storage-accepted-r26-query-plan-passed-r27-refresh-gate-required`
 - Completed: local gates; exact Linux zstd/PostgreSQL 16 gate; production backup, disk, migration,
   invalid-index, resource and co-tenant-safe preflight; resumable image transfer; remote SHA/image
   label verification.
@@ -55,14 +55,21 @@ loader: passing a one-element `ANY(text[])` forced an external sort despite the 
 `(strategy_version, wallet_address, observed_at)` index. The R26 research-only change uses scalar
 wallet equality for one-wallet rebuilds, allowing the existing index plus bounded incremental sort;
 multi-wallet research semantics remain unchanged and no additional production index/disk is needed.
+R26 passed 57 exact-image tests and its production scalar-query path used the intended existing
+index, but the live canary exposed an independent N+1 refresh bottleneck: every processed P2 wallet
+ran the global signal scan even when its newly persisted score was not `watch` or better. Four such
+wallets produced zero signals while new P2 work outpaced completion. R27 keeps the final per-cycle
+global correctness refresh, but permits an immediate refresh only when the just-built score is
+`watch`, `candidate` or `validated-paper`. No score/risk threshold is relaxed.
 
 ## Next safe command group
 
-1. Build and pass the exact Linux/PostgreSQL gate for R26.
-2. Transfer and SHA-verify the immutable R26 image; no migration is required.
-3. Atomically update only `WALLETSCANER_RESEARCH_IMAGE` from exact R23 to exact R26.
-4. Recreate only `wallet-alpha`; verify durable queue recovery, signal-lane latency, restart/OOM,
-   RSS/CPU and the `pg_stat_statements` delta. Do not restart ingestion or notifier.
+1. Build and pass the exact Linux/PostgreSQL gate for R27.
+2. Transfer and SHA-verify the immutable R27 image; no migration is required.
+3. Gracefully stop R26, atomically update only `WALLETSCANER_RESEARCH_IMAGE` from exact R26 to R27,
+   and recreate only `wallet-alpha`.
+4. Verify P2 drain, actual/skipped immediate refresh counts, final refresh correctness, restart/OOM,
+   RSS/CPU and `pg_stat_statements` deltas. Do not restart ingestion or notifier.
 5. Record final discovery-repair progress, background research-lane slope, compaction catch-up and
    disk headroom. Historical excluded intervals stay fail closed until proven repair.
 

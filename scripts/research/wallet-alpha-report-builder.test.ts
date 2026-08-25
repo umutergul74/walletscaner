@@ -267,7 +267,8 @@ describe("wallet alpha report", () => {
       signalRefreshFailures: 0
     });
     expect(onSignalRelevantWalletProcessed).toHaveBeenCalledWith(
-      expect.objectContaining({ walletAddress: "SafePriorityWallet", priority: 2 })
+      expect.objectContaining({ walletAddress: "SafePriorityWallet", priority: 2 }),
+      false
     );
     expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({
       pending: 1,

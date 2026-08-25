@@ -76,7 +76,10 @@ export interface WalletAlphaReportOptions {
   minimumEntries?: number;
   minimumWorkPriority?: WalletAlphaWorkPriority;
   maximumWorkPriority?: WalletAlphaWorkPriority;
-  onSignalRelevantWalletProcessed?: (item: WalletAlphaWorkItem) => void | Promise<void>;
+  onSignalRelevantWalletProcessed?: (
+    item: WalletAlphaWorkItem,
+    signalEligible: boolean
+  ) => void | Promise<void>;
 }
 
 export interface WalletAlphaQueueResult {
@@ -439,7 +442,10 @@ export async function processWalletAlphaQueue(
       if (item.priority === 2) {
         signalRelevantWallets += 1;
         try {
-          await options.onSignalRelevantWalletProcessed?.(item);
+          await options.onSignalRelevantWalletProcessed?.(
+            item,
+            scores.some((score) => ["watch", "candidate", "validated-paper"].includes(score.status))
+          );
         } catch (error) {
           // Queue completion is already durable. A signal refresh is derived and
           // retryable, so it must not turn a completed revision into a false failure.

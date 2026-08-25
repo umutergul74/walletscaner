@@ -49,6 +49,7 @@ try {
     const startedAt = Date.now();
     try {
       let immediateSignalRefreshes = 0;
+      let immediateSignalRefreshSkips = 0;
       let immediateSignals = 0;
       const queue = await processWalletAlphaQueue(
         repository,
@@ -80,7 +81,11 @@ try {
           maximumRunSeconds: positiveInt(process.env.WALLET_ALPHA_MAX_RUN_SECONDS, 240),
           minimumTradeEvents: positiveInt(process.env.WALLET_ALPHA_MIN_TRADE_EVENTS, 6),
           minimumEntries: positiveInt(process.env.WALLET_ALPHA_MIN_ENTRIES, 3),
-          async onSignalRelevantWalletProcessed(item) {
+          async onSignalRelevantWalletProcessed(item, signalEligible) {
+            if (!signalEligible) {
+              immediateSignalRefreshSkips += 1;
+              return;
+            }
             const signals = await refreshWalletAlphaSignals(
               repository,
               strategyVersion,
@@ -118,6 +123,7 @@ try {
         workQueue,
         listener: listener ? "listening" : "poll-fallback",
         immediateSignalRefreshes,
+        immediateSignalRefreshSkips,
         immediateSignals,
         admission: {
           minimumTradeEvents: positiveInt(process.env.WALLET_ALPHA_MIN_TRADE_EVENTS, 6),
