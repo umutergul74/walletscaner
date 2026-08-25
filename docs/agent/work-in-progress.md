@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-25T22:18:00Z
+updated_at_utc: 2026-08-25T22:25:00Z
 owner: codex
 task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
 last_safe_checkpoint: production migrations 050/051, R34 archive writer/verifier/materializer/monitor verified; wallet-alpha remains R29
@@ -444,3 +444,10 @@ blindly repeat the last mutation.
 - Next exact action: export/compress/hash R35, transfer by resumable `.partial`, verify server hash,
   atomically rename and load. Loading/staging is not activation. Reopen the failed reclaim phase
   from ledger revision 4 only after the loaded image ID matches exactly.
+- R35 export is 463,101,233 bytes with transfer SHA-256
+  `3de195342dde97166a3be1786d948004f5151caf5719a3152cbc531b247c832f`. Resumable SFTP completed;
+  server `.partial` byte count and SHA-256 match exactly. Host free disk after transfer is
+  16,317,476,864 bytes, still above reserve. No service or data changed during transfer.
+- Next exact action: atomically rename the verified artifact, load it at low CPU/I/O priority and
+  prove the server tag resolves to exact image ID `sha256:621489...14cfc`. Preserve both the
+  artifact and R34 rollback image until the guarded retry completes.
