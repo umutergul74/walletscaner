@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:56:00Z
+updated_at_utc: 2026-08-26T21:00:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1595,3 +1595,22 @@ blindly repeat the last mutation.
   mutation is to add immutable tag `walletscaner-worker:storage-r39-20260826` to this exact image,
   verify unchanged image ID/runtime/hashes, then remove only named disposable test containers,
   role/schema and integration database after a final public-clone comparison.
+
+## R39 local release cleanup completed at 2026-08-26 21:00 UTC
+
+- Immutable local tag `walletscaner-worker:storage-r39-20260826` resolves to the exact tested
+  Linux/amd64 image ID `sha256:9976fb84772180e6dde4dbda94243fe04ea4c41a619cb81337e257a9e68e7eba`;
+  the candidate alias points to the same image.
+- Before cleanup, public clone state exactly matched its baseline: one 2026-08-24 receipt and
+  218,492 / 251,460 / 27,498 public episode/open-lot/followability facts. Only after this proof,
+  transactionally dropped named schema `r39_canary`; public counts remained exact. Both named
+  exited canaries and the `--rm` localhost PG16 gate were removed. Temporary role/schema counts are
+  zero; populated clone `walletscaner-pg16-r31` remains running and intact.
+- Next exact local operation is deterministic release packaging: export only exact R39 to a named
+  uncompressed temporary tar, compress it through the network-disabled exact image with zstd
+  level 3/single-thread/checksum under low CPU/memory, frame-test and SHA-256 the `.partial`, then
+  atomically rename inside the repository `deploy` directory. Preserve the four pre-existing
+  transfer remnants and delete only the named uncompressed R39 tar after verification.
+- No production action is authorized by this packaging checkpoint. After artifact identity is
+  recorded, refresh server ledger/backup/offsite, free disk/RAM/load, heavy jobs, flow freshness,
+  coverage, receipts, selector/materializer and all Compose identities before opening an R39 phase.
