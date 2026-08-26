@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:52:10Z
+updated_at_utc: 2026-08-26T01:53:15Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -656,3 +656,11 @@ blindly repeat the last mutation.
 - Next exact action: use the guarded release-image updater in dry-run and apply mode to move only
   `WALLETSCANER_OPERATIONS_IMAGE` from exact R34 to exact R36. Verify the resulting env hash and
   rendered service images before recreating named services one at a time with `--no-build --no-deps`.
+- The guarded updater changed only `WALLETSCANER_OPERATIONS_IMAGE` from exact R34 to exact R36.
+  `.env.server` moved from SHA-256 `8e3f9dac...` to
+  `a0b216d52eba4a5913ef42b31c4875a9d889bd597083b0c8dcda491e7748f84e`. A selector change alone
+  does not recreate a service; every current container still has its previous identity.
+- Rollback is the same guarded updater with the exact inverse pair, while R34 remains loaded. Next
+  exact action: parse rendered Compose without emitting environment values, recreate verifier
+  alone, prove R36/resource/live gates, then transactionally reset only proven segments 67/69 to
+  `retry_verify` and run a bounded two-segment verifier canary.
