@@ -896,3 +896,24 @@ blindly repeat the last mutation.
   change only `WALLETSCANER_OPERATIONS_IMAGE`, render the resulting one-day/600s/1800s/live-false
   service, and recreate only the materializer before its canary. Do not touch ingestion, wallet
   alpha, sampler, Telegram, PostgreSQL, Redis or the protected project.
+
+## R37 configuration checkpoint at 2026-08-26 06:28 UTC
+
+- Artifact staging closed at ledger revision 18. Revision 19 is
+  `r37-materializer-activation=in_progress`, ledger SHA-256
+  `0a422c660544b2d6e9177a188ce8bfbe541d5fcfd6e19c310714b92a56bdb3f5`.
+- The exact local Compose file was staged to a server partial, SHA/config validated, and atomically
+  installed. Current SHA-256 is
+  `8c57d28c53145bbd7fe5669c53eb1329047c2821e748e8d24553d01937ae3288`; exact R36 rollback copy
+  `deploy/docker-compose.server.r36-a745ac39.rollback.yml` has SHA-256
+  `a745ac3977b939c61baf72cae18c00cc189be4e2a8c330d1a5ffd8a5479d52bb`.
+- The server's guarded image updater matched local SHA-256
+  `5cc7456847993197d3b291e29799c9936101134850f564e8d2570081b2ee359b`. Dry-run and apply changed
+  only `WALLETSCANER_OPERATIONS_IMAGE` from exact R36 to exact R37; `.env.server` moved from SHA
+  `a0b216d52eba4a5913ef42b31c4875a9d889bd597083b0c8dcda491e7748f84e` to
+  `b1e6ce998c6217b99d16eb09d9d67afcb354cb264649703690a4f85b8246f9cd`.
+- Rendered target is now exact R37, live false, one day, one connection, 80 MiB, 0.05 CPU,
+  600-second statement and 1,800-second admission budget. The existing materializer is deliberately
+  still exact R36 and unchanged at this checkpoint. Next exact action is a named, no-dependency,
+  no-build materializer recreate followed by exact identity/resource/live verification before any
+  compact receipt rewrite or canary.
