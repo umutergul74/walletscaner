@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:43:00Z
+updated_at_utc: 2026-08-26T19:45:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1319,3 +1319,17 @@ blindly repeat the last mutation.
   tag/image-ID verification against local
   `sha256:81a987394f6e3470c8d9b901ef1ced21b28f03f1c554191479a85cd7239c44dc`. Do not activate if the
   loaded identity differs.
+
+## R38 image-load checkpoint at 2026-08-26 19:45 UTC
+
+- The verified artifact was decompressed single-threaded under the 0.04-CPU/64-MiB R36 container
+  boundary and streamed to low-I/O-priority `docker load`. The command exited 0.
+- Server tag `walletscaner-worker:storage-r38-20260826` resolves exactly to Linux/amd64 image ID
+  `sha256:81a987394f6e3470c8d9b901ef1ced21b28f03f1c554191479a85cd7239c44dc`, matching the locally
+  tested artifact. Free disk is 15,553,445,888 bytes.
+- Selector remains R37 and materializer container ID `4b784501...` remains exited 143, restart 0,
+  OOM false on exact R37. All other services and Compose project state remain unchanged.
+- Image load temporarily raised load1 to 2.70. Next exact read-only action is to wait for load1 and
+  archive activity to settle, then close ledger revision 21 as completed and open a separate R38
+  materializer-activation phase. Do not change the selector while the host is above the canary
+  load gate.
