@@ -980,6 +980,14 @@ only after that invocation exits, so a large day cannot create overlapping archi
 Daily discovery excludes already-manifested partitions before applying its bounded seed limit; this
 prevents the first manifest window from starving every later UTC day after long uptimes.
 
+`record-type-counts` metadata is serialized with sorted keys. Verification may normalize only this
+field as a bounded map of non-negative safe integers; content length, archive/source SHA-256, every
+other metadata value, Object Lock evidence and the complete streamed restore remain exact. This
+avoids treating PostgreSQL JSONB key reordering as corruption without weakening object integrity.
+Terminal failed discovery-repair signature rows use their creation time for the same bounded
+retention applied to completed repair staging. The failed repair summary and coverage exclusion are
+retained; only its no-longer-replayable staging rows age out.
+
 Activate real transport without changing retirement authority by running the atomic updater with
 `--activate --execute --preserve-credentials`; `--execute` is rejected without `--activate`, and the
 transport-only invocation leaves `ARCHIVE_RETIREMENT_ENABLED=false`. This allows new closed UTC-day objects to

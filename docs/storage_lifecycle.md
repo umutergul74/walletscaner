@@ -36,6 +36,15 @@ enabled. The observation must first complete archive catch-up, a clean post-catc
 window and seven future days while preserving the 8 GiB reserve. The rollout/reclaim window's
 current 24-hour slope is intentionally rejected as equilibrium evidence.
 
+R36 subsequently corrected a fail-closed verifier false positive: two objects had identical length,
+SHA-256 and record counts but different JSON key order in `record-type-counts`. Future uploads use
+sorted keys; verification accepts only semantically equal, bounded integer maps for that field and
+keeps every cryptographic/Object-Lock/full-restore gate strict. Both affected objects passed a
+guarded independent retry, bringing archive dead letters to zero. Maintenance also ages the staged
+signatures of terminal failed gap repairs after three days instead of retaining each 20,000-row cap
+forever. These changes remove two unbounded/false-failure paths, but do not authorize canonical
+wallet retirement or prove steady-state capacity.
+
 ## Measured growth risk
 
 The settled active UTC days 2026-08-14 and 2026-08-15 averaged approximately:
@@ -68,7 +77,7 @@ row forever is not a sustainable substitute for a compact wallet state record.
   database growth, filesystem consumption and conservative days remaining above an 8-GiB reserve.
   The runway is explicitly immature until at least 24 hours of samples exist, and alerts below 14
   days once mature.
-- The 8-GiB reserve is separate from the 90%/4-GiB ingestion stop. It covers recovery dump creation,
+- The 8-GiB reserve is separate from the current 90%/4-GiB ingestion stop. It covers recovery dump creation,
   WAL/temporary variation and safe intervention time.
 - Docker cleanup remains Walletscaner-image-specific. BuildKit, volumes, the protected co-tenant
   and globally reclaimable Docker bytes are never used as an assumed capacity reserve.

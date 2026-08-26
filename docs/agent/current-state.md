@@ -3,6 +3,41 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-26 R36 archive-integrity and terminal-repair retention rollout
+
+- **Operational — R36 storage operations:** archive writer/verifier, wallet-evidence materializer,
+  data maintenance and operations monitor run immutable R36 image
+  `sha256:24bcc3fa77d3a0a9e4369eb43ec4d33084b4985f1feedcc41db97cde1548d00a`.
+  Wallet alpha remains R34, ingestion R30, sampler R29 and Telegram R23. All 12 Walletscaner
+  services are running; every changed service is restart 0/OOM false, live execution false and
+  retains its previous CPU/RAM limit.
+- **Operational — archive false-positive repaired:** wallet segments 67/69 had matching object
+  length, compressed SHA-256 and semantic record counts; only JSON key order differed between the
+  upload metadata and PostgreSQL JSONB readback. R36 writes sorted metadata and permits only that
+  bounded integer map to compare semantically while every SHA, other metadata value, Object Lock
+  check and full GET/restore remains strict. A guarded retry independently verified 2/2 objects in
+  9.5 seconds. Archive dead-letter count is now zero; neither object was overwritten or deleted.
+- **Operational — failed gap staging is bounded:** maintenance now retires signature rows from both
+  completed and terminal failed repairs after the configured three-day audit horizon. Previously a
+  20,000-cap failed repair retained pending rows forever because they never acquired
+  `completed_at`. The repair/incident summary and alpha-excluded disposition remain durable.
+- **Operational — current flow:** the post-rollout report has pipeline backlog/dead-letter 0/0,
+  last pool age 0.13 seconds and no archive dead letter. One Pump.fun historical repair was still
+  replaying oldest-first at 16,409/17,228 with its exact boundary reached; that interval remains
+  excluded while current live discovery continues. Wallet-alpha P2/signal work is zero and recent
+  cycles have zero processing failures.
+- **Waiting — bounded storage equilibrium:** PostgreSQL is about 15.07 GB and host free space is
+  about 18.70 GB after exact transfer-artifact cleanup. The recent window still estimates about
+  0.93 GB/day database growth and 1.48 GB/day disk consumption, or 6.55 days above the 8-GiB
+  reserve. This window includes reclaim/rebuild and rollout activity and is not a clean equilibrium
+  proof. Canonical wallet retirement remains disabled until archive catch-up, compact parity,
+  dual-read and seven future shadow days pass.
+- **Interruption-safe boundary:** server rollout ledger revision 15 is
+  `storage-equilibrium-observation-r36=in_progress`, SHA-256
+  `6224c45bef08aa2c9a5d09e96bd5e71fd06aaa4b1a54b0d02af023a24c7f2c67`. R34/R36 images and the
+  local SHA-identical R36 transfer artifact remain rollback evidence; the server transfer tar was
+  removed without Docker prune.
+
 ## 2026-08-26 wallet-evidence storage shadow (R34 operational, validation waiting)
 
 - **Operational — bounded hot/cold shadow:** migrations 050/051 are deployed with repository-exact

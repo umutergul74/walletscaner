@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T02:09:10Z
+updated_at_utc: 2026-08-26T03:19:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
+last_safe_checkpoint: R36 integrity repair and exact server artifact cleanup completed; ledger revision 15 observes storage equilibrium; canonical retirement remains disabled
 ---
 
 # Walletscaner Work In Progress
@@ -716,3 +716,23 @@ blindly repeat the last mutation.
 - Next exact action: close artifact cleanup at ledger revision 14, then open a fresh storage
   equilibrium observation. That observation must not be called validated: wallet archive catch-up,
   compact parity, the Pump repair and the clean 24-hour/seven-future-day gates remain outstanding.
+- Server ledger revision 14 closed exact R36 artifact cleanup. Revision 15 opened
+  `storage-equilibrium-observation-r36=in_progress`, SHA-256
+  `6224c45bef08aa2c9a5d09e96bd5e71fd06aaa4b1a54b0d02af023a24c7f2c67`. The server transfer tar
+  is absent while exact R34/R36 images and the local SHA-identical R36 artifact remain available
+  for rollback.
+- Final verified rollout sample: all 12 Walletscaner services were running; every changed service
+  was exact R36, restart 0/OOM false, live execution false and retained its reviewed CPU/RAM
+  ceiling. Ingestion R30, sampler R29, wallet-alpha R34 and Telegram R23 were not recreated.
+- Pipeline backlog/dead-letter was 0/0, current pool age 0.13 seconds, archive dead letters zero and
+  PostgreSQL about 15.07 GB. Host free space after exact artifact cleanup was 18,701,819,904 bytes.
+  One Pump.fun historical repair was still progressing oldest-first at 16,409/17,228; current live
+  discovery continued and the incomplete historical interval remained fail-closed.
+- The recent observation window still estimated about 0.93 GB/day database growth and 1.48 GB/day
+  filesystem consumption, only 6.55 days above the 8-GiB reserve. That window includes rollout,
+  archive catch-up and derived-state rebuild and therefore is not accepted as equilibrium.
+- No additional production mutation is currently authorized or safe. Next exact action is a
+  read-only refresh of revision 15, the remaining Pump repair, archive/compact parity, queue slope,
+  backup, database/disk slope and service restart/OOM/live state. Do not retire canonical wallet
+  evidence until archive catch-up, restored cohort parity, reader dual-read, a clean post-catch-up
+  24-hour slope and seven future shadow days all pass.
