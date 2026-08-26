@@ -154,6 +154,15 @@ keeps one day, one database connection, 80 MiB and 5% of one CPU per run; its sh
 allow up to 600 seconds per statement and 1,800 seconds to admit a day, which covers the measured
 high-volume cohorts without raising CPU or memory concurrency.
 
+Episode and open-lot source rows are a transactionally replaced working ledger. Compact
+materialization therefore uses one PostgreSQL `REPEATABLE READ` snapshot from source-count
+validation through digest parity; mixing statement snapshots can otherwise pair a newly replaced
+lot with an older episode-fact set. Conflict updates are conditional on actual field changes, and
+open-lot reconciliation prunes only facts absent from the same source snapshot instead of deleting
+and reinserting every affected lot. These rules bound WAL churn during historical retries. A
+receipt proves parity at its recorded snapshot; future source-ledger generations remain subject to
+the later dual-read and future-cohort gates before any canonical retirement.
+
 ## Populated-clone benchmark
 
 The verified 2026-08-15 production dump was serially restored into an isolated PostgreSQL 16

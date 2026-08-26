@@ -335,6 +335,162 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_open_lot_facts")
     ).resolves.toMatchObject({ rows: [{ rows: 1 }] });
 
+    const openLotBlocker = await testPool.connect();
+    let blockedMaterializer:
+      | ReturnType<typeof execFileAsync>
+      | undefined;
+    let blockerCommitted = false;
+    try {
+      await testPool.query(
+        `UPDATE wallet_evidence_compact_days
+         SET status='retry', last_error='integration concurrent-ledger retry', not_before=NOW()
+         WHERE range_start=$1`,
+        [rangeStart.toISOString()]
+      );
+      await openLotBlocker.query("BEGIN");
+      await openLotBlocker.query("LOCK TABLE wallet_open_lot_facts IN ACCESS EXCLUSIVE MODE");
+      blockedMaterializer = execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+        {
+          env: {
+            ...process.env,
+            DATABASE_URL: scopedUrl.toString(),
+            WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+          },
+          timeout: 30_000
+        }
+      );
+      await waitForActiveQuery(testPool, "DELETE FROM wallet_open_lot_facts", 5_000);
+      await testPool.query(
+        `INSERT INTO wallet_position_episodes (
+           id, chain, wallet_address, token_address, strategy_version, episode_index,
+           status, opened_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
+           remaining_raw_amount, token_decimals, realized_lot_count,
+           high_quality_price_coverage, metadata
+         ) VALUES (
+           'wallet-episode-concurrent-1', 'solana', 'WalletArchive111', 'TokenArchive111',
+           'evidence-v1', 2, 'open', $1, 1, 0, 0, 5, 6, 0, 1, '{}'::jsonb
+         )`,
+        [observedAt]
+      );
+      await testPool.query(
+        `INSERT INTO wallet_position_lots (
+           id, episode_id, source_event_idempotency_key, lot_sequence, raw_amount,
+           remaining_raw_amount, token_decimals, quote_cost_usd, fees_usd,
+           slippage_usd, opened_at, status, metadata
+         ) VALUES (
+           'wallet-lot-concurrent-1', 'wallet-episode-concurrent-1',
+           'wallet-trade-archive-1', 1, 5, 5, 6, 1, 0, 0, $1, 'open', '{}'::jsonb
+         )`,
+        [observedAt]
+      );
+      await openLotBlocker.query("COMMIT");
+      blockerCommitted = true;
+      await blockedMaterializer;
+    } finally {
+      if (!blockerCommitted) await openLotBlocker.query("ROLLBACK").catch(() => undefined);
+      openLotBlocker.release();
+      await blockedMaterializer?.catch(() => undefined);
+    }
+    await expect(
+      testPool.query(
+        `SELECT compact.status, compact.affected_episode_count::int,
+                compact.open_lot_count::int,
+                EXISTS (
+                  SELECT 1 FROM wallet_profitability_episode_facts fact
+                  WHERE fact.episode_hash=digest(
+                    convert_to('wallet-episode-concurrent-1','UTF8'),'sha256'
+                  )
+                ) AS concurrent_episode_materialized
+         FROM wallet_evidence_compact_days compact WHERE compact.range_start=$1`,
+        [rangeStart.toISOString()]
+      )
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          status: "verified",
+          affected_episode_count: 1,
+          open_lot_count: 1,
+          concurrent_episode_materialized: false
+        }
+      ]
+    });
+    await testPool.query("DELETE FROM wallet_position_lots WHERE id='wallet-lot-concurrent-1'");
+    await testPool.query(
+      "DELETE FROM wallet_position_episodes WHERE id='wallet-episode-concurrent-1'"
+    );
+
+    const unchangedBefore = await testPool.query<{
+      episode_updated_at: string;
+      lot_updated_at: string;
+    }>(
+      `SELECT episode.updated_at::text AS episode_updated_at,
+              lot.updated_at::text AS lot_updated_at
+       FROM wallet_profitability_episode_facts episode
+       CROSS JOIN wallet_open_lot_facts lot`
+    );
+    await testPool.query(
+      `UPDATE wallet_evidence_compact_days
+       SET status='retry', last_error='integration idempotence retry', not_before=NOW()
+       WHERE range_start=$1`,
+      [rangeStart.toISOString()]
+    );
+    await testPool.query("SELECT pg_sleep(0.01)");
+    await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: scopedUrl.toString(),
+          WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+        },
+        timeout: 30_000
+      }
+    );
+    const unchangedAfter = await testPool.query<{
+      episode_updated_at: string;
+      lot_updated_at: string;
+    }>(
+      `SELECT episode.updated_at::text AS episode_updated_at,
+              lot.updated_at::text AS lot_updated_at
+       FROM wallet_profitability_episode_facts episode
+       CROSS JOIN wallet_open_lot_facts lot`
+    );
+    expect(unchangedAfter.rows).toEqual(unchangedBefore.rows);
+
+    await testPool.query(
+      `UPDATE wallet_position_lots
+       SET status='realized', remaining_raw_amount=0, closed_at=NOW()
+       WHERE id='wallet-lot-archive-1'`
+    );
+    await testPool.query(
+      `UPDATE wallet_evidence_compact_days
+       SET status='retry', last_error='integration stale-lot retry', not_before=NOW()
+       WHERE range_start=$1`,
+      [rangeStart.toISOString()]
+    );
+    await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: scopedUrl.toString(),
+          WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+        },
+        timeout: 30_000
+      }
+    );
+    await expect(
+      testPool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM wallet_profitability_episode_facts)::int AS episodes,
+           (SELECT COUNT(*) FROM wallet_open_lot_facts)::int AS open_lots`
+      )
+    ).resolves.toMatchObject({ rows: [{ episodes: 1, open_lots: 0 }] });
+
     await testPool.query(
       `UPDATE wallet_trade_events
        SET raw = raw || '{"corrected":true}'::jsonb
@@ -575,4 +731,22 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
 function utcDayOffset(days: number): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days));
+}
+
+async function waitForActiveQuery(pool: pg.Pool, fragment: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const active = await pool.query<{ found: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_stat_activity
+         WHERE datname=current_database()
+           AND state <> 'idle'
+           AND strpos(query, $1) > 0
+       ) AS found`,
+      [fragment]
+    );
+    if (active.rows[0]?.found) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for active PostgreSQL query fragment: ${fragment}`);
 }

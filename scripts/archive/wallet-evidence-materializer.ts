@@ -159,7 +159,10 @@ async function materializeDay(
       phaseDurationsMs[name] = Date.now() - phaseStartedAt;
     }
   };
-  await client.query("BEGIN");
+  // Every compact table and its parity proof must describe one source-ledger version.
+  // Wallet alpha replaces episode/lot snapshots concurrently, so READ COMMITTED can
+  // otherwise observe a newer child lot after the parent-fact statement has finished.
+  await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
   try {
     await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
     const current = await phase("lock-segment", () =>
@@ -381,7 +384,7 @@ async function materializeEpisodes(client: pg.PoolClient, start: string, end: st
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
      )
-     INSERT INTO wallet_profitability_episode_facts (
+     INSERT INTO wallet_profitability_episode_facts AS fact (
        episode_hash, wallet_id, token_id, strategy_id, episode_index, status,
        opened_at, closed_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
        return_pct, remaining_raw_amount, token_decimals, realized_lot_count,
@@ -413,7 +416,22 @@ async function materializeEpisodes(client: pg.PoolClient, start: string, end: st
        token_decimals=EXCLUDED.token_decimals,
        realized_lot_count=EXCLUDED.realized_lot_count,
        high_quality_price_coverage=EXCLUDED.high_quality_price_coverage,
-       terminal_reason=EXCLUDED.terminal_reason, updated_at=NOW()`,
+       terminal_reason=EXCLUDED.terminal_reason, updated_at=NOW()
+     WHERE ROW(
+       fact.wallet_id, fact.token_id, fact.strategy_id, fact.episode_index,
+       fact.status, fact.opened_at, fact.closed_at, fact.cost_basis_usd,
+       fact.proceeds_usd, fact.realized_pnl_usd, fact.return_pct,
+       fact.remaining_raw_amount, fact.token_decimals, fact.realized_lot_count,
+       fact.high_quality_price_coverage, fact.terminal_reason
+     ) IS DISTINCT FROM ROW(
+       EXCLUDED.wallet_id, EXCLUDED.token_id, EXCLUDED.strategy_id,
+       EXCLUDED.episode_index, EXCLUDED.status, EXCLUDED.opened_at,
+       EXCLUDED.closed_at, EXCLUDED.cost_basis_usd, EXCLUDED.proceeds_usd,
+       EXCLUDED.realized_pnl_usd, EXCLUDED.return_pct,
+       EXCLUDED.remaining_raw_amount, EXCLUDED.token_decimals,
+       EXCLUDED.realized_lot_count, EXCLUDED.high_quality_price_coverage,
+       EXCLUDED.terminal_reason
+     )`,
     [start, end]
   );
 }
@@ -449,16 +467,28 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
        SELECT DISTINCT chain, wallet_address, strategy_version
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
-     ), affected AS (
-       SELECT digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash
+     ), affected AS MATERIALIZED (
+       SELECT episode.id AS episode_id,
+              digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash
        FROM wallet_position_episodes episode
        JOIN touched ON touched.chain=episode.chain
          AND touched.wallet_address=episode.wallet_address
          AND touched.strategy_version=episode.strategy_version
+     ), current_lots AS MATERIALIZED (
+       SELECT digest(convert_to(lot.id,'UTF8'),'sha256') AS lot_hash,
+              affected.episode_hash
+       FROM wallet_position_lots lot
+       JOIN affected ON affected.episode_id=lot.episode_id
+       WHERE lot.status <> 'realized'
      )
      DELETE FROM wallet_open_lot_facts fact
      USING affected
-     WHERE fact.episode_hash=affected.episode_hash`,
+     WHERE fact.episode_hash=affected.episode_hash
+       AND NOT EXISTS (
+         SELECT 1 FROM current_lots current
+         WHERE current.lot_hash=fact.lot_hash
+           AND current.episode_hash=fact.episode_hash
+       )`,
     [start, end]
   );
   await client.query(
@@ -467,7 +497,7 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
      )
-     INSERT INTO wallet_open_lot_facts (
+     INSERT INTO wallet_open_lot_facts AS fact (
        lot_hash, episode_hash, lot_sequence, raw_amount, remaining_raw_amount,
        token_decimals, quote_cost_usd, fees_usd, slippage_usd, opened_at,
        closed_at, status, updated_at
@@ -489,7 +519,18 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
        token_decimals=EXCLUDED.token_decimals, quote_cost_usd=EXCLUDED.quote_cost_usd,
        fees_usd=EXCLUDED.fees_usd, slippage_usd=EXCLUDED.slippage_usd,
        opened_at=EXCLUDED.opened_at, closed_at=EXCLUDED.closed_at,
-       status=EXCLUDED.status, updated_at=NOW()`,
+       status=EXCLUDED.status, updated_at=NOW()
+     WHERE ROW(
+       fact.episode_hash, fact.lot_sequence, fact.raw_amount,
+       fact.remaining_raw_amount, fact.token_decimals, fact.quote_cost_usd,
+       fact.fees_usd, fact.slippage_usd, fact.opened_at, fact.closed_at,
+       fact.status
+     ) IS DISTINCT FROM ROW(
+       EXCLUDED.episode_hash, EXCLUDED.lot_sequence, EXCLUDED.raw_amount,
+       EXCLUDED.remaining_raw_amount, EXCLUDED.token_decimals,
+       EXCLUDED.quote_cost_usd, EXCLUDED.fees_usd, EXCLUDED.slippage_usd,
+       EXCLUDED.opened_at, EXCLUDED.closed_at, EXCLUDED.status
+     )`,
     [start, end]
   );
 }

@@ -976,3 +976,53 @@ blindly repeat the last mutation.
   Stopping this derived compact shadow worker does not stop canonical data collection or B2 archive
   catch-up. Do not restart it until an R38 snapshot-consistency candidate passes clone concurrency
   and production preflight gates.
+
+## R38 repair start checkpoint at 2026-08-26 17:16 UTC
+
+- Resume verification found local HEAD `1fc78d4`, branch 80 commits ahead of origin, with only the
+  four pre-existing ignored/untracked transfer artifacts. No interrupted source edit or R38
+  artifact exists.
+- Production still has only the Walletscaner Compose project listed. The exact R37 materializer
+  container `4b784501...` is stopped with exit 143, restart 0 and OOM false. Its retry loop is
+  contained; no active compact-fact query was observed. Canonical ingestion, wallet alpha,
+  sampling, Telegram, PostgreSQL, Redis and the R36 archive writer/verifier remain running. No
+  protected co-tenant resource was changed or inspected.
+- The host has 16,328,011,776 bytes free and PostgreSQL is 16,978,803,735 bytes. Inbox work/dead
+  letter was 12/0. The first freshness query used the wrong pool relation name and stopped before
+  those two ages were returned; repeat it with the canonical health query before any rollout.
+- The production-only foreign-key failure is explained by a statement-snapshot race: the R37
+  materializer uses READ COMMITTED, while wallet alpha transactionally replaces episode/lot
+  snapshots between the episode-fact and open-lot statements. A local static clone cannot expose
+  this race. Repeated historical cohorts also rewrite unchanged episode facts and delete/reinsert
+  every open lot, causing avoidable WAL and timeout risk.
+- Next exact action is local-only: change the materializer transaction to REPEATABLE READ, suppress
+  unchanged episode/open-lot updates, replace delete-all/reinsert open-lot reconciliation with an
+  affected-scope stale-lot prune plus idempotent upsert, and add control-flow plus PostgreSQL
+  regression evidence. Do not create or deploy R38, restart the production materializer, rewrite a
+  compact receipt, retire source rows or mutate B2 until the exact candidate passes the populated
+  clone concurrency/performance gate.
+
+## R38 local correctness checkpoint at 2026-08-26 17:27 UTC
+
+- The local R38 source now begins every day with `REPEATABLE READ`, suppresses no-op episode and
+  open-lot conflict updates, and replaces the former affected-scope delete-all/reinsert lot pass
+  with a same-snapshot stale-lot anti-join plus idempotent upsert. There is no schema migration and
+  no reader/retirement change.
+- Unit control-flow tests passed 5/5; TypeScript and targeted ESLint passed. Windows could not run
+  the archive integration because the host has no `zstd`, matching the recorded environment gap.
+  The exact R37 Linux runtime (Node 24 plus zstd), with only the R38 source/tests bind-mounted
+  read-only, then passed the materializer and PostgreSQL archive integration 10/10 against a new
+  disposable PostgreSQL 16 database.
+- The regression holds an `ACCESS EXCLUSIVE` lock at the open-lot boundary, commits a concurrent
+  episode/lot generation for the same touched wallet, and proves the materializer neither mixes
+  child/parent generations nor violates the foreign key. It also proves a retry over unchanged
+  facts preserves both `updated_at` values and that a source lot becoming realized prunes only its
+  stale compact continuation fact.
+- The disposable test container is `walletscaner-pg16-r38-test` on loopback port 55435; it contains
+  no production data and may be removed after the exact R38 image gate. The populated clone
+  `walletscaner-pg16-r31` has not yet been mutated in this R38 phase.
+- Next exact action: commit this coherent source/test/document checkpoint, then inspect the
+  populated clone's exact archive/receipt state before any reset. Run one full-day R38 retry there,
+  record phase durations and PostgreSQL WAL/temp deltas, and compare with the prior 208,827 ms R37
+  baseline. Production materializer remains stopped and no R38 artifact or rollout ledger phase
+  exists yet.
