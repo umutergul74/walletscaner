@@ -1633,3 +1633,37 @@ blindly repeat the last mutation.
   read-only production preflight and flow resample. Do not open ledger R39 artifact staging unless
   revision 24 is still failed, selector/materializer rollback is exact, recovery evidence is
   current, no heavy job is active and staging plus temp margin remains above the 8-GiB reserve.
+
+## R39 rollout held on silent trade-coverage gate at 2026-08-26 21:04 UTC
+
+- The fresh production preflight kept the R39 artifact off host. Pool discovery, canonical inbox,
+  finality and discovery coverage were current, but the bounded RPC trade lane had converged to
+  zero configured/subscribed pool addresses. Swap and wallet-trade evidence therefore stopped
+  advancing even though discovery and backlog telemetry looked healthy. This is a hard data-
+  coverage gate, not an acceptable idle period and not permission to deploy the storage worker.
+- Root cause is deterministic in the current source. RPC mode subscribes only after a pool has
+  complete trade coverage, controlled market flow and known/passed token risk. The delayed first
+  subscription requests historical backfill; a saturated/truncated bounded backfill correctly
+  fails that pool closed forever. Pools that do not reach the downstream alpha/risk gate consume
+  no observation slot, so the three-slot lane can legally reach zero and collect no wallet trades.
+- Official Helius documentation currently gives the free plan one million monthly credits and
+  standard LaserStream WebSocket methods, while `transactionSubscribe` requires a paid plan.
+  Standard WebSocket traffic is metered at two credits per 0.1 MB and inactive sockets may close
+  after ten minutes. The accepted design therefore keeps standard exact-pool subscriptions
+  bounded; it does not move program-wide transaction traffic to Helius or purchase a provider.
+- The required architecture change separates **observation admission** from **alpha admission**.
+  A cheap, deterministic market pre-gate may occupy one of the existing three exact-pool trade
+  slots before token-risk enrichment completes. Strict controlled-flow, known/passed risk and
+  complete-from-boundary coverage remain mandatory downstream. Eviction, queue pressure or an
+  unrepairable historical prefix must persist an explicit coverage gap; partial observation must
+  never be labelled complete wallet profitability evidence.
+- Acceptance before production: a pure bounded scheduler has deterministic priority, a hard slot
+  cap, minimum hold/anti-thrash behavior and explicit eviction disposition; tests prove an
+  eligible observation pool fills an empty lane without weakening alpha admission, and prove
+  incomplete/evicted pools cannot reactivate as complete. Health must report zero active trade
+  subscriptions as degraded whenever recent market-qualified pools exist. Then run targeted
+  provider/worker tests and the repository gate, build a new immutable image (do not mutate R39),
+  rehearse exact identity, and only then repeat the production backup/headroom/ledger preflight.
+- Production remains unchanged: selector R37, exact R37 materializer stopped, live execution
+  false, ledger revision 24 failed. Next exact action is read-only production cohort measurement
+  for recent market-qualified pools, followed by the local pure scheduler/test implementation.
