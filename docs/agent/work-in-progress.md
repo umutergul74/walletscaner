@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T05:41:00Z
+updated_at_utc: 2026-08-26T18:26:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1184,3 +1184,28 @@ blindly repeat the last mutation.
   poll that one transaction and backup container exit/progress without interrupting it. Only after
   it finishes may the newest complete dump be selected and its checksum, off-site marker and
   `pg_restore --list` proof revalidated before opening revision 21 for R38 artifact staging.
+
+## Resume audit while daily backup remains active at 2026-08-26 18:26 UTC
+
+- The interruption checkpoint was compared with Git and production before any mutation. Local HEAD
+  is `9b04199`; the only working-tree artifacts are the same four pre-existing untracked partial
+  transfers. Exact local R38 remains 462,868,480 bytes with SHA-256
+  `1976fce09466f15a67352301deca0731d1ccaba484ad7d9951f034b4248c28d9`. No R38 server artifact,
+  image, selector or ledger phase has been assumed or opened.
+- Server ledger is still revision 20 with `r37-materializer-activation=failed`; canonical flow and
+  the stopped R37 materializer state recorded there have not been changed. The only listed Compose
+  project is `walletscaner`; no co-tenant target was inspected or mutated.
+- The daily `pg_dump` PID 2698043 remains active and low priority. Its temporary generation
+  `memecoin_alpha_20260826T173517Z.dump.tmp` grew monotonically from the pre-interruption 694,465,101
+  bytes to 1,059,111,465 bytes at 18:24 UTC and then 1,116,030,136, 1,137,781,624 and
+  1,140,682,624 bytes through 18:26 UTC. PostgreSQL progress moved from the 26-Aug raw-payload
+  partition to `swaps`; no OOM, restart or failed backup log is present.
+- Host free disk is 15,199,555,584 bytes, available memory about 1.03 GB and free swap about
+  1.97 GB. This still passes the eventual 8-GiB reserve plus measured 2-GiB materializer-temp gate,
+  but R38 transfer/load/canary must not overlap the active dump.
+- Next exact read-only action is to continue bounded polling until the temporary dump is atomically
+  finalized and its sidecar appears. Then verify the completed dump's full SHA against its sidecar,
+  PostgreSQL 16 `pg_restore --list`, and off-site acknowledgement (or retain the prior already
+  verified generation as the recovery gate while acknowledgement safely catches up). Only after
+  the backup process and any heavy off-site transfer are idle may revision 21 be opened for
+  `r38-artifact-staging`.
