@@ -1145,3 +1145,28 @@ blindly repeat the last mutation.
   disk/RAM/load/temp headroom, Compose identities, exact live-false values, archive activity,
   canonical freshness/coverage/dead letters and current R37 materializer stopped state. Do not
   transfer R38 unless the 2 GiB temp margin above the 8 GiB reserve and all hard gates pass.
+
+## R38 production preflight hold at 2026-08-26 17:58 UTC
+
+- Read-only production preflight confirms 15,838,797,824 bytes free, about 1.04 GB available RAM
+  and 1.97 GB free swap. Staging plus image load plus the measured 1.86 GB temp run still leaves
+  more than the 8 GiB hard reserve, but current load is not an activation window.
+- Canonical flow is operational: coverage incidents 0, inbox/dead letter 8/0 at the sample, pool age
+  23 seconds, 255 trades from 90 wallets in the later 15-minute sample, no active compact query and
+  live execution false in every selected worker. Six compact days are verified; July 12/13/14 are
+  the three retry rows from the R37 timeout failure. Wallet archive is progressing with 17 verified,
+  15 pending and zero dead-letter segments.
+- The one transaction older than five minutes is the normal daily `pg_dump`, actively copying the
+  25-Aug raw payload partition. It explains the elevated one-CPU load and must not be interrupted or
+  overlapped by R38 transfer/load/canary. The latest completed dump remains the 2,053,352,363-byte
+  25-Aug file with sidecar and off-site marker; its full SHA/restore-list recheck waits until the
+  current dump completes.
+- Server ledger is exactly revision 19, current phase `r37-materializer-activation`, status
+  `in_progress`, SHA-256 `0a422c660544b2d6e9177a188ce8bfbe541d5fcfd6e19c310714b92a56bdb3f5`.
+  R38 artifact paths and image are absent. Current Compose/env still select R37 for operations, but
+  the only R37 materializer is stopped exit 143; running operations/archive services remain exact
+  R36 and all non-target identities are unchanged.
+- Next exact production mutation is limited to release bookkeeping: hash-match the checkpoint tool,
+  dry-run then close revision 19 as failed with the proven FK/snapshot/WAL canary evidence. Do not
+  open R38 staging or transfer anything until `pg_dump` exits cleanly, its new or prior complete
+  recovery artifact passes checksum/off-site/restore-list gates, and load falls to a safe window.
