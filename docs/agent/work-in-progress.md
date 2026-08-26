@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:58:20Z
+updated_at_utc: 2026-08-26T02:06:20Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -680,3 +680,29 @@ blindly repeat the last mutation.
 - Next exact action: recreate writer, data maintenance, compact materializer and operations monitor
   individually on R36 with `--no-build --no-deps`; after each, prove exact image, prior limits,
   restart/OOM and live-false. Then run a bounded maintenance canary and refresh health/data flow.
+- Writer, data maintenance, compact materializer and operations monitor were recreated individually
+  on exact R36. Their old identities were recorded; every new container is running, restart 0/OOM
+  false, live false and retains its reviewed 128/64/80/64 MiB and 0.04/0.04/0.05/0.03 CPU limits.
+  Ingestion R30, sampler R29, wallet-alpha R34 and Telegram R23 container identities did not change.
+- The first maintenance one-shot invocation accidentally inherited the service's infinite scheduler
+  command. It was interrupted before its 300-second initial sleep elapsed and its exact transient
+  container auto-removed; it performed no maintenance. The corrected explicit Node command then
+  completed in 11,992 ms under R36. It compacted 356 verified raw payloads, retired 564 old swaps,
+  reported zero compaction lag and zero terminal repair signatures yet eligible under the unchanged
+  three-day retention. One bounded inbox-metadata statement timed out and was reported; no job or
+  transaction failed.
+- Fresh health is `degraded`, no longer `down`: pipeline backlog/dead-letter 0/0, archive dead-letter
+  0, last pool age 0.13 s, database about 15.07 GB and disk free about 18.25 GB. Degraded reasons
+  are catch-up age, rolling growth/runway, database warning and a point load sample, not a stopped
+  transport or data-loss error.
+- One Pump.fun historical incident remains open while its exact oldest-first repair progresses:
+  boundary reached, 16,409/17,228 replayed and 819 pending at the last sample. Current live transport
+  and new pool discovery continue. Three completed and three terminal 20,000-cap repairs from the
+  last 24 hours remain explicitly alpha-excluded as designed.
+- Wallet alpha's last five cycles had zero failures/OOM and 53-100 processed wallets each; P2/signal
+  lane remains zero. The broad requeue is roughly stable near 13.3k because catch-up continues, but
+  it is not blocking fresh signal-priority work.
+- Next exact action: close machine-ledger revision 12 as the R36 integrity repair completed. Then
+  open a separate artifact-cleanup phase, recheck server/local artifact SHA and loaded R36/R34 image
+  IDs, and delete only the exact server R36 transfer tar. No Docker image prune or database/B2
+  deletion is permitted.
