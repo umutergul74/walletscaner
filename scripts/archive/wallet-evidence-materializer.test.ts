@@ -40,11 +40,14 @@ describe("wallet evidence materializer control flow", () => {
     const source = await readFile(sourcePath, "utf8");
 
     expect(source).toContain('client.query("BEGIN ISOLATION LEVEL REPEATABLE READ")');
-    expect(source).toContain("INSERT INTO wallet_profitability_episode_facts AS fact");
+    expect(source).toContain("MERGE INTO wallet_profitability_episode_facts AS fact");
     expect(source).toContain("fact.high_quality_price_coverage, fact.terminal_reason");
-    expect(source).toContain("INSERT INTO wallet_open_lot_facts AS fact");
+    expect(source).toContain("MERGE INTO wallet_open_lot_facts AS fact");
     expect(source).toContain("current_lots AS MATERIALIZED");
     expect(source).toContain("AND NOT EXISTS (\n         SELECT 1 FROM current_lots current");
+    expect(source).toContain("MERGE INTO wallet_followability_facts AS fact");
+    expect(source).toContain("current_outcomes AS MATERIALIZED");
+    expect(source).toContain("current.outcome_hash=fact.outcome_hash");
     expect(source).not.toContain("DELETE FROM wallet_open_lot_facts fact\n     USING affected\n     WHERE fact.episode_hash=affected.episode_hash`");
   });
 

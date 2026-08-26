@@ -421,14 +421,57 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       "DELETE FROM wallet_position_episodes WHERE id='wallet-episode-concurrent-1'"
     );
 
+    await testPool.query(
+      `UPDATE wallet_followability_facts
+       SET outcome_hash=digest(convert_to('stale-followability-fact','UTF8'),'sha256')`
+    );
+    await testPool.query(
+      `UPDATE wallet_evidence_compact_days
+       SET status='retry', last_error='integration stale-followability retry', not_before=NOW()
+       WHERE range_start=$1`,
+      [rangeStart.toISOString()]
+    );
+    await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", "scripts/archive/wallet-evidence-materializer.ts"],
+      {
+        env: {
+          ...process.env,
+          DATABASE_URL: scopedUrl.toString(),
+          WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN: "1"
+        },
+        timeout: 30_000
+      }
+    );
+    await expect(
+      testPool.query(
+        `SELECT
+           COUNT(*)::int AS rows,
+           COUNT(*) FILTER (
+             WHERE outcome_hash=digest(
+               convert_to('wallet-outcome-archive-1','UTF8'),'sha256'
+             )
+           )::int AS current_rows,
+           COUNT(*) FILTER (
+             WHERE outcome_hash=digest(
+               convert_to('stale-followability-fact','UTF8'),'sha256'
+             )
+           )::int AS stale_rows
+         FROM wallet_followability_facts`
+      )
+    ).resolves.toMatchObject({ rows: [{ rows: 1, current_rows: 1, stale_rows: 0 }] });
+
     const unchangedBefore = await testPool.query<{
       episode_updated_at: string;
       lot_updated_at: string;
+      followability_updated_at: string;
     }>(
       `SELECT episode.updated_at::text AS episode_updated_at,
-              lot.updated_at::text AS lot_updated_at
+              lot.updated_at::text AS lot_updated_at,
+              followability.updated_at::text AS followability_updated_at
        FROM wallet_profitability_episode_facts episode
-       CROSS JOIN wallet_open_lot_facts lot`
+       CROSS JOIN wallet_open_lot_facts lot
+       CROSS JOIN wallet_followability_facts followability`
     );
     await testPool.query(
       `UPDATE wallet_evidence_compact_days
@@ -452,11 +495,14 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
     const unchangedAfter = await testPool.query<{
       episode_updated_at: string;
       lot_updated_at: string;
+      followability_updated_at: string;
     }>(
       `SELECT episode.updated_at::text AS episode_updated_at,
-              lot.updated_at::text AS lot_updated_at
+              lot.updated_at::text AS lot_updated_at,
+              followability.updated_at::text AS followability_updated_at
        FROM wallet_profitability_episode_facts episode
-       CROSS JOIN wallet_open_lot_facts lot`
+       CROSS JOIN wallet_open_lot_facts lot
+       CROSS JOIN wallet_followability_facts followability`
     );
     expect(unchangedAfter.rows).toEqual(unchangedBefore.rows);
 

@@ -157,9 +157,10 @@ high-volume cohorts without raising CPU or memory concurrency.
 Episode and open-lot source rows are a transactionally replaced working ledger. Compact
 materialization therefore uses one PostgreSQL `REPEATABLE READ` snapshot from source-count
 validation through digest parity; mixing statement snapshots can otherwise pair a newly replaced
-lot with an older episode-fact set. Conflict updates are conditional on actual field changes, and
-open-lot reconciliation prunes only facts absent from the same source snapshot instead of deleting
-and reinserting every affected lot. These rules bound WAL churn during historical retries. A
+lot with an older episode-fact set. PostgreSQL 16 `MERGE` updates only facts whose fields actually
+changed and inserts only missing facts; open-lot and followability reconciliation prune only rows
+absent from the same source snapshot instead of deleting and reinserting an entire affected set.
+These rules bound WAL churn during historical retries. A
 receipt proves parity at its recorded snapshot; future source-ledger generations remain subject to
 the later dual-read and future-cohort gates before any canonical retirement.
 

@@ -383,54 +383,65 @@ async function materializeEpisodes(client: pg.PoolClient, start: string, end: st
        SELECT DISTINCT chain, wallet_address, strategy_version
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
+     ), desired AS MATERIALIZED (
+       SELECT digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash,
+              wallet.id AS wallet_id, token.id AS token_id, strategy.id AS strategy_id,
+              episode.episode_index, episode.status, episode.opened_at,
+              episode.closed_at, episode.cost_basis_usd, episode.proceeds_usd,
+              episode.realized_pnl_usd, episode.return_pct,
+              episode.remaining_raw_amount, episode.token_decimals,
+              episode.realized_lot_count, episode.high_quality_price_coverage,
+              episode.terminal_reason
+       FROM wallet_position_episodes episode
+       JOIN touched ON touched.chain=episode.chain
+         AND touched.wallet_address=episode.wallet_address
+         AND touched.strategy_version=episode.strategy_version
+       JOIN wallet_evidence_wallet_dimensions wallet
+         ON wallet.chain=episode.chain AND wallet.wallet_address=episode.wallet_address
+       JOIN wallet_evidence_token_dimensions token
+         ON token.chain=episode.chain AND token.token_address=episode.token_address
+       JOIN wallet_evidence_strategy_dimensions strategy
+         ON strategy.strategy_version=episode.strategy_version
      )
-     INSERT INTO wallet_profitability_episode_facts AS fact (
-       episode_hash, wallet_id, token_id, strategy_id, episode_index, status,
-       opened_at, closed_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
-       return_pct, remaining_raw_amount, token_decimals, realized_lot_count,
-       high_quality_price_coverage, terminal_reason, updated_at
-     )
-     SELECT digest(convert_to(episode.id,'UTF8'),'sha256'), wallet.id, token.id,
-            strategy.id, episode.episode_index, episode.status, episode.opened_at,
-            episode.closed_at, episode.cost_basis_usd, episode.proceeds_usd,
-            episode.realized_pnl_usd, episode.return_pct, episode.remaining_raw_amount,
-            episode.token_decimals, episode.realized_lot_count,
-            episode.high_quality_price_coverage, episode.terminal_reason, NOW()
-     FROM wallet_position_episodes episode
-     JOIN touched ON touched.chain=episode.chain
-       AND touched.wallet_address=episode.wallet_address
-       AND touched.strategy_version=episode.strategy_version
-     JOIN wallet_evidence_wallet_dimensions wallet
-       ON wallet.chain=episode.chain AND wallet.wallet_address=episode.wallet_address
-     JOIN wallet_evidence_token_dimensions token
-       ON token.chain=episode.chain AND token.token_address=episode.token_address
-     JOIN wallet_evidence_strategy_dimensions strategy
-       ON strategy.strategy_version=episode.strategy_version
-     ON CONFLICT (episode_hash) DO UPDATE SET
-       wallet_id=EXCLUDED.wallet_id, token_id=EXCLUDED.token_id,
-       strategy_id=EXCLUDED.strategy_id, episode_index=EXCLUDED.episode_index,
-       status=EXCLUDED.status, opened_at=EXCLUDED.opened_at,
-       closed_at=EXCLUDED.closed_at, cost_basis_usd=EXCLUDED.cost_basis_usd,
-       proceeds_usd=EXCLUDED.proceeds_usd, realized_pnl_usd=EXCLUDED.realized_pnl_usd,
-       return_pct=EXCLUDED.return_pct, remaining_raw_amount=EXCLUDED.remaining_raw_amount,
-       token_decimals=EXCLUDED.token_decimals,
-       realized_lot_count=EXCLUDED.realized_lot_count,
-       high_quality_price_coverage=EXCLUDED.high_quality_price_coverage,
-       terminal_reason=EXCLUDED.terminal_reason, updated_at=NOW()
-     WHERE ROW(
+     MERGE INTO wallet_profitability_episode_facts AS fact
+     USING desired ON fact.episode_hash=desired.episode_hash
+     WHEN MATCHED AND ROW(
        fact.wallet_id, fact.token_id, fact.strategy_id, fact.episode_index,
        fact.status, fact.opened_at, fact.closed_at, fact.cost_basis_usd,
        fact.proceeds_usd, fact.realized_pnl_usd, fact.return_pct,
        fact.remaining_raw_amount, fact.token_decimals, fact.realized_lot_count,
        fact.high_quality_price_coverage, fact.terminal_reason
      ) IS DISTINCT FROM ROW(
-       EXCLUDED.wallet_id, EXCLUDED.token_id, EXCLUDED.strategy_id,
-       EXCLUDED.episode_index, EXCLUDED.status, EXCLUDED.opened_at,
-       EXCLUDED.closed_at, EXCLUDED.cost_basis_usd, EXCLUDED.proceeds_usd,
-       EXCLUDED.realized_pnl_usd, EXCLUDED.return_pct,
-       EXCLUDED.remaining_raw_amount, EXCLUDED.token_decimals,
-       EXCLUDED.realized_lot_count, EXCLUDED.high_quality_price_coverage,
-       EXCLUDED.terminal_reason
+       desired.wallet_id, desired.token_id, desired.strategy_id,
+       desired.episode_index, desired.status, desired.opened_at,
+       desired.closed_at, desired.cost_basis_usd, desired.proceeds_usd,
+       desired.realized_pnl_usd, desired.return_pct,
+       desired.remaining_raw_amount, desired.token_decimals,
+       desired.realized_lot_count, desired.high_quality_price_coverage,
+       desired.terminal_reason
+     ) THEN UPDATE SET
+       wallet_id=desired.wallet_id, token_id=desired.token_id,
+       strategy_id=desired.strategy_id, episode_index=desired.episode_index,
+       status=desired.status, opened_at=desired.opened_at,
+       closed_at=desired.closed_at, cost_basis_usd=desired.cost_basis_usd,
+       proceeds_usd=desired.proceeds_usd, realized_pnl_usd=desired.realized_pnl_usd,
+       return_pct=desired.return_pct, remaining_raw_amount=desired.remaining_raw_amount,
+       token_decimals=desired.token_decimals,
+       realized_lot_count=desired.realized_lot_count,
+       high_quality_price_coverage=desired.high_quality_price_coverage,
+       terminal_reason=desired.terminal_reason, updated_at=NOW()
+     WHEN NOT MATCHED THEN INSERT (
+       episode_hash, wallet_id, token_id, strategy_id, episode_index, status,
+       opened_at, closed_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
+       return_pct, remaining_raw_amount, token_decimals, realized_lot_count,
+       high_quality_price_coverage, terminal_reason, updated_at
+     ) VALUES (
+       desired.episode_hash, desired.wallet_id, desired.token_id, desired.strategy_id,
+       desired.episode_index, desired.status, desired.opened_at, desired.closed_at,
+       desired.cost_basis_usd, desired.proceeds_usd, desired.realized_pnl_usd,
+       desired.return_pct, desired.remaining_raw_amount, desired.token_decimals,
+       desired.realized_lot_count, desired.high_quality_price_coverage,
+       desired.terminal_reason, NOW()
      )`,
     [start, end]
   );
@@ -496,40 +507,47 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
        SELECT DISTINCT chain, wallet_address, strategy_version
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
+     ), desired AS MATERIALIZED (
+       SELECT digest(convert_to(lot.id,'UTF8'),'sha256') AS lot_hash,
+              digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash,
+              lot.lot_sequence, lot.raw_amount, lot.remaining_raw_amount,
+              lot.token_decimals, lot.quote_cost_usd, lot.fees_usd,
+              lot.slippage_usd, lot.opened_at, lot.closed_at, lot.status
+       FROM wallet_position_lots lot
+       JOIN wallet_position_episodes episode ON episode.id=lot.episode_id
+       JOIN touched ON touched.chain=episode.chain
+         AND touched.wallet_address=episode.wallet_address
+         AND touched.strategy_version=episode.strategy_version
+       WHERE lot.status <> 'realized'
      )
-     INSERT INTO wallet_open_lot_facts AS fact (
-       lot_hash, episode_hash, lot_sequence, raw_amount, remaining_raw_amount,
-       token_decimals, quote_cost_usd, fees_usd, slippage_usd, opened_at,
-       closed_at, status, updated_at
-     )
-     SELECT digest(convert_to(lot.id,'UTF8'),'sha256'),
-            digest(convert_to(episode.id,'UTF8'),'sha256'), lot.lot_sequence,
-            lot.raw_amount, lot.remaining_raw_amount, lot.token_decimals,
-            lot.quote_cost_usd, lot.fees_usd, lot.slippage_usd, lot.opened_at,
-            lot.closed_at, lot.status, NOW()
-     FROM wallet_position_lots lot
-     JOIN wallet_position_episodes episode ON episode.id=lot.episode_id
-     JOIN touched ON touched.chain=episode.chain
-       AND touched.wallet_address=episode.wallet_address
-       AND touched.strategy_version=episode.strategy_version
-     WHERE lot.status <> 'realized'
-     ON CONFLICT (lot_hash) DO UPDATE SET
-       episode_hash=EXCLUDED.episode_hash, lot_sequence=EXCLUDED.lot_sequence,
-       raw_amount=EXCLUDED.raw_amount, remaining_raw_amount=EXCLUDED.remaining_raw_amount,
-       token_decimals=EXCLUDED.token_decimals, quote_cost_usd=EXCLUDED.quote_cost_usd,
-       fees_usd=EXCLUDED.fees_usd, slippage_usd=EXCLUDED.slippage_usd,
-       opened_at=EXCLUDED.opened_at, closed_at=EXCLUDED.closed_at,
-       status=EXCLUDED.status, updated_at=NOW()
-     WHERE ROW(
+     MERGE INTO wallet_open_lot_facts AS fact
+     USING desired ON fact.lot_hash=desired.lot_hash
+     WHEN MATCHED AND ROW(
        fact.episode_hash, fact.lot_sequence, fact.raw_amount,
        fact.remaining_raw_amount, fact.token_decimals, fact.quote_cost_usd,
        fact.fees_usd, fact.slippage_usd, fact.opened_at, fact.closed_at,
        fact.status
      ) IS DISTINCT FROM ROW(
-       EXCLUDED.episode_hash, EXCLUDED.lot_sequence, EXCLUDED.raw_amount,
-       EXCLUDED.remaining_raw_amount, EXCLUDED.token_decimals,
-       EXCLUDED.quote_cost_usd, EXCLUDED.fees_usd, EXCLUDED.slippage_usd,
-       EXCLUDED.opened_at, EXCLUDED.closed_at, EXCLUDED.status
+       desired.episode_hash, desired.lot_sequence, desired.raw_amount,
+       desired.remaining_raw_amount, desired.token_decimals,
+       desired.quote_cost_usd, desired.fees_usd, desired.slippage_usd,
+       desired.opened_at, desired.closed_at, desired.status
+     ) THEN UPDATE SET
+       episode_hash=desired.episode_hash, lot_sequence=desired.lot_sequence,
+       raw_amount=desired.raw_amount, remaining_raw_amount=desired.remaining_raw_amount,
+       token_decimals=desired.token_decimals, quote_cost_usd=desired.quote_cost_usd,
+       fees_usd=desired.fees_usd, slippage_usd=desired.slippage_usd,
+       opened_at=desired.opened_at, closed_at=desired.closed_at,
+       status=desired.status, updated_at=NOW()
+     WHEN NOT MATCHED THEN INSERT (
+       lot_hash, episode_hash, lot_sequence, raw_amount, remaining_raw_amount,
+       token_decimals, quote_cost_usd, fees_usd, slippage_usd, opened_at,
+       closed_at, status, updated_at
+     ) VALUES (
+       desired.lot_hash, desired.episode_hash, desired.lot_sequence,
+       desired.raw_amount, desired.remaining_raw_amount, desired.token_decimals,
+       desired.quote_cost_usd, desired.fees_usd, desired.slippage_usd,
+       desired.opened_at, desired.closed_at, desired.status, NOW()
      )`,
     [start, end]
   );
@@ -537,12 +555,123 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
 
 async function materializeFollowability(client: pg.PoolClient, start: string, end: string) {
   await client.query(
-    `DELETE FROM wallet_followability_facts
-     WHERE outcome_observed_at >= $1 AND outcome_observed_at < $2`,
+    `WITH current_outcomes AS MATERIALIZED (
+       SELECT digest(convert_to(outcome.idempotency_key,'UTF8'),'sha256') AS outcome_hash
+       FROM wallet_signal_outcomes outcome
+       WHERE outcome.status='mature'
+         AND outcome.observed_at >= $1 AND outcome.observed_at < $2
+     )
+     DELETE FROM wallet_followability_facts fact
+     WHERE fact.outcome_observed_at >= $1 AND fact.outcome_observed_at < $2
+       AND NOT EXISTS (
+         SELECT 1 FROM current_outcomes current
+         WHERE current.outcome_hash=fact.outcome_hash
+       )`,
     [start, end]
   );
   await client.query(
-    `INSERT INTO wallet_followability_facts (
+    `WITH desired AS MATERIALIZED (
+       SELECT digest(convert_to(outcome.idempotency_key,'UTF8'),'sha256') AS outcome_hash,
+              digest(convert_to(entry.idempotency_key,'UTF8'),'sha256') AS entry_hash,
+              wallet.id AS wallet_id, token.id AS token_id, strategy.id AS strategy_id,
+              entry.observed_at AS entry_observed_at,
+              outcome.observed_at AS outcome_observed_at,
+              entry.observed_entry_price_usd, entry.observed_liquidity_usd,
+              entry.cohort, entry.repeat_wallet_count,
+              ${safeJsonCast("controlledFlow", "boolean")} AS controlled_flow,
+              ${safeJsonCast("balancedFlow", "boolean")} AS balanced_flow,
+              ${safeJsonCast("poolAgeMinutes", "numeric")} AS pool_age_minutes,
+              ${safeJsonCast("liquidityUsd", "numeric")} AS liquidity_usd,
+              ${safeJsonCast("liquidityKnown", "boolean")} AS liquidity_known,
+              ${safeJsonCast("volume5mUsd", "numeric")} AS volume_5m_usd,
+              ${safeJsonCast("volume1hUsd", "numeric")} AS volume_1h_usd,
+              ${safeJsonCast("buys5m", "integer")} AS buys_5m,
+              ${safeJsonCast("sells5m", "integer")} AS sells_5m,
+              ${safeJsonCast("swaps5m", "integer")} AS swaps_5m,
+              ${safeJsonCast("buyShare5m", "numeric")} AS buy_share_5m,
+              ${safeJsonCast("volumeLiquidityRatio", "numeric")} AS volume_liquidity_ratio,
+              ${safeJsonCast("tokenRiskKnown", "boolean")} AS token_risk_known,
+              ${safeJsonCast("tokenRiskPassed", "boolean")} AS token_risk_passed,
+              ${safeJsonCast("mintAuthorityRevoked", "boolean")} AS mint_authority_revoked,
+              ${safeJsonCast("freezeAuthorityRevoked", "boolean")} AS freeze_authority_revoked,
+              ${safeJsonCast("top10HolderPercent", "numeric")} AS top_10_holder_percent,
+              ${safeJsonCast("buyObservedAt", "timestamptz")} AS buy_observed_at,
+              outcome.horizon_minutes, outcome.outcome_price_usd, outcome.frozen_at,
+              outcome.gross_return_pct, outcome.net_return_pct,
+              outcome.estimated_round_trip_cost_pct, outcome.exit_strategy, outcome.rugged
+       FROM wallet_signal_outcomes outcome
+       JOIN wallet_entry_signals entry
+         ON entry.idempotency_key=outcome.entry_idempotency_key
+        AND entry.strategy_version=outcome.strategy_version
+       JOIN wallet_evidence_wallet_dimensions wallet
+         ON wallet.chain=entry.chain AND wallet.wallet_address=entry.wallet_address
+       JOIN wallet_evidence_token_dimensions token
+         ON token.chain=entry.chain AND token.token_address=entry.token_address
+       JOIN wallet_evidence_strategy_dimensions strategy
+         ON strategy.strategy_version=outcome.strategy_version
+       WHERE outcome.status='mature'
+         AND outcome.observed_at >= $1 AND outcome.observed_at < $2
+     )
+     MERGE INTO wallet_followability_facts AS fact
+     USING desired ON fact.outcome_hash=desired.outcome_hash
+     WHEN MATCHED AND ROW(
+       fact.entry_hash, fact.wallet_id, fact.token_id, fact.strategy_id,
+       fact.entry_observed_at, fact.outcome_observed_at,
+       fact.observed_entry_price_usd, fact.observed_liquidity_usd,
+       fact.cohort, fact.repeat_wallet_count, fact.controlled_flow,
+       fact.balanced_flow, fact.pool_age_minutes, fact.liquidity_usd,
+       fact.liquidity_known, fact.volume_5m_usd, fact.volume_1h_usd,
+       fact.buys_5m, fact.sells_5m, fact.swaps_5m, fact.buy_share_5m,
+       fact.volume_liquidity_ratio, fact.token_risk_known,
+       fact.token_risk_passed, fact.mint_authority_revoked,
+       fact.freeze_authority_revoked, fact.top_10_holder_percent,
+       fact.buy_observed_at, fact.horizon_minutes, fact.outcome_price_usd,
+       fact.frozen_at, fact.gross_return_pct, fact.net_return_pct,
+       fact.estimated_round_trip_cost_pct, fact.exit_strategy, fact.rugged
+     ) IS DISTINCT FROM ROW(
+       desired.entry_hash, desired.wallet_id, desired.token_id,
+       desired.strategy_id, desired.entry_observed_at,
+       desired.outcome_observed_at, desired.observed_entry_price_usd,
+       desired.observed_liquidity_usd, desired.cohort,
+       desired.repeat_wallet_count, desired.controlled_flow,
+       desired.balanced_flow, desired.pool_age_minutes,
+       desired.liquidity_usd, desired.liquidity_known,
+       desired.volume_5m_usd, desired.volume_1h_usd,
+       desired.buys_5m, desired.sells_5m, desired.swaps_5m,
+       desired.buy_share_5m, desired.volume_liquidity_ratio,
+       desired.token_risk_known, desired.token_risk_passed,
+       desired.mint_authority_revoked, desired.freeze_authority_revoked,
+       desired.top_10_holder_percent, desired.buy_observed_at,
+       desired.horizon_minutes, desired.outcome_price_usd,
+       desired.frozen_at, desired.gross_return_pct, desired.net_return_pct,
+       desired.estimated_round_trip_cost_pct, desired.exit_strategy, desired.rugged
+     ) THEN UPDATE SET
+       entry_hash=desired.entry_hash, wallet_id=desired.wallet_id,
+       token_id=desired.token_id, strategy_id=desired.strategy_id,
+       entry_observed_at=desired.entry_observed_at,
+       outcome_observed_at=desired.outcome_observed_at,
+       observed_entry_price_usd=desired.observed_entry_price_usd,
+       observed_liquidity_usd=desired.observed_liquidity_usd,
+       cohort=desired.cohort, repeat_wallet_count=desired.repeat_wallet_count,
+       controlled_flow=desired.controlled_flow, balanced_flow=desired.balanced_flow,
+       pool_age_minutes=desired.pool_age_minutes, liquidity_usd=desired.liquidity_usd,
+       liquidity_known=desired.liquidity_known, volume_5m_usd=desired.volume_5m_usd,
+       volume_1h_usd=desired.volume_1h_usd, buys_5m=desired.buys_5m,
+       sells_5m=desired.sells_5m, swaps_5m=desired.swaps_5m,
+       buy_share_5m=desired.buy_share_5m,
+       volume_liquidity_ratio=desired.volume_liquidity_ratio,
+       token_risk_known=desired.token_risk_known,
+       token_risk_passed=desired.token_risk_passed,
+       mint_authority_revoked=desired.mint_authority_revoked,
+       freeze_authority_revoked=desired.freeze_authority_revoked,
+       top_10_holder_percent=desired.top_10_holder_percent,
+       buy_observed_at=desired.buy_observed_at,
+       horizon_minutes=desired.horizon_minutes,
+       outcome_price_usd=desired.outcome_price_usd, frozen_at=desired.frozen_at,
+       gross_return_pct=desired.gross_return_pct, net_return_pct=desired.net_return_pct,
+       estimated_round_trip_cost_pct=desired.estimated_round_trip_cost_pct,
+       exit_strategy=desired.exit_strategy, rugged=desired.rugged, updated_at=NOW()
+     WHEN NOT MATCHED THEN INSERT (
        outcome_hash, entry_hash, wallet_id, token_id, strategy_id,
        entry_observed_at, outcome_observed_at, observed_entry_price_usd,
        observed_liquidity_usd, cohort, repeat_wallet_count, controlled_flow,
@@ -553,72 +682,24 @@ async function materializeFollowability(client: pg.PoolClient, start: string, en
        buy_observed_at, horizon_minutes, outcome_price_usd, frozen_at,
        gross_return_pct, net_return_pct, estimated_round_trip_cost_pct,
        exit_strategy, rugged, updated_at
-     )
-     SELECT digest(convert_to(outcome.idempotency_key,'UTF8'),'sha256'),
-            digest(convert_to(entry.idempotency_key,'UTF8'),'sha256'),
-            wallet.id, token.id, strategy.id, entry.observed_at, outcome.observed_at,
-            entry.observed_entry_price_usd, entry.observed_liquidity_usd,
-            entry.cohort, entry.repeat_wallet_count,
-             ${safeJsonCast("controlledFlow", "boolean")},
-             ${safeJsonCast("balancedFlow", "boolean")},
-             ${safeJsonCast("poolAgeMinutes", "numeric")},
-             ${safeJsonCast("liquidityUsd", "numeric")},
-             ${safeJsonCast("liquidityKnown", "boolean")},
-             ${safeJsonCast("volume5mUsd", "numeric")},
-             ${safeJsonCast("volume1hUsd", "numeric")},
-             ${safeJsonCast("buys5m", "integer")},
-             ${safeJsonCast("sells5m", "integer")},
-             ${safeJsonCast("swaps5m", "integer")},
-             ${safeJsonCast("buyShare5m", "numeric")},
-             ${safeJsonCast("volumeLiquidityRatio", "numeric")},
-             ${safeJsonCast("tokenRiskKnown", "boolean")},
-             ${safeJsonCast("tokenRiskPassed", "boolean")},
-             ${safeJsonCast("mintAuthorityRevoked", "boolean")},
-             ${safeJsonCast("freezeAuthorityRevoked", "boolean")},
-             ${safeJsonCast("top10HolderPercent", "numeric")},
-             ${safeJsonCast("buyObservedAt", "timestamptz")},
-            outcome.horizon_minutes, outcome.outcome_price_usd, outcome.frozen_at,
-            outcome.gross_return_pct, outcome.net_return_pct,
-            outcome.estimated_round_trip_cost_pct, outcome.exit_strategy,
-            outcome.rugged, NOW()
-     FROM wallet_signal_outcomes outcome
-     JOIN wallet_entry_signals entry
-       ON entry.idempotency_key=outcome.entry_idempotency_key
-      AND entry.strategy_version=outcome.strategy_version
-     JOIN wallet_evidence_wallet_dimensions wallet
-       ON wallet.chain=entry.chain AND wallet.wallet_address=entry.wallet_address
-     JOIN wallet_evidence_token_dimensions token
-       ON token.chain=entry.chain AND token.token_address=entry.token_address
-     JOIN wallet_evidence_strategy_dimensions strategy
-       ON strategy.strategy_version=outcome.strategy_version
-     WHERE outcome.status='mature'
-       AND outcome.observed_at >= $1 AND outcome.observed_at < $2
-     ON CONFLICT (outcome_hash) DO UPDATE SET
-       entry_hash=EXCLUDED.entry_hash, wallet_id=EXCLUDED.wallet_id,
-       token_id=EXCLUDED.token_id, strategy_id=EXCLUDED.strategy_id,
-       entry_observed_at=EXCLUDED.entry_observed_at,
-       outcome_observed_at=EXCLUDED.outcome_observed_at,
-       observed_entry_price_usd=EXCLUDED.observed_entry_price_usd,
-       observed_liquidity_usd=EXCLUDED.observed_liquidity_usd,
-       cohort=EXCLUDED.cohort, repeat_wallet_count=EXCLUDED.repeat_wallet_count,
-       controlled_flow=EXCLUDED.controlled_flow, balanced_flow=EXCLUDED.balanced_flow,
-       pool_age_minutes=EXCLUDED.pool_age_minutes, liquidity_usd=EXCLUDED.liquidity_usd,
-       liquidity_known=EXCLUDED.liquidity_known, volume_5m_usd=EXCLUDED.volume_5m_usd,
-       volume_1h_usd=EXCLUDED.volume_1h_usd, buys_5m=EXCLUDED.buys_5m,
-       sells_5m=EXCLUDED.sells_5m, swaps_5m=EXCLUDED.swaps_5m,
-       buy_share_5m=EXCLUDED.buy_share_5m,
-       volume_liquidity_ratio=EXCLUDED.volume_liquidity_ratio,
-       token_risk_known=EXCLUDED.token_risk_known,
-       token_risk_passed=EXCLUDED.token_risk_passed,
-       mint_authority_revoked=EXCLUDED.mint_authority_revoked,
-       freeze_authority_revoked=EXCLUDED.freeze_authority_revoked,
-       top_10_holder_percent=EXCLUDED.top_10_holder_percent,
-       buy_observed_at=EXCLUDED.buy_observed_at,
-       horizon_minutes=EXCLUDED.horizon_minutes,
-       outcome_price_usd=EXCLUDED.outcome_price_usd, frozen_at=EXCLUDED.frozen_at,
-       gross_return_pct=EXCLUDED.gross_return_pct, net_return_pct=EXCLUDED.net_return_pct,
-       estimated_round_trip_cost_pct=EXCLUDED.estimated_round_trip_cost_pct,
-       exit_strategy=EXCLUDED.exit_strategy, rugged=EXCLUDED.rugged, updated_at=NOW()`,
+     ) VALUES (
+       desired.outcome_hash, desired.entry_hash, desired.wallet_id,
+       desired.token_id, desired.strategy_id, desired.entry_observed_at,
+       desired.outcome_observed_at, desired.observed_entry_price_usd,
+       desired.observed_liquidity_usd, desired.cohort,
+       desired.repeat_wallet_count, desired.controlled_flow,
+       desired.balanced_flow, desired.pool_age_minutes, desired.liquidity_usd,
+       desired.liquidity_known, desired.volume_5m_usd, desired.volume_1h_usd,
+       desired.buys_5m, desired.sells_5m, desired.swaps_5m,
+       desired.buy_share_5m, desired.volume_liquidity_ratio,
+       desired.token_risk_known, desired.token_risk_passed,
+       desired.mint_authority_revoked, desired.freeze_authority_revoked,
+       desired.top_10_holder_percent, desired.buy_observed_at,
+       desired.horizon_minutes, desired.outcome_price_usd, desired.frozen_at,
+       desired.gross_return_pct, desired.net_return_pct,
+       desired.estimated_round_trip_cost_pct, desired.exit_strategy,
+       desired.rugged, NOW()
+     )`,
     [start, end]
   );
 }

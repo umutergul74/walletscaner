@@ -1026,3 +1026,69 @@ blindly repeat the last mutation.
   record phase durations and PostgreSQL WAL/temp deltas, and compare with the prior 208,827 ms R37
   baseline. Production materializer remains stopped and no R38 artifact or rollout ledger phase
   exists yet.
+
+## R38 populated-clone canary checkpoint at 2026-08-26 17:33 UTC
+
+- The exact 24-August clone receipt pre-state was segment 65/revision 1 verified with 100,078
+  archive rows; compact status was the intentionally induced `retry` from the earlier 1 ms timeout.
+  Existing facts were 218,492 episodes, 251,460 open lots and 27,498 followability outcomes.
+- R38 ran in a named interruption-safe canary container under the production 80 MiB/0.05 CPU,
+  one-day, 600-second-statement and 1,800-second-run limits. It exited 0, OOM false, in 185,957 ms
+  with exact count/two-digest parity. Peak observed worker RSS remained about 37 MiB. Phase times
+  were dimensions 65,323 ms, reconcile 3,230, episodes 20,487, open lots 43,889, followability
+  10,867 and all six parity reads 40,675 ms. This is about 11% faster than the prior 208,827 ms
+  populated-clone R37 pass.
+- Database size increased only 180,224 bytes, showing that unchanged episode/open-lot facts were
+  not rewritten. The otherwise idle clone recorded 152,507,785 WAL bytes and 1,777,372,739 temp
+  bytes/36 temp files during the run. The remaining WAL is materially larger than a no-op receipt
+  should require because followability still deletes/reinserts all 27,498 daily facts; temp I/O is
+  bounded and released but must remain part of the production headroom gate.
+- No production or B2 mutation occurred. The production R37 materializer remains stopped. The
+  clone canary container is exited with its exact log retained; its fixed local-only test role is
+  still present solely for the next R38 measurement.
+- Next exact action: apply the same field-distinct upsert and same-day stale anti-join to
+  followability facts, add idempotent `updated_at` and stale-fact integration assertions, rerun the
+  isolated PostgreSQL gate and then rerun the same populated-clone day from a controlled `retry`.
+  Compare WAL/temp/runtime before building or deploying an R38 image.
+
+## R38 followability/no-op measurement at 2026-08-26 17:39 UTC
+
+- The followability stale-prune plus field-distinct conflict update passed the isolated exact-Linux
+  PostgreSQL gate, including stale outcome-hash removal and unchanged `updated_at` preservation.
+- The second full 24-Aug populated-clone retry exited 0/OOM false with exact 218,492/251,460/27,498
+  parity in 151,604 ms. Followability fell from 10,867 to 4,275 ms and total runtime is now about
+  27% below the original 208,827 ms R37 baseline. Database size did not increase at all.
+- WAL still increased 125,375,012 bytes and temp increased exactly 1,777,372,739 bytes/36 files.
+  The persistent-size result is correct, but PostgreSQL `INSERT ... ON CONFLICT DO UPDATE WHERE`
+  still performs conflict work for roughly 497,000 unchanged episode/lot/outcome facts. This is the
+  remaining no-op WAL source; temp remains the repeatable read/aggregate work area.
+- The local source now uses PostgreSQL 16 `MERGE` for all three compact fact families. Its desired
+  source set is joined once; matched rows update only when fields differ and unmatched rows insert,
+  avoiding speculative conflict writes for unchanged facts. Stale anti-joins remain separate and
+  use the same repeatable snapshot. Unit, typecheck, targeted lint and isolated exact-Linux
+  PostgreSQL archive/materializer tests pass 10/10 after this change.
+- Next exact action: retain the second exited canary log until this checkpoint is committed, then
+  run one third guarded populated-clone retry with the MERGE source and compare DB/WAL/temp/runtime.
+  Do not build or deploy R38 if parity, concurrency, stale correction or resource bounds regress.
+
+## R38 MERGE populated-clone gate at 2026-08-26 17:46 UTC
+
+- The third full 24-Aug retry used the final PostgreSQL 16 `MERGE` source under exact
+  80 MiB/0.05 CPU/one-day/600-second/1,800-second limits. It exited 0, OOM false, in 118,427 ms
+  with exact 218,492 episode, 251,460 open-lot and 27,498 followability count/two-digest parity.
+  This is about 43% faster than the 208,827 ms R37 populated-clone baseline.
+- Permanent database size changed by zero bytes. WAL increased only 50,327 bytes, down about
+  99.96% from the preceding 125,375,012-byte no-op conflict run. The changed phase times were
+  episodes 4,764 ms, open lots 15,103 and followability 1,613; dimensions remains largest at
+  52,838 ms.
+- Temp work increased 1,860,661,329 bytes across 39 files. This space is statement-scoped and was
+  released, not a permanent database-growth source, but production activation must reserve at
+  least 2 GiB of additional temp headroom above the 8 GiB hard disk reserve and must not overlap a
+  heavy archive/export run during the canary.
+- The final exact-Linux isolated gate still passes 10/10 with concurrency, correction, stale-prune
+  and `updated_at` idempotence assertions. No production/B2 action occurred; the production R37
+  materializer remains stopped. The third exited clone-canary log is retained until commit.
+- Next exact action: commit the MERGE/source/test/docs checkpoint, run the full repository test,
+  typecheck, full lint and workspace builds, then build an immutable R38 image and rerun the four
+  isolated PostgreSQL integration files through that exact image. Only after that may production
+  backup/headroom/live-flow/ledger preflight be refreshed.
