@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:52:00Z
+updated_at_utc: 2026-08-26T20:56:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1575,3 +1575,23 @@ blindly repeat the last mutation.
   gate with zstd inside the exact candidate, the four PostgreSQL 16 integration files serially,
   local workspace builds, then inspect git/image identity. Keep shadow schema and named exited
   canaries until evidence is recorded; production remains R37 materializer stopped.
+
+## R39 regression gates passed at 2026-08-26 20:56 UTC
+
+- Exact Linux candidate passed the valid image-scoped storage/zstd gate 31/31 and the four serial
+  PostgreSQL 16 integration files 47/47. Host repository compose/Python/deploy tests passed 23/23;
+  full typecheck, ESLint and workspace Next.js build exit 0.
+- An exploratory whole-suite run inside the worker image passed 386 tests and skipped the expected
+  47 DB integrations, but its 13 failures are not code evidence: two require the intentionally
+  excluded root Compose file and eleven spawn Python, which the production worker image does not
+  contain. Those exact tests passed in their host repository environment above. This invalid
+  cross-environment run is recorded, not normalized into a passing full-image gate.
+- Candidate is Linux/amd64 image ID
+  `sha256:9976fb84772180e6dde4dbda94243fe04ea4c41a619cb81337e257a9e68e7eba` with Node 24.18.0,
+  zstd 1.5.7 and PostgreSQL client 16.14. Image/local hashes match exactly for the materializer
+  (`a64b479b...`), its unit test (`3d308cc5...`) and archive integration test (`d6c6fc4...`).
+- Git source checkpoint is `142d25e`; subsequent commits only record test evidence. Working tree
+  contains only the four pre-existing ignored/untracked transfer remnants. Next exact local
+  mutation is to add immutable tag `walletscaner-worker:storage-r39-20260826` to this exact image,
+  verify unchanged image ID/runtime/hashes, then remove only named disposable test containers,
+  role/schema and integration database after a final public-clone comparison.
