@@ -38,6 +38,10 @@ Required for the canonical production path:
 - `RPC_TRADE_MAX_ACTIVE_POOLS=3` keeps the metered WebSocket stream bounded and leaves free-plan
   headroom for token-risk fallback/DAS calls; `SOLANA_TRADE_WS_URL` can explicitly override the
   trade WebSocket without changing discovery;
+- `RPC_TRADE_MINIMUM_OBSERVATION_HOLD_SECONDS=300` prevents candidate churn. A market-qualified pool
+  can fill an empty exact-pool lane before token-risk enrichment passes, but this never makes it
+  alpha-eligible. At capacity, only the oldest non-alpha-protected observation that completed the
+  hold may rotate; its coverage gap is committed before unsubscribe;
 - public HTTP transaction visibility can lag the Helius log notification. Keep
   `RPC_TRADE_TRANSACTION_FETCH_MAX_ATTEMPTS=6`, retry from 1 second, and cap retry delay at
   8 seconds. Live resolution is additionally capped at 128 workers plus 2,000 queued signatures.
@@ -491,6 +495,9 @@ The worker emits `solana-ingestion-health` JSON logs every minute. In the recomm
 healthy output has `tradeIngestMode: "rpc"`, `trade.status: "ok"`,
 `tradeTransport.websocketProvider: "mainnet.helius-rpc.com"`, a bounded active subscription
 count, and steadily increasing WebSocket message counters while eligible pools are active.
+`tradeObservation.status` is `degraded` when a coverage-capable market candidate exists but the
+lane is empty, or when configured addresses have not all received subscription acknowledgements.
+An empty lane is `ok` only when no coverage-capable market candidate is currently tracked.
 `tradeTransport.estimatedHeliusWsCreditsPerHour` is an operational estimate from received bytes,
 not the provider invoice; reconcile it with the Helius dashboard. There must be no unresolved
 gaps or sustained reconnect growth. These provider diagnostics are not yet merged into
@@ -599,7 +606,9 @@ uses:
 - `RPC_TRADE_BACKFILL_PAGE_LIMIT=500` and `RPC_TRADE_MAX_BACKFILL_PAGES=4`, matching the existing
   2,000-signature queue ceiling for a bounded reconnect recovery window;
 - at most three active pools, one ordered worker per active address, 0.20 ingestion CPU and the
-  existing 160 MiB memory ceiling.
+  existing 160 MiB memory ceiling;
+- a five-minute minimum observation hold. Rotation never treats the resulting partial interval as
+  complete wallet-profitability evidence; the exact pool remains fail-closed after its durable gap.
 
 Do not compensate for per-address delay by raising CPU, heap or configured fetch concurrency. Judge
 the live path by queue depth and fresh queue delay, not the process-lifetime maximum. A safe profile

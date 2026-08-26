@@ -162,6 +162,13 @@ malformed target completion fails closed. Once the target frame has completed su
 unrelated truncated suffix cannot erase that proof. An address with an empty instruction filter
 remains intentionally unfiltered for dynamic pool-trade subscriptions.
 
+RPC exact-pool trade observation uses a separate bounded admission lane. Passing the cheap market
+gate can start observation before critical token-risk enrichment is known, but it cannot satisfy
+alpha admission. The lane has a hard three-pool capacity and deterministic minimum-hold rotation;
+only non-alpha-protected observations may be replaced. Capacity rotation, expiry, rug, queue
+pressure and irreparable backfill all persist an explicit incomplete-coverage boundary, so a
+partial interval cannot be promoted to complete wallet PnL evidence.
+
 The `walletscaner-v3-inner-cpi` discovery decoder walks both top-level instructions and
 `meta.innerInstructions`. Raw v0 account indices are resolved from static keys followed by writable
 and read-only loaded addresses. A malformed base58 instruction is isolated rather than failing the

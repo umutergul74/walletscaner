@@ -86,7 +86,12 @@ The active worker uses two source roles and one selectable trade-ingest mode:
   source whose every address has an exact log filter rejects raw nonmatching notification strings
   before JSON parsing. Adding any unfiltered address disables this optimization fail-safe.
 - `HELIUS_INGEST_MODE=rpc` is the active fixed-cost profile. Public RPC performs reviewed program
-  discovery while Helius standard `logsSubscribe` follows at most three market/risk-admitted pools.
+  discovery while Helius standard `logsSubscribe` follows at most three pools that pass the cheap
+  market observation gate. Observation admission is deliberately separate from alpha admission:
+  known/passed critical risk, controlled flow and complete coverage remain downstream requirements.
+  A pool is held for at least five minutes before an unprotected observation can rotate; an
+  alpha-protected subscription is never evicted for an exploratory candidate. Every rotation,
+  expiry or rug is durably persisted as an incomplete-coverage boundary before unsubscribe.
   If its bounded HTTP-resolution queue reaches the high-water mark, the hot pool is immediately
   unsubscribed and persisted as incomplete trade coverage; it cannot contaminate alpha scoring.
 - `HELIUS_INGEST_MODE=webhook` is an optional authenticated Enhanced Webhook profile. It requires an

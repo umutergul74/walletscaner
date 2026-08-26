@@ -1667,3 +1667,34 @@ blindly repeat the last mutation.
 - Production remains unchanged: selector R37, exact R37 materializer stopped, live execution
   false, ledger revision 24 failed. Next exact action is read-only production cohort measurement
   for recent market-qualified pools, followed by the local pure scheduler/test implementation.
+
+## Bounded trade-observation lane implemented at 2026-08-26 21:16 UTC
+
+- Read-only production measurement found 52,935 Solana pool rows created in the last 24 hours;
+  102 passed the exact configured-default cheap market gate and six passed it in the last hour.
+  Seventy-nine of the 24-hour market cohort still had complete/unrecorded coverage and 23 were
+  already excluded, while the live exact-pool lane remained empty. This proves starvation was
+  orchestration, not absence of market candidates. The query changed no server state.
+- New pure `trade-observation-scheduler` separates market observation from alpha admission. It
+  fails closed for ineligible/incomplete pools and invalid capacity, fills available capacity,
+  enforces the hard three-slot cap and five-minute hold, deterministically rotates only the oldest
+  non-alpha-protected observation, and never evicts a controlled/risk-passed subscription for an
+  exploratory pool. Invalid/unknown bounds fail closed rather than becoming unbounded.
+- RPC pool sampling now admits a cheap-market candidate even while critical token risk remains
+  unknown. Strict downstream `controlledFlow && tokenRiskKnown && tokenRiskPassed &&
+  tradeCoverageComplete` is unchanged. A subscription is no longer dropped merely because a later
+  market/risk sample is temporarily ineligible. Rug, active-window expiry and capacity rotation
+  use a durable-before-unsubscribe transition; persistence failure restores the in-memory state
+  and leaves the subscription intact for retry.
+- Restart hydration no longer labels an RPC pool alpha-controlled before fresh risk reassessment.
+  It may fill observation capacity from the latest stored market gate, requests bounded bootstrap
+  backfill, and retains the existing truncation/queue fail-closed behavior. Health now distinguishes
+  legitimate no-candidate idle state from eligible-lane starvation and subscription-ACK gaps.
+- `.env.example`, architecture, provider and operations contracts document the new
+  `RPC_TRADE_MINIMUM_OBSERVATION_HOLD_SECONDS=300` control and partial-coverage disposition.
+  Typecheck and full ESLint pass; the scheduler/coverage/sampling/transport/provider target set
+  passed 63/63 tests across five files.
+- No production, artifact, database, B2, selector, service or ledger state changed. Next exact
+  action is a coherent source commit, then the complete repository tests/build. If those pass,
+  build a new immutable Linux image that includes both exact R39 compact-materializer bytes and
+  this trade-lane fix; do not reuse or mutate the already hashed R39 artifact.

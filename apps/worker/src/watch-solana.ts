@@ -62,6 +62,10 @@ import {
 } from "./discovery-supervisor.js";
 import { activateTradeSubscription, excludeTradeCoverage } from "./trade-coverage.js";
 import {
+  evaluateTradeObservationHealth,
+  planTradeObservationAdmission
+} from "./trade-observation-scheduler.js";
+import {
   createSolanaFinalityDiagnostics,
   reconcileSolanaFinalityCycle
 } from "./solana-finality.js";
@@ -103,6 +107,8 @@ interface TrackedPool extends ActivePoolState {
   tradeCoveragePersisted: boolean;
   tradeCoverageGapAt?: string;
   tradeCoverageGapReason?: string;
+  observationMarketEligible: boolean;
+  observationSubscribedAtMs?: number;
 }
 
 interface FlowEvidence {
@@ -221,7 +227,9 @@ const minLiquidityUsd = Number(process.env.MIN_LIQUIDITY_USD ?? 10_000);
 const minVolume5mUsd = Number(process.env.MIN_VOLUME_5M_USD ?? 5_000);
 const maxSwaps5m = Number(process.env.MAX_SWAPS_5M ?? 300);
 const maxVolumeLiquidityRatio = Number(process.env.MAX_VOLUME_LIQUIDITY_RATIO ?? 4);
-const rpcTradeMaxActivePools = Number(process.env.RPC_TRADE_MAX_ACTIVE_POOLS ?? 3);
+const rpcTradeMaxActivePools = boundedInteger(process.env.RPC_TRADE_MAX_ACTIVE_POOLS, 3, 0, 20);
+const rpcTradeMinimumObservationHoldMs =
+  boundedInteger(process.env.RPC_TRADE_MINIMUM_OBSERVATION_HOLD_SECONDS, 300, 30, 3_600) * 1_000;
 const heliusWebhookMaxPoolAddresses = Number(process.env.HELIUS_WEBHOOK_MAX_POOL_ADDRESSES ?? 20);
 const standardSeenSignatureLimit = boundedInteger(
   process.env.SOLANA_SEEN_SIGNATURE_LIMIT,
@@ -370,6 +378,16 @@ const poolSamplingDiagnostics = {
   evictedActivePoolCount: 0,
   tradeQueuePressureCount: 0,
   tradeCoverageExcludedPoolCount: 0
+};
+const tradeObservationDiagnostics = {
+  admissionCount: 0,
+  replacementCount: 0,
+  deferredCount: 0,
+  lastAdmissionAt: null as string | null,
+  lastReplacementAt: null as string | null,
+  lastDeferredReason: null as string | null,
+  minimumHoldSeconds: rpcTradeMinimumObservationHoldMs / 1_000,
+  maximumActivePools: rpcTradeMaxActivePools
 };
 const canonicalParserDiagnostics = {
   claimCount: 0,
@@ -768,7 +786,8 @@ async function processSolanaEvent(event: SolanaChainEvent) {
       everSubscribedToBuys: false,
       controlledFlow: false,
       tradeCoverageComplete: true,
-      tradeCoveragePersisted: true
+      tradeCoveragePersisted: true,
+      observationMarketEligible: false
     };
     activePools.set(discovery.poolAddress, trackedPool);
     enforceActivePoolLimit();
@@ -924,6 +943,20 @@ const sampleTimer = setInterval(() => {
 const healthTimer = setInterval(() => {
   const liveTradeDiagnostics = liveTradeSource?.getDiagnostics();
   const tradeDiagnostics = liveTradeDiagnostics ?? webhookDiagnostics;
+  const activePoolSubscriptions = activeBuySubscriptionCount();
+  const marketEligibleTrackedPools = [...activePools.values()].filter(
+    (pool) => pool.observationMarketEligible && pool.tradeCoverageComplete
+  ).length;
+  const tradeObservationHealth = evaluateTradeObservationHealth({
+    marketEligibleTrackedPools,
+    activePoolSubscriptions,
+    ...(liveTradeDiagnostics?.configuredAddressCount !== undefined
+      ? { configuredAddressCount: liveTradeDiagnostics.configuredAddressCount }
+      : {}),
+    ...(liveTradeDiagnostics?.subscribedAddressCount !== undefined
+      ? { subscribedAddressCount: liveTradeDiagnostics.subscribedAddressCount }
+      : {})
+  });
   console.log(
     JSON.stringify({
       type: "solana-ingestion-health",
@@ -951,7 +984,18 @@ const healthTimer = setInterval(() => {
         tradeIngestMode === "rpc" && liveTradeDiagnostics
           ? rpcTradeTransportHealth(liveTradeDiagnostics)
           : null,
-      activePoolSubscriptions: activeBuySubscriptionCount(),
+      activePoolSubscriptions,
+      tradeObservation:
+        tradeIngestMode === "rpc"
+          ? {
+              ...tradeObservationDiagnostics,
+              ...tradeObservationHealth,
+              marketEligibleTrackedPools,
+              alphaProtectedSubscriptions: [...activePools.values()].filter(
+                (pool) => pool.subscribedToBuys && pool.controlledFlow
+              ).length
+            }
+          : null,
       runtimeCaches: {
         activePools: activePools.size,
         activePoolLimit: activePoolMaxEntries,
@@ -1496,7 +1540,14 @@ async function sampleDuePoolsOnce() {
     const ageMinutes = (now.getTime() - new Date(pool.createdAt).getTime()) / 60_000;
     const delay = activePoolSampleDelayMs(ageMinutes);
     if (delay === null) {
-      if (pool.subscribedToBuys) liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+      if (pool.subscribedToBuys) {
+        if (tradeIngestMode === "rpc") {
+          await releaseRpcTradeObservation(pool, "rpc-trade-observation-expired", now);
+        } else {
+          liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+          pool.subscribedToBuys = false;
+        }
+      }
       activePools.delete(pool.poolAddress);
       continue;
     }
@@ -1558,6 +1609,7 @@ async function sampleDuePoolsOnce() {
 
   for (const sample of dueSamples) {
     const { pool, pair, priceUsd, liquidityUsd, rugged, marketEligible } = sample;
+    pool.observationMarketEligible = marketEligible;
     const compactPair = compactDexScreenerPair(pair);
     const tokenRisk = marketEligible
       ? await refreshTokenRisk(pool, now)
@@ -1570,12 +1622,10 @@ async function sampleDuePoolsOnce() {
       flowEvidence.tokenRiskPassed;
     pool.controlledFlow = evidenceEligible;
     if (tradeIngestMode === "rpc") {
-      if (evidenceEligible && !pool.subscribedToBuys) {
-        await subscribePool(pool, !pool.everSubscribedToBuys);
-      }
-      if (!evidenceEligible && pool.subscribedToBuys) {
-        liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-        pool.subscribedToBuys = false;
+      if (rugged && pool.subscribedToBuys) {
+        await releaseRpcTradeObservation(pool, "rpc-trade-observation-rugged", now);
+      } else {
+        await reconcileRpcTradeObservation(pool, marketEligible, now);
       }
     }
     if (
@@ -1667,7 +1717,13 @@ async function restoreRecentPools() {
     activePools.set(stored.poolAddress, tracked);
     enforceActivePoolLimit();
     rememberPool(tracked);
-    if (tracked.controlledFlow) await subscribePool(tracked, true, true);
+    if (tradeIngestMode === "rpc") {
+      if (tracked.observationMarketEligible) {
+        await reconcileRpcTradeObservation(tracked, true, now);
+      }
+    } else if (tracked.controlledFlow) {
+      await subscribePool(tracked, true);
+    }
   }
 }
 
@@ -2360,34 +2416,15 @@ function enforceActivePoolLimit(): void {
   }
 }
 
-async function subscribePool(pool: TrackedPool, backfill = false, restored = false): Promise<void> {
-  if (pool.subscribedToBuys) return;
-  if (!pool.tradeCoverageComplete) return;
-  if (tradeIngestMode === "rpc" && rpcTradeMaxActivePools <= 0) return;
+async function subscribePool(pool: TrackedPool, backfill = false): Promise<boolean> {
+  if (pool.subscribedToBuys || !pool.tradeCoverageComplete) return false;
+  if (tradeIngestMode === "rpc" && rpcTradeMaxActivePools <= 0) return false;
   if (
     tradeIngestMode === "rpc" &&
     liveTradeSource &&
     activeBuySubscriptionCount() >= rpcTradeMaxActivePools
   ) {
-    if (restored) return;
-    const oldest = [...activePools.values()]
-      .filter(
-        (candidate) => candidate.subscribedToBuys && candidate.poolAddress !== pool.poolAddress
-      )
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
-    if (oldest) {
-      liveTradeSource.unsubscribeAddress(oldest.poolAddress);
-      oldest.subscribedToBuys = false;
-    }
-  }
-  // A second defensive check keeps the hard cap intact even if a future caller
-  // introduces another asynchronous subscription path.
-  if (
-    tradeIngestMode === "rpc" &&
-    liveTradeSource &&
-    activeBuySubscriptionCount() >= rpcTradeMaxActivePools
-  ) {
-    return;
+    return false;
   }
   if (liveTradeSource) {
     await liveTradeSource.subscribeAddress(
@@ -2398,7 +2435,94 @@ async function subscribePool(pool: TrackedPool, backfill = false, restored = fal
   }
   if (!activateTradeSubscription(pool)) {
     liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+    return false;
   }
+  pool.observationSubscribedAtMs ??= Date.now();
+  return true;
+}
+
+async function reconcileRpcTradeObservation(
+  pool: TrackedPool,
+  marketEligible: boolean,
+  now: Date
+): Promise<void> {
+  if (tradeIngestMode !== "rpc") return;
+  const admission = planTradeObservationAdmission(pool, activePools.values(), {
+    nowMs: now.getTime(),
+    maximumActivePools: rpcTradeMaxActivePools,
+    minimumHoldMs: rpcTradeMinimumObservationHoldMs,
+    marketEligible
+  });
+  if (admission.action === "defer") {
+    if (admission.reason !== "already-subscribed") {
+      tradeObservationDiagnostics.deferredCount += 1;
+      tradeObservationDiagnostics.lastDeferredReason = admission.reason;
+    }
+    return;
+  }
+  if (admission.action === "replace") {
+    const evicted = activePools.get(admission.evictPoolAddress);
+    if (!evicted?.subscribedToBuys) {
+      tradeObservationDiagnostics.deferredCount += 1;
+      tradeObservationDiagnostics.lastDeferredReason = "replacement-state-changed";
+      return;
+    }
+    await releaseRpcTradeObservation(
+      evicted,
+      "rpc-trade-observation-capacity-rotation",
+      now
+    );
+    tradeObservationDiagnostics.replacementCount += 1;
+    tradeObservationDiagnostics.lastReplacementAt = now.toISOString();
+  }
+  if (await subscribePool(pool, !pool.everSubscribedToBuys)) {
+    tradeObservationDiagnostics.admissionCount += 1;
+    tradeObservationDiagnostics.lastAdmissionAt = now.toISOString();
+  }
+}
+
+async function releaseRpcTradeObservation(
+  pool: TrackedPool,
+  reason: string,
+  gapAt: Date
+): Promise<void> {
+  const previous = {
+    subscribedToBuys: pool.subscribedToBuys,
+    controlledFlow: pool.controlledFlow,
+    tradeCoverageComplete: pool.tradeCoverageComplete,
+    tradeCoveragePersisted: pool.tradeCoveragePersisted,
+    tradeCoverageGapAt: pool.tradeCoverageGapAt,
+    tradeCoverageGapReason: pool.tradeCoverageGapReason
+  };
+  const changed = excludeTradeCoverage(pool, reason, gapAt.toISOString());
+  if (!changed) {
+    liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+    pool.subscribedToBuys = false;
+    return;
+  }
+  try {
+    await persistTradeCoverageState(pool);
+  } catch (error) {
+    pool.subscribedToBuys = previous.subscribedToBuys;
+    pool.controlledFlow = previous.controlledFlow;
+    pool.tradeCoverageComplete = previous.tradeCoverageComplete;
+    pool.tradeCoveragePersisted = previous.tradeCoveragePersisted;
+    if (previous.tradeCoverageGapAt === undefined) delete pool.tradeCoverageGapAt;
+    else pool.tradeCoverageGapAt = previous.tradeCoverageGapAt;
+    if (previous.tradeCoverageGapReason === undefined) delete pool.tradeCoverageGapReason;
+    else pool.tradeCoverageGapReason = previous.tradeCoverageGapReason;
+    throw error;
+  }
+  liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+  poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
+  console.warn(
+    JSON.stringify({
+      type: "solana-trade-coverage-excluded",
+      poolAddress: pool.poolAddress,
+      reason,
+      disposition: "durable-before-unsubscribe"
+    })
+  );
 }
 
 function handleTradeQueuePressure(pressure: {
@@ -2591,9 +2715,10 @@ function trackedPoolFromSnapshot(stored: PoolSnapshot, now: Date): TrackedPool {
     previousLiquidityUsd: stored.liquidityUsd,
     subscribedToBuys: false,
     everSubscribedToBuys: false,
-    controlledFlow: flowEvidence.controlledFlow,
+    controlledFlow: tradeIngestMode === "rpc" ? false : flowEvidence.controlledFlow,
     tradeCoverageComplete: tradeCoverage.complete,
     tradeCoveragePersisted: true,
+    observationMarketEligible: passesStoredMarketGate(stored),
     ...(tradeCoverage.gapAt ? { tradeCoverageGapAt: tradeCoverage.gapAt } : {}),
     ...(tradeCoverage.gapReason ? { tradeCoverageGapReason: tradeCoverage.gapReason } : {}),
     lastPersistedMarketAtMs: now.getTime(),
