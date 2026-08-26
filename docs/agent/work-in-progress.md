@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:44:00Z
+updated_at_utc: 2026-08-26T20:48:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1512,3 +1512,22 @@ blindly repeat the last mutation.
   remain unchanged. After the bounded first and no-op repeat canaries, capture parity/counts,
   phase durations, WAL/temp/permanent size and fact timestamps, then drop only the named temporary
   role/schema and disposable PG16 integration container after recording evidence.
+
+## Populated-clone shadow ready at 2026-08-26 20:48 UTC
+
+- One transaction created `r39_canary`, a structural local copy of `archive_segments`, migration
+  051 compact tables and exact copies of the existing compact dimensions/facts. It committed only
+  after all copies and sequences succeeded: 11,589 wallets, 4,081 tokens, one strategy, 218,492
+  episode facts, 251,460 open-lot facts and 27,498 followability facts.
+- The isolated synthetic 2026-07-12 verified manifest derives its counts directly from public
+  immutable sources: 17,669 wallet trades, 688 entries and 1,130 outcomes, total/canonical 19,487.
+  The public clone still has exactly one unchanged compact receipt for 2026-08-24 and no synthetic
+  public segment/receipt.
+- Clone database size after the shadow copy is 12,670,442,519 bytes. Pre-canary cumulative counters
+  are temp 11,822,036,928 bytes / 430 files and WAL 12,745,282,422 bytes; only deltas from these
+  baselines are evidence.
+- Next exact mutation is local-only: create `r39_materializer` with generated ephemeral credentials,
+  public read plus `r39_canary` compact write/sequence grants, run the exact R39 candidate under
+  80 MiB/0.05 CPU/64 pids, one day, 600-second statement and 1,800-second run limits, then drop the
+  role. Capture report phase durations, receipt/parity/counts, fact rows updated since run start,
+  DB/WAL/temp deltas and OOM/exit state before any repeat canary.
