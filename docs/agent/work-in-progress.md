@@ -962,3 +962,17 @@ blindly repeat the last mutation.
   by `materializeEpisodes` and `materializeOpenLots`, prove which wallet/token/strategy dimension or
   parent fact is absent, and reproduce on the populated PostgreSQL 16 clone. No second production
   canary is allowed until the invariant and regression test are fixed in a new immutable candidate.
+
+## R37 retry-loop containment checkpoint at 2026-08-26 17:12 UTC
+
+- After the interrupted observation window, the periodic R37 materializer had retried the same
+  oldest day through attempt 12. The latest receipt remained `retry`, not mismatch, with an
+  `episodes` statement timeout and a 30-minute backoff. One advisory lock was active at the refresh;
+  the scheduler has not advanced past July 12.
+- Repeated 600-second historical attempts are bounded and preserve data, but they impose needless
+  PostgreSQL load while the consistent-snapshot defect is unresolved. The next exact production
+  action is therefore to stop only `wallet-evidence-materializer-scheduler` and verify that
+  ingestion, writer/verifier, wallet-alpha, PostgreSQL and Redis identities remain unchanged.
+  Stopping this derived compact shadow worker does not stop canonical data collection or B2 archive
+  catch-up. Do not restart it until an R38 snapshot-consistency candidate passes clone concurrency
+  and production preflight gates.
