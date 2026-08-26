@@ -882,3 +882,17 @@ blindly repeat the last mutation.
   Compose file changed, no service recreated and no database/B2 mutation occurred. Next exact action
   is low-priority zstd stream plus `docker load`, followed by exact image-ID verification before any
   activation.
+
+## R37 image-load checkpoint at 2026-08-26 06:23 UTC
+
+- The verified server artifact was decompressed single-threaded with low CPU/I/O priority and loaded
+  as `walletscaner-worker:storage-r37-20260826`. The server image resolves exactly to local image ID
+  `sha256:3978e4156d887c09b0e6b0484b7332c8b5b57183acd8a6c0f3f5fa51eeab4e8a`.
+- Loading did not recreate or alter the materializer: its exact container ID remains
+  `aee9d1fe0f94f9fe63c23477aa490c2a2a68a81b0eebfc8c57b92cfb9055ee25`, still R36, running,
+  restart 0 and OOM false. Server free disk after load is 17,319,981,056 bytes.
+- Next exact action: close artifact staging at ledger revision 18 and open a separate activation
+  phase at revision 19. Then stage/hash the exact Compose file, verify the guarded image updater,
+  change only `WALLETSCANER_OPERATIONS_IMAGE`, render the resulting one-day/600s/1800s/live-false
+  service, and recreate only the materializer before its canary. Do not touch ingestion, wallet
+  alpha, sampler, Telegram, PostgreSQL, Redis or the protected project.
