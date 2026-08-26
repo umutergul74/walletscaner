@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:43:00Z
+updated_at_utc: 2026-08-26T23:49:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1990,3 +1990,22 @@ blindly repeat the last mutation.
   reached 5,000 signatures and CPMM replay reached 450/638. Inbox/dead-letter remain bounded/zero.
   Operations/materializer activation stays blocked until open discovery incidents return to zero;
   do not restart or duplicate the ingestion canary.
+
+## R40 ingestion canary hard gate failed at 2026-08-26 23:49 UTC
+
+- The core collection repair worked: the exact-pool lane reached `3/3/3`, produced fresh wallet
+  trades and kept drop/queue-pressure/dead-letter at zero. CPMM discovery repair also completed
+  638/638 and closed one restart incident. This does not override the failed consistency gate.
+- During each capacity rotation, successive health samples repeated
+  active/configured/subscribed `2/3/3 -> 3/3/3 -> 2/3/3`, with reason
+  `subscription-ack-gap`; the transient trade queue rose to 327/2,000. The provider cap remained
+  three and no signature dropped, but recurring degraded state violates the exact lane-state
+  acceptance criterion and would create noisy/ambiguous operational health.
+- Source review identifies the race: `subscribePool` awaits bounded backfill before marking the pool
+  active, while the provider address is configured and live during that await. Backfill can also
+  call the durable exclusion path before the active state exists. The fix must make bootstrap state
+  atomic and preserve fail-closed truncation/persist-failure behavior under tests.
+- Ledger revision 27 remains activation in progress; selector/container are exact R40. Next exact
+  mutation is the guarded inverse selector update R40 -> R30, render and recreate only ingestion,
+  then verify exact R30/live-false/non-target identities and close revision 27 as failed. Do not
+  touch operations/materializer or normalize this canary as passed.
