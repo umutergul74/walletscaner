@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:48:00Z
+updated_at_utc: 2026-08-26T19:49:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1344,3 +1344,16 @@ blindly repeat the last mutation.
   bytes/SHA and loaded image prefix recorded.
 - Selector, services, database and B2 remain unchanged. Next exact mutation is to dry-run then open
   revision 23 `r38-materializer-activation=in_progress` before changing the operations selector.
+
+## R38 materializer activation opened at 2026-08-26 19:49 UTC
+
+- Exact pre-state is env SHA-256
+  `b1e6ce998c6217b99d16eb09d9d67afcb354cb264649703690a4f85b8246f9cd`, Compose SHA-256
+  `8c57d28c53145bbd7fe5669c53eb1329047c2821e748e8d24553d01937ae3288`, selector R37 and stopped
+  materializer ID `4b784501...` on image `sha256:3978e4156d88...`.
+- Revision 22 was dry-run then atomically advanced. Ledger revision 23 is
+  `r38-materializer-activation=in_progress`, SHA-256
+  `2147e09f375ee362e62c52560e240e41a8b83cb49ede06769835c3aa2596fc21`.
+- No selector or service changed while opening the phase. Next exact mutation is the guarded
+  updater dry-run/apply changing only `WALLETSCANER_OPERATIONS_IMAGE` from exact R37 to exact R38,
+  followed by Compose rendering and inspection before any named service recreate.
