@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:43:15Z
+updated_at_utc: 2026-08-26T01:50:45Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -630,3 +630,21 @@ blindly repeat the last mutation.
   backup/headroom/ledger/runtime identities before staging. Loading is not activation. The rollout
   must change only the operations image selector and named archive/maintenance/monitor services;
   ingestion, sampler, wallet-alpha, Telegram and protected co-tenant state stay untouched.
+- R36 export is 463,137,765 bytes with transfer SHA-256
+  `991d4d6e1db53bc96f6bdc6ea39a5d92e2c16ef2fbe8cc83aa7e1fd73ec2ef06`. The resumable transfer
+  completed to the server `.partial` path; remote byte count and SHA-256 match exactly. Host free
+  space after staging is 18,279,837,696 bytes.
+- Production preflight proved 12 Walletscaner services running, all selected live flags false,
+  restart 0/OOM false, current verified/off-site-acknowledged dump intact and only the Walletscaner
+  Compose project listed. R34 archive/monitor/materializer and R29 maintenance are the exact
+  rollback identities; ingestion R30, sampler R29, wallet-alpha R34 and Telegram R23 are excluded
+  from recreation.
+- The old shadow observation was closed as `failed` at server ledger revision 10 because two
+  archive dead letters invalidated that observation. Revision 11 is
+  `storage-integrity-repair-r36=in_progress`, ledger SHA-256
+  `75f557733aa0012bb8faec5c3d521f3e613d698ef87028ca4d9dd614a8fc8963`.
+  Both dead letters (segments 67 and 69) independently match remote content length/SHA and differ
+  only by semantically equal record-count JSON key order.
+- Next exact action: atomically rename the verified artifact and load it at low CPU/I/O priority;
+  prove the loaded image ID before touching the operations selector or any container. Preserve the
+  transfer artifact and R34/R29 rollback images until the repair canary completes.
