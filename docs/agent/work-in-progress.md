@@ -867,3 +867,18 @@ blindly repeat the last mutation.
   `0904429432a19324ec4066a9c8fac2f51008897085b937359436c0aab2a079e0`. The next exact action encoded
   there is resumable transfer to `.partial`, exact byte/SHA verification, then load. No service,
   selector, database row or B2 object changed during these ledger transitions.
+
+## R37 server artifact checkpoint at 2026-08-26 06:22 UTC
+
+- Initial `sftp reput` correctly refused because no remote partial existed and made no file. The
+  first transfer then used `put` to the exact `.partial` name; a future interruption could have
+  resumed that path with `reput`. It completed at exactly 462,694,845 bytes.
+- A one-shot read-only R36 verification container, capped at 0.04 CPU/64 MiB, recomputed the remote
+  SHA-256 as `f28c2ffbbfa0a70ae4eedef17371e83f4ddac2afbeffea12acdd597a8eb158ba`.
+  Only after local/remote bytes and SHA matched was the partial atomically renamed to
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r37-20260826.tar.zst`. Server free disk after
+  staging is 17,340,116,992 bytes.
+- Ledger revision 17 remains `r37-artifact-staging=in_progress`; no image was loaded, no selector or
+  Compose file changed, no service recreated and no database/B2 mutation occurred. Next exact action
+  is low-priority zstd stream plus `docker load`, followed by exact image-ID verification before any
+  activation.
