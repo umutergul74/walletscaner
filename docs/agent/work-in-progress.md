@@ -1,9 +1,9 @@
 ---
-status: waiting
-updated_at_utc: 2026-08-25T22:27:00Z
+status: active
+updated_at_utc: 2026-08-26T01:32:42Z
 owner: codex
-task: make Walletscaner PostgreSQL/B2 storage tiering autonomous and sustainable on the fixed disk
-last_safe_checkpoint: R34 storage shadow operational and documented through d8dadd7; server ledger revision 9 waits on clean 24h/7d gates with canonical retirement disabled
+task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
+last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
 ---
 
 # Walletscaner Work In Progress
@@ -558,3 +558,38 @@ blindly repeat the last mutation.
   1.5 seconds and wallet-trade age 304.5 seconds. The health report remains degraded for database
   size, nine-day wallet archive catch-up, rollout-contaminated 4.83-day runway and an oscillating
   load sample of 2.35; current-state commit `d8dadd7` records that this must remain under observation.
+
+## Active incident/storage phase at 2026-08-26 01:32 UTC
+
+- User-authorized scope: make Walletscaner storage sustainable on the fixed host and verify/repair
+  its data flow. Exclusions remain canonical/B2 deletion without gates, live execution, global host
+  cleanup, `VACUUM FULL`, destructive DDL, provider purchase and every protected co-tenant action.
+- Local branch is `main` at `b8139bf`, 56 commits ahead of `origin/main`. Preserve the three
+  untracked transfer artifacts exactly as found; none is a production database or an authorized
+  cleanup target.
+- Read-only production refresh found all 12 Walletscaner services running with restart count zero,
+  OOM false and live execution false. Pipeline inbox backlog/dead-letter is currently 0/0; current
+  discovery transports are live, but unreconciled historical gaps remain alpha-excluded.
+- PostgreSQL is about 15.01 GB and its data volume about 15.40 GB. Host free space is about
+  18.81 GB. WAL is bounded near 352 MB and `/opt/walletscaner` has no archive-staging leak.
+  The latest rolling window still reports roughly 1.11 GB/day database growth and 1.60 GB/day
+  filesystem consumption, so the existing shadow-only wallet archive is not yet a proven steady
+  state.
+- Largest durable growth sources include `wallet_trade_events` (about 4.51 GB), daily raw payload
+  partitions (bounded to 48 hours), entries/outcomes, scores and a 235 MB
+  `ingestion_gap_repair_signatures` relation. Canonical wallet retirement is still disabled because
+  dual-read and seven-future-day gates have not passed.
+- Exactly one wallet-evidence archive segment is dead-lettered: segment 67, range 2026-07-08,
+  upload succeeded but HEAD metadata verification failed. Neighboring days verify normally and no
+  local staging file leaked. A likely deterministic JSON key-order mismatch in
+  `record-type-counts` must be confirmed before changing code or retry state.
+- Latest verified server dump is `memecoin_alpha_20260825T150924Z.dump`, 2,053,352,363 bytes, with
+  SHA sidecar and off-site acknowledgement. Existing immutable B2 generations and Object Lock
+  policy remain untouched.
+- Server release ledger remains revision 9 / SHA-256
+  `b3d98e772c112b656ea7f8735b56b8177c052bd480f559de72094fc772e4f0f1`, phase
+  `storage-shadow-observation=in_progress`. Before any rollout mutation, open a new
+  revision-controlled repair phase and record exact artifact/rollback identities.
+- Next exact action is read-only: compare segment 67's expected and remote HEAD metadata
+  semantically without printing credentials or metadata values, then query exact open discovery
+  incident/repair cursor state. Only after both causes are proven may code/tests be changed.
