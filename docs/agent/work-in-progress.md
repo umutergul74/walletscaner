@@ -917,3 +917,19 @@ blindly repeat the last mutation.
   still exact R36 and unchanged at this checkpoint. Next exact action is a named, no-dependency,
   no-build materializer recreate followed by exact identity/resource/live verification before any
   compact receipt rewrite or canary.
+
+## R37 materializer activation checkpoint at 2026-08-26 06:30 UTC
+
+- Only `wallet-evidence-materializer-scheduler` was recreated with exact project/file/env, profile,
+  `--no-build --no-deps --force-recreate`. Old container
+  `aee9d1fe...`/R36 was replaced by `4b784501...` on exact R37 image
+  `sha256:3978e4156d887c09b0e6b0484b7332c8b5b57183acd8a6c0f3f5fa51eeab4e8a`.
+- The new materializer is running, restart 0/OOM false, memory 83,886,080 bytes, NanoCPUs
+  50,000,000, pids 64, live execution false, max days 1, max run 1,800 seconds and statement timeout
+  600,000 ms. Exact identities of ingestion, wallet-alpha, sampler, Telegram, PostgreSQL and Redis
+  remained unchanged; the protected-project identity set also remained unchanged.
+- No compact receipt has been rewritten yet. Next exact action is a guarded transaction that must
+  match exactly segments 71/72/73, revision 1, status `mismatch`, attempt 1 and the statement-timeout
+  error before changing only those statuses to `retry` with `not_before=NOW()`. Then run one R37
+  materializer one-shot with explicit live false/no dependencies and observe the oldest July 12
+  cohort. Any count/digest mismatch or unexpected pre-state aborts without mutation.
