@@ -1736,3 +1736,17 @@ blindly repeat the last mutation.
   If it passes 5/5, record the first result as cumulative cold-start timing sensitivity; if it
   repeats, stop and diagnose the archive test/runtime regression before any canary or deployment.
   Production and the populated clone remain unchanged.
+
+## R40 archive isolation passed; unsubscribe ordering hardening at 2026-08-26 22:57 UTC
+
+- The archive-pipeline file passed 5/5 on a second fresh PostgreSQL 16 instance. The heavy wallet
+  archive case completed in 4,793 ms; the file completed in 9,603 ms. The first 5,016-ms timeout is
+  retained as cumulative cold-start/timing sensitivity, not a data or query regression. The second
+  disposable database/network were removed.
+- Pre-canary review found two remaining source/order mismatches. Cheap-market observation was still
+  scheduled after awaited token-risk enrichment, and legacy queue-pressure/backfill handlers could
+  unsubscribe before the coverage-gap update reached PostgreSQL. Next local implementation moves
+  observation reconciliation ahead of risk I/O and routes queue pressure plus truncation through
+  one in-flight-guarded durable-before-unsubscribe path. Persistence failure must retain the live
+  subscription and restore the prior coverage state. Rebuild/retest the exact candidate afterward;
+  do not reuse the current candidate identity as final release evidence.
