@@ -768,3 +768,36 @@ blindly repeat the last mutation.
   episode scalars rather than each partial-sale return observation used by scoring. Deleting source
   rows now would change score hashes. Reader parity and filesystem-returning source cutover remain
   separate hard gates; `DELETE` or normal vacuum is not an acceptable shortcut.
+
+## Retry-safe compact catch-up checkpoint at 2026-08-26 05:52 UTC
+
+- Source, tests, Compose defaults and operator documentation are committed atomically as Git
+  `687c14d` (`fix: make wallet compact catch-up retry-safe`). The four pre-existing untracked local
+  transfer artifacts remain untouched. No production image, Compose file, database row or service
+  has been changed by this checkpoint.
+- Candidate selection now identifies the oldest unresolved verified archive day before applying its
+  `not_before` gate. A backed-off older day therefore blocks newer days instead of being skipped.
+  Count/digest disagreement alone is persisted as `mismatch`; statement timeout, lock, connection
+  and other operational errors are persisted as `retry` with a 30-minute backoff. Health and
+  Telegram distinguish retry from parity mismatch.
+- The disposable PostgreSQL 16 full-data clone completed the 2026-08-24 cohort with exact parity in
+  208,827 ms: 218,492 episode facts, 251,460 open-lot facts and 27,498 mature followability facts.
+  The largest measured phases were dimensions 63,760 ms and open lots 61,860 ms. A separate 1 ms
+  statement-timeout injection failed in `source-counts`, wrote `retry` with attempt 1 and a future
+  `not_before`, and did not write `mismatch`. The disposable clone is intentionally left with that
+  retry receipt; production is unaffected.
+- Targeted verification passed 13/13 tests. `npm run typecheck`, `npm run lint` and workspace build
+  passed. The full local suite passed 394 tests with four files/47 database integrations skipped;
+  three archive-artifact tests could not start because the Windows host has no `zstd` executable
+  (`spawn zstd ENOENT`). Those three are an explicit unresolved verification gate and must run in
+  the exact Linux image before rollout.
+- Compose defaults remain one admitted day, one database connection, 80 MiB and 0.05 CPU. Only the
+  historical catch-up budgets change from a 120-second statement/300-second run admission window to
+  600/1,800 seconds, justified by the measured 208.8-second high-volume cohort. This does not grant
+  source retirement or change live execution.
+- Next exact action is read-only/local: locate and verify the server release-ledger artifact, refresh
+  backup, free disk, database/WAL slope, all Walletscaner service identities and protected co-tenant
+  presence, then build the exact Linux R37 candidate and rerun the archive tests with `zstd` plus the
+  relevant database tests. Only if those gates pass may a new revision-checked rollout phase be
+  opened. The two production rows currently labelled `mismatch` must not be rewritten until their
+  exact segment/revision/error preconditions are re-proven immediately before a guarded transaction.
