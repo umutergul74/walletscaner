@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:28:00Z
+updated_at_utc: 2026-08-26T23:30:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1903,3 +1903,18 @@ blindly repeat the last mutation.
   progress. No image, selector, service, database or B2 object changed. Next exact step is a
   single-thread low-I/O/CPU zstd stream into `docker load`, then exact image ID/platform/hash
   verification against local `sha256:909ee993...`. Do not activate on any mismatch.
+
+## R40 image-load checkpoint at 2026-08-26 23:30 UTC
+
+- The verified zstd artifact was decompressed single-threaded under the R36 64-MiB/0.04-CPU,
+  network-disabled boundary and streamed directly to low-I/O-priority `docker load`; no second
+  uncompressed server artifact was created. The command exited 0.
+- Server tag `walletscaner-worker:storage-r40-20260826` resolves exactly to Linux/amd64 image ID
+  `sha256:909ee9932bb7aa394fe3e0897eb823cbc65a5cb3f3e1a5adea5f80d50b8ba474`, matching local.
+  Embedded materializer/watch/scheduler/coordinator/test hashes also match local source exactly.
+- Free disk is 14,607,872,000 bytes. Selectors remain ingestion R30/operations R37; ingestion ID
+  `fec291346d30...` remains running and materializer ID `28e6a9099e69...` remains stopped R37.
+  Live execution remains false. No service, database or B2 object changed.
+- Image load briefly raised load1 to 3.33. Next exact read-only action is to wait for load and
+  archive activity to settle, verify flow/resource reserve again, then close ledger revision 25 as
+  staging completed. Do not open activation or mutate selectors while the load gate is elevated.
