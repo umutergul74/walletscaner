@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:48:00Z
+updated_at_utc: 2026-08-26T20:50:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1531,3 +1531,26 @@ blindly repeat the last mutation.
   80 MiB/0.05 CPU/64 pids, one day, 600-second statement and 1,800-second run limits, then drop the
   role. Capture report phase durations, receipt/parity/counts, fact rows updated since run start,
   DB/WAL/temp deltas and OOM/exit state before any repeat canary.
+
+## R39 populated first canary passed at 2026-08-26 20:50 UTC
+
+- Exact local candidate image manifest `sha256:9976fb847721...` ran with 80 MiB memory, 0.05 CPU,
+  64 pids, one day, 600-second statement and 1,800-second run limits. Named container
+  `walletscaner-r39-populated-canary-1` exited 0, OOM false, restart 0.
+- The isolated 2026-07-12 shadow receipt verified in 12,100 ms versus the failed production R38
+  run's 1,474,428 ms. It proved exact source/fact dual-digest parity for 1,556 episodes, 1,520 open
+  lots and 700 mature followability rows. Main phase durations were dimensions 1,835 ms,
+  reconcile-episodes 5,267 ms, episodes 224 ms, open-lots 1,776 ms and followability 285 ms; every
+  parity query was below 170 ms.
+- Because the copied Aug-24 global facts did not yet contain every July-12 entity, this first run
+  legitimately inserted/updated 1,018 episode, 968 lot and 700 followability facts. Shadow totals
+  became 219,510 / 252,428 / 28,198. Database size grew 2,736,128 bytes; WAL increased 20,838,999
+  bytes; cumulative temp bytes/files did not change.
+- The public clone receipt remained exactly the single 2026-08-24 row. The ephemeral role's direct
+  drop was initially refused because its grants were dependencies; `DROP OWNED BY` revoked only
+  those grants and the role then dropped. Role count is zero. The exited canary remains temporarily
+  for recorded identity evidence.
+- Next exact action: set only the shadow July-12 receipt to eligible `retry`, create a fresh
+  ephemeral least-privilege role, capture a new baseline and run the same exact candidate/limits.
+  Acceptance is verified parity with zero fact `updated_at` changes, no permanent DB growth, small
+  bounded WAL/temp and exit 0/OOM false. Do not touch production.
