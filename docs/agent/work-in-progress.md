@@ -1427,3 +1427,12 @@ blindly repeat the last mutation.
   the rollback state is a stopped exact-R37 materializer. Verify every non-target ID, live false,
   flow freshness and resource reserve, then close ledger revision 23 as failed. Do not retry the
   materializer until the open-lots query is redesigned and repopulated-clone evidence passes.
+
+## R38 scheduler stopped at 2026-08-26 20:29 UTC
+
+- Only `wallet-evidence-materializer-scheduler` was stopped through the exact Walletscaner Compose
+  project/file/env/profile. Container `b3704aca94ee...` is now exited 143, OOM false, restart 0 on
+  exact R38. No materializer Node process remains, so the 900-second failure-delay retry cannot run.
+- The selector is still exact R38 and ledger revision 23 remains activation in progress. Next exact
+  mutation is the reviewed updater dry-run and apply changing only the operations image selector
+  from exact R38 to exact R37; do not recreate or touch another service.
