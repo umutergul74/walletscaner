@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:49:00Z
+updated_at_utc: 2026-08-26T19:50:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1357,3 +1357,16 @@ blindly repeat the last mutation.
 - No selector or service changed while opening the phase. Next exact mutation is the guarded
   updater dry-run/apply changing only `WALLETSCANER_OPERATIONS_IMAGE` from exact R37 to exact R38,
   followed by Compose rendering and inspection before any named service recreate.
+
+## R38 selector checkpoint at 2026-08-26 19:50 UTC
+
+- The repository/server hash-matched guarded updater dry-ran and applied exactly one change:
+  `WALLETSCANER_OPERATIONS_IMAGE` from exact R37 to exact R38. `.env.server` SHA-256 changed from
+  `b1e6ce998c6217b99d16eb09d9d67afcb354cb264649703690a4f85b8246f9cd` to
+  `1299945c9b7b6a4643272552901fcd00ff059ecda316dfb95d4478c4f9f1ad91`.
+- `ENABLE_LIVE_EXECUTION=false` remains selected. No container was recreated; the stopped
+  materializer is still exact R37 and running operations/archive services remain exact R36.
+- Rollback is the inverse guarded one-key update to R37 using exact current R38 as pre-state.
+  Next exact read-only action is to render only the intended materializer service and verify exact
+  R38 image, live false, one-day/one-connection, 80-MiB/0.05-CPU, 600-second statement and
+  1,800-second run limits before recreating it with `--no-deps --no-build --force-recreate`.
