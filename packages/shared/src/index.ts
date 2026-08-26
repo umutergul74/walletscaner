@@ -142,6 +142,7 @@ export interface PipelineStatusNotification {
     walletArchiveLagSeconds?: number;
     walletCompactPendingDays?: number;
     walletCompactMismatchDays?: number;
+    walletCompactRetryDays?: number;
     walletCompactLagSeconds?: number;
     backupAgeSeconds?: number;
     backupOffsiteAcknowledged?: boolean;

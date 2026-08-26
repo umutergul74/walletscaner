@@ -21,6 +21,7 @@ describe("operational health summary", () => {
             lagSeconds: 321,
             compactPendingDays: 2,
             compactMismatchDays: 0,
+            compactRetryDays: 1,
             compactLagSeconds: 90
           }
         },
@@ -44,6 +45,7 @@ describe("operational health summary", () => {
       walletArchiveLagSeconds: 321,
       walletCompactPendingDays: 2,
       walletCompactMismatchDays: 0,
+      walletCompactRetryDays: 1,
       walletCompactLagSeconds: 90,
       backupAgeSeconds: 456,
       backupOffsiteAcknowledged: false

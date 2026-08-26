@@ -7,11 +7,7 @@ describe("server archive scheduler images", () => {
   it("pins every archive worker to the reviewed operations release", async () => {
     const compose = await readFile(composePath, "utf8");
     const writer = serviceBlock(compose, "archive-writer", "archive-verifier");
-    const verifier = serviceBlock(
-      compose,
-      "archive-verifier",
-      "archive-writer-scheduler"
-    );
+    const verifier = serviceBlock(compose, "archive-verifier", "archive-writer-scheduler");
     const materializer = serviceBlock(
       compose,
       "wallet-evidence-materializer-scheduler",
@@ -22,14 +18,19 @@ describe("server archive scheduler images", () => {
       "derived-ledger-reclaim",
       "archive-retirement-approval"
     );
-    const operationsImage =
-      "${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}";
+    const operationsImage = "${WALLETSCANER_OPERATIONS_IMAGE:-walletscaner-worker:local}";
 
     expect(writer).toContain(`image: ${operationsImage}`);
     expect(verifier).toContain(`image: ${operationsImage}`);
     expect(materializer).toContain(`image: ${operationsImage}`);
     expect(materializer).toContain('cpus: "0.05"');
     expect(materializer).toContain("mem_limit: 80m");
+    expect(materializer).toContain(
+      'WALLET_EVIDENCE_MATERIALIZER_MAX_RUN_SECONDS: "${WALLET_EVIDENCE_MATERIALIZER_MAX_RUN_SECONDS:-1800}"'
+    );
+    expect(materializer).toContain(
+      'WALLET_EVIDENCE_MATERIALIZER_STATEMENT_TIMEOUT_MS: "${WALLET_EVIDENCE_MATERIALIZER_STATEMENT_TIMEOUT_MS:-600000}"'
+    );
     expect(derivedReclaim).toContain(`image: ${operationsImage}`);
     expect(derivedReclaim).toContain('cpus: "0.02"');
     expect(derivedReclaim).toContain("mem_limit: 64m");

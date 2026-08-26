@@ -988,6 +988,13 @@ Terminal failed discovery-repair signature rows use their creation time for the 
 retention applied to completed repair staging. The failed repair summary and coverage exclusion are
 retained; only its no-longer-replayable staging rows age out.
 
+Wallet compact materialization never skips an unresolved older verified archive day. PostgreSQL
+timeouts and other operational failures enter the `retry` state with a bounded backoff; only exact
+source-count or field-digest disagreement enters `mismatch`. The health report and Telegram summary
+show retry and parity-mismatch counts separately. Production defaults retain one day/one connection,
+80 MiB and 5% CPU while permitting a 600-second statement and 1,800-second admitted-day budget for
+the measured large historical cohorts.
+
 Activate real transport without changing retirement authority by running the atomic updater with
 `--activate --execute --preserve-credentials`; `--execute` is rejected without `--activate`, and the
 transport-only invocation leaves `ARCHIVE_RETIREMENT_ENABLED=false`. This allows new closed UTC-day objects to

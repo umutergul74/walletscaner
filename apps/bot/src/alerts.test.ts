@@ -88,12 +88,21 @@ describe("telegram operational alerts", () => {
       qualifiedPools24h: 3,
       lastPoolAgeSeconds: 4,
       lastWalletTradeAgeSeconds: 12,
-      databaseBytes: 10 * 1024 ** 3
+      databaseBytes: 10 * 1024 ** 3,
+      operationalHealth: {
+        checkedAt: "2026-07-16T00:00:00.000Z",
+        status: "degraded",
+        reasons: ["1 wallet compact operational retry days"],
+        walletCompactMismatchDays: 0,
+        walletCompactRetryDays: 1
+      }
     });
     expect(message).toContain("Walletscaner durum: OK");
     expect(message).toContain("Inbox backlog / dead-letter: 0 / 0");
     expect(message).toContain("Açık discovery coverage incident: 0");
     expect(message).toContain("Veritabanı: 10.00 GiB");
+    expect(message).toContain("Wallet compact geçici işlem hatası: 1");
+    expect(message).not.toContain("Wallet compact parity hatası");
   });
 
   it("formats coverage incident and recovery transitions without claiming gap completion", () => {

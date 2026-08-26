@@ -146,6 +146,14 @@ The operational monitor reports wallet archive backlog/freshness, compact backlo
 mismatches separately. These receipts prove field-preserving materialization, but do not replace the
 reader dual-run or seven-day production shadow gates.
 
+Compact catch-up is strictly oldest-first. A retryable operational failure (for example a bounded
+statement timeout) is persisted as `retry` and blocks later verified days until its backoff expires;
+only a source-count or deterministic digest disagreement is labelled `mismatch`. Each materializer
+phase emits a duration so the bounded statement budget can be tuned from evidence. The scheduler
+keeps one day, one database connection, 80 MiB and 5% of one CPU per run; its shared-host defaults
+allow up to 600 seconds per statement and 1,800 seconds to admit a day, which covers the measured
+high-volume cohorts without raising CPU or memory concurrency.
+
 ## Populated-clone benchmark
 
 The verified 2026-08-15 production dump was serially restored into an isolated PostgreSQL 16

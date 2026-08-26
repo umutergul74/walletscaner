@@ -12,6 +12,7 @@ export interface OperationalHealthSummary {
   walletArchiveLagSeconds?: number;
   walletCompactPendingDays?: number;
   walletCompactMismatchDays?: number;
+  walletCompactRetryDays?: number;
   walletCompactLagSeconds?: number;
   backupAgeSeconds?: number;
   backupOffsiteAcknowledged?: boolean;
@@ -60,6 +61,7 @@ export async function readOperationalHealthSummary(
       ...optionalNumber("walletArchiveLagSeconds", walletEvidence.lagSeconds),
       ...optionalNumber("walletCompactPendingDays", walletEvidence.compactPendingDays),
       ...optionalNumber("walletCompactMismatchDays", walletEvidence.compactMismatchDays),
+      ...optionalNumber("walletCompactRetryDays", walletEvidence.compactRetryDays),
       ...optionalNumber("walletCompactLagSeconds", walletEvidence.compactLagSeconds),
       ...optionalNumber("backupAgeSeconds", backup.ageSeconds),
       ...(typeof backup.offsiteAcknowledged === "boolean"

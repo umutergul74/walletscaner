@@ -6,10 +6,10 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for wallet evidence materialization");
 
 const maxDaysPerRun = positiveInt(process.env.WALLET_EVIDENCE_MATERIALIZER_MAX_DAYS_PER_RUN, 1);
-const maxRunSeconds = positiveInt(process.env.WALLET_EVIDENCE_MATERIALIZER_MAX_RUN_SECONDS, 300);
+const maxRunSeconds = positiveInt(process.env.WALLET_EVIDENCE_MATERIALIZER_MAX_RUN_SECONDS, 1_800);
 const statementTimeoutMs = positiveInt(
   process.env.WALLET_EVIDENCE_MATERIALIZER_STATEMENT_TIMEOUT_MS,
-  120_000
+  600_000
 );
 const reportPath = "reports/wallet-evidence-materializer-latest.json";
 async function main() {
@@ -36,21 +36,33 @@ async function main() {
 
       while (processed < maxDaysPerRun && Date.now() - startedAt < maxRunSeconds * 1_000) {
         const candidate = await client.query<ArchiveCandidate>(
-          `SELECT segment.id::text, segment.revision, segment.range_start,
-                segment.range_end, segment.record_type_counts
-         FROM archive_segments AS segment
-         LEFT JOIN wallet_evidence_compact_days AS compact
-           ON compact.range_start = segment.range_start
-         WHERE segment.source_kind = 'wallet-evidence'
-           AND segment.status = 'verified'
-           AND segment.canonical_metadata_row_count = segment.source_row_count
-           AND segment.record_type_counts IS NOT NULL
-           AND (compact.range_start IS NULL
-                OR compact.archive_segment_id <> segment.id
-                OR compact.archive_revision <> segment.revision
-                OR (compact.status <> 'verified' AND compact.not_before <= NOW()))
-         ORDER BY segment.range_start
-         LIMIT 1`
+          `WITH oldest_unmaterialized AS (
+             SELECT segment.id::text, segment.revision, segment.range_start,
+                    segment.range_end, segment.record_type_counts,
+                    compact.range_start AS compact_range_start,
+                    compact.archive_segment_id AS compact_segment_id,
+                    compact.archive_revision AS compact_revision,
+                    compact.not_before AS compact_not_before
+             FROM archive_segments AS segment
+             LEFT JOIN wallet_evidence_compact_days AS compact
+               ON compact.range_start = segment.range_start
+             WHERE segment.source_kind = 'wallet-evidence'
+               AND segment.status = 'verified'
+               AND segment.canonical_metadata_row_count = segment.source_row_count
+               AND segment.record_type_counts IS NOT NULL
+               AND (compact.range_start IS NULL
+                    OR compact.archive_segment_id <> segment.id
+                    OR compact.archive_revision <> segment.revision
+                    OR compact.status <> 'verified')
+             ORDER BY segment.range_start
+             LIMIT 1
+           )
+           SELECT id, revision, range_start, range_end, record_type_counts
+           FROM oldest_unmaterialized
+           WHERE compact_range_start IS NULL
+              OR compact_segment_id <> id::bigint
+              OR compact_revision <> revision
+              OR compact_not_before <= NOW()`
         );
         const segment = candidate.rows[0];
         if (!segment) break;
@@ -62,13 +74,15 @@ async function main() {
         } catch (error) {
           failed += 1;
           const message = errorMessage(error);
+          const disposition =
+            error instanceof CompactMaterializationError ? error.disposition : "retry";
           days.push({
             rangeStart: segment.range_start.toISOString(),
             revision: segment.revision,
-            status: "mismatch",
+            status: disposition,
             error: message
           });
-          await recordFailure(client, segment, message);
+          await recordFailure(client, segment, disposition, message);
           break;
         }
       }
@@ -113,37 +127,73 @@ interface Aggregate {
   digest1: string;
 }
 
+type CompactFailureDisposition = "mismatch" | "retry";
+
+class CompactMaterializationError extends Error {
+  constructor(
+    readonly phase: string,
+    readonly disposition: CompactFailureDisposition,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(`${phase}: ${message}`, options);
+    this.name = "CompactMaterializationError";
+  }
+}
+
 async function materializeDay(
   client: pg.PoolClient,
   segment: ArchiveCandidate
 ): Promise<Record<string, unknown>> {
   const start = segment.range_start.toISOString();
   const end = segment.range_end.toISOString();
+  const phaseDurationsMs: Record<string, number> = {};
+  const phase = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
+    const phaseStartedAt = Date.now();
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof CompactMaterializationError) throw error;
+      throw new CompactMaterializationError(name, "retry", errorMessage(error), { cause: error });
+    } finally {
+      phaseDurationsMs[name] = Date.now() - phaseStartedAt;
+    }
+  };
   await client.query("BEGIN");
   try {
     await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
-    const current = await client.query<ArchiveCandidate>(
-      `SELECT id::text, revision, range_start, range_end, record_type_counts
-       FROM archive_segments
-       WHERE id=$1 AND revision=$2 AND source_kind='wallet-evidence' AND status='verified'
-       FOR SHARE`,
-      [segment.id, segment.revision]
+    const current = await phase("lock-segment", () =>
+      client.query<ArchiveCandidate>(
+        `SELECT id::text, revision, range_start, range_end, record_type_counts
+         FROM archive_segments
+         WHERE id=$1 AND revision=$2 AND source_kind='wallet-evidence' AND status='verified'
+         FOR SHARE`,
+        [segment.id, segment.revision]
+      )
     );
-    if (!current.rows[0]) throw new Error("Archive segment changed before materialization");
+    if (!current.rows[0]) {
+      throw new CompactMaterializationError(
+        "lock-segment",
+        "retry",
+        "Archive segment changed before materialization"
+      );
+    }
 
-    const sourceCounts = await client.query<{
-      wallet_trade_event: string;
-      wallet_entry_signal: string;
-      wallet_signal_outcome: string;
-    }>(
-      `SELECT
-         (SELECT COUNT(*) FROM wallet_trade_events
-          WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_trade_event,
-         (SELECT COUNT(*) FROM wallet_entry_signals
-          WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_entry_signal,
-         (SELECT COUNT(*) FROM wallet_signal_outcomes
-          WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_signal_outcome`,
-      [start, end]
+    const sourceCounts = await phase("source-counts", () =>
+      client.query<{
+        wallet_trade_event: string;
+        wallet_entry_signal: string;
+        wallet_signal_outcome: string;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM wallet_trade_events
+            WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_trade_event,
+           (SELECT COUNT(*) FROM wallet_entry_signals
+            WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_entry_signal,
+           (SELECT COUNT(*) FROM wallet_signal_outcomes
+            WHERE observed_at >= $1 AND observed_at < $2)::text AS wallet_signal_outcome`,
+        [start, end]
+      )
     );
     const actualSourceCounts = {
       wallet_trade_event: Number(sourceCounts.rows[0]?.wallet_trade_event ?? 0),
@@ -151,23 +201,39 @@ async function materializeDay(
       wallet_signal_outcome: Number(sourceCounts.rows[0]?.wallet_signal_outcome ?? 0)
     };
     if (!sameCounts(actualSourceCounts, segment.record_type_counts)) {
-      throw new Error("Current source counts differ from the verified B2 manifest");
+      throw new CompactMaterializationError(
+        "source-counts",
+        "mismatch",
+        "Current source counts differ from the verified B2 manifest"
+      );
     }
 
-    await materializeDimensions(client, start, end);
-    await reconcileMissingEpisodes(client, start, end);
-    await materializeEpisodes(client, start, end);
-    await materializeOpenLots(client, start, end);
-    await materializeFollowability(client, start, end);
+    await phase("dimensions", () => materializeDimensions(client, start, end));
+    await phase("reconcile-episodes", () => reconcileMissingEpisodes(client, start, end));
+    await phase("episodes", () => materializeEpisodes(client, start, end));
+    await phase("open-lots", () => materializeOpenLots(client, start, end));
+    await phase("followability", () => materializeFollowability(client, start, end));
 
     // A pg client executes one statement at a time. Keep these reads explicit and
     // sequential so transaction ordering remains supported by pg 9+ as well.
-    const episodeSource = await aggregate(client, episodeSourceAggregateSql, start, end);
-    const episodeFact = await aggregate(client, episodeFactAggregateSql, start, end);
-    const lotSource = await aggregate(client, lotSourceAggregateSql, start, end);
-    const lotFact = await aggregate(client, lotFactAggregateSql, start, end);
-    const followSource = await aggregate(client, followSourceAggregateSql, start, end);
-    const followFact = await aggregate(client, followFactAggregateSql, start, end);
+    const episodeSource = await phase("parity-episode-source", () =>
+      aggregate(client, episodeSourceAggregateSql, start, end)
+    );
+    const episodeFact = await phase("parity-episode-fact", () =>
+      aggregate(client, episodeFactAggregateSql, start, end)
+    );
+    const lotSource = await phase("parity-lot-source", () =>
+      aggregate(client, lotSourceAggregateSql, start, end)
+    );
+    const lotFact = await phase("parity-lot-fact", () =>
+      aggregate(client, lotFactAggregateSql, start, end)
+    );
+    const followSource = await phase("parity-followability-source", () =>
+      aggregate(client, followSourceAggregateSql, start, end)
+    );
+    const followFact = await phase("parity-followability-fact", () =>
+      aggregate(client, followFactAggregateSql, start, end)
+    );
     const parity = {
       episodes: aggregateMatches(episodeSource, episodeFact),
       openLots: aggregateMatches(lotSource, lotFact),
@@ -180,11 +246,16 @@ async function materializeDay(
       followFact
     };
     if (!parity.episodes || !parity.openLots || !parity.matureFollowability) {
-      throw new Error("Compact wallet evidence digest parity failed");
+      throw new CompactMaterializationError(
+        "parity",
+        "mismatch",
+        "Compact wallet evidence digest parity failed"
+      );
     }
 
-    await client.query(
-      `INSERT INTO wallet_evidence_compact_days (
+    await phase("write-receipt", () =>
+      client.query(
+        `INSERT INTO wallet_evidence_compact_days (
          range_start, range_end, archive_segment_id, archive_revision, status,
          source_record_type_counts, affected_episode_count, open_lot_count,
          mature_followability_count, parity, attempt_count, not_before, last_error,
@@ -205,17 +276,18 @@ async function materializeDay(
          last_error=NULL,
          materialized_at=NOW(),
          updated_at=NOW()`,
-      [
-        start,
-        end,
-        segment.id,
-        segment.revision,
-        JSON.stringify(actualSourceCounts),
-        episodeFact.rows,
-        lotFact.rows,
-        followFact.rows,
-        JSON.stringify(parity)
-      ]
+        [
+          start,
+          end,
+          segment.id,
+          segment.revision,
+          JSON.stringify(actualSourceCounts),
+          episodeFact.rows,
+          lotFact.rows,
+          followFact.rows,
+          JSON.stringify(parity)
+        ]
+      )
     );
     await client.query("COMMIT");
     return {
@@ -224,7 +296,8 @@ async function materializeDay(
       status: "verified",
       episodeCount: episodeFact.rows,
       openLotCount: lotFact.rows,
-      matureFollowabilityCount: followFact.rows
+      matureFollowabilityCount: followFact.rows,
+      phaseDurationsMs
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -527,10 +600,17 @@ async function aggregate(
 }
 
 function aggregateMatches(left: Aggregate, right: Aggregate): boolean {
-  return left.rows === right.rows && left.digest0 === right.digest0 && left.digest1 === right.digest1;
+  return (
+    left.rows === right.rows && left.digest0 === right.digest0 && left.digest1 === right.digest1
+  );
 }
 
-async function recordFailure(client: pg.PoolClient, segment: ArchiveCandidate, error: string) {
+async function recordFailure(
+  client: pg.PoolClient,
+  segment: ArchiveCandidate,
+  disposition: CompactFailureDisposition,
+  error: string
+) {
   await client.query(
     `INSERT INTO wallet_evidence_compact_days (
        range_start, range_end, archive_segment_id, archive_revision, status,
@@ -538,19 +618,21 @@ async function recordFailure(client: pg.PoolClient, segment: ArchiveCandidate, e
        mature_followability_count, parity, attempt_count, not_before, last_error,
        materialized_at, updated_at
      ) VALUES (
-       $1,$2,$3,$4,'mismatch',$5::jsonb,0,0,0,'{}'::jsonb,1,
-       NOW() + INTERVAL '6 hours',$6,NOW(),NOW()
+       $1,$2,$3,$4,$6,$5::jsonb,0,0,0,'{}'::jsonb,1,
+       NOW() + CASE WHEN $6='retry' THEN INTERVAL '30 minutes' ELSE INTERVAL '6 hours' END,
+       $7,NOW(),NOW()
      )
      ON CONFLICT (range_start) DO UPDATE SET
        archive_segment_id=EXCLUDED.archive_segment_id,
        archive_revision=EXCLUDED.archive_revision,
-       status='mismatch', source_record_type_counts=EXCLUDED.source_record_type_counts,
+       status=EXCLUDED.status, source_record_type_counts=EXCLUDED.source_record_type_counts,
        parity='{}'::jsonb,
        attempt_count=CASE
          WHEN wallet_evidence_compact_days.archive_segment_id=EXCLUDED.archive_segment_id
           AND wallet_evidence_compact_days.archive_revision=EXCLUDED.archive_revision
          THEN wallet_evidence_compact_days.attempt_count + 1 ELSE 1 END,
-       not_before=NOW() + INTERVAL '6 hours',
+       not_before=NOW() + CASE
+         WHEN EXCLUDED.status='retry' THEN INTERVAL '30 minutes' ELSE INTERVAL '6 hours' END,
        last_error=EXCLUDED.last_error,
        materialized_at=NOW(), updated_at=NOW()`,
     [
@@ -559,6 +641,7 @@ async function recordFailure(client: pg.PoolClient, segment: ArchiveCandidate, e
       segment.id,
       segment.revision,
       JSON.stringify(segment.record_type_counts),
+      disposition,
       error.slice(0, 4_000)
     ]
   );
@@ -576,7 +659,10 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 function errorMessage(error: unknown): string {
-  return (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(0, 4_000);
+  return (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(
+    0,
+    4_000
+  );
 }
 
 function safeJsonCast(field: string, type: string): string {

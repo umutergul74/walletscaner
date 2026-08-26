@@ -186,6 +186,9 @@ export function formatPipelineStatusAlert(status: PipelineStatusNotification): s
           ...((operational.walletCompactMismatchDays ?? 0) > 0
             ? [`Wallet compact parity hatası: ${operational.walletCompactMismatchDays}`]
             : []),
+          ...((operational.walletCompactRetryDays ?? 0) > 0
+            ? [`Wallet compact geçici işlem hatası: ${operational.walletCompactRetryDays}`]
+            : []),
           ...operational.reasons.slice(0, 3).map((reason) => `Durum nedeni: ${reason}`)
         ]
       : []),

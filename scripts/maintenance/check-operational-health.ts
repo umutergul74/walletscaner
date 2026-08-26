@@ -69,10 +69,7 @@ const storageReserveBytes = positiveNumber(
   process.env.OPERATIONS_STORAGE_RESERVE_BYTES,
   8 * 1024 ** 3
 );
-const minimumStorageRunwayDays = positiveNumber(
-  process.env.OPERATIONS_MIN_STORAGE_RUNWAY_DAYS,
-  14
-);
+const minimumStorageRunwayDays = positiveNumber(process.env.OPERATIONS_MIN_STORAGE_RUNWAY_DAYS, 14);
 const maximumBackupAgeSeconds = positiveNumber(
   process.env.OPERATIONS_MAX_BACKUP_AGE_SECONDS,
   30 * 3_600
@@ -106,6 +103,7 @@ try {
     wallet_archive_latest_verified_end: Date | null;
     wallet_compact_pending_days: number;
     wallet_compact_mismatch_days: number;
+    wallet_compact_retry_days: number;
     wallet_compact_latest_verified_end: Date | null;
     wallet_compact_oldest_pending_verified_at: Date | null;
     finality_pending: number;
@@ -209,8 +207,12 @@ try {
         ) AS wallet_compact_pending_days,
         (
           SELECT COUNT(*)::integer FROM wallet_evidence_compact_days
-          WHERE status IN ('mismatch','retry')
+          WHERE status = 'mismatch'
         ) AS wallet_compact_mismatch_days,
+        (
+          SELECT COUNT(*)::integer FROM wallet_evidence_compact_days
+          WHERE status = 'retry'
+        ) AS wallet_compact_retry_days,
         (
           SELECT MAX(range_end) FROM wallet_evidence_compact_days WHERE status='verified'
         ) AS wallet_compact_latest_verified_end,
@@ -323,9 +325,7 @@ try {
     reasons.push(`backup not offsite-acknowledged: ${backup.reason ?? "unknown"}`);
   }
   if ((backup.ageSeconds ?? 0) > maximumBackupAgeSeconds) {
-    reasons.push(
-      `backup age ${round(backup.ageSeconds ?? 0)}s > ${maximumBackupAgeSeconds}s`
-    );
+    reasons.push(`backup age ${round(backup.ageSeconds ?? 0)}s > ${maximumBackupAgeSeconds}s`);
   }
 
   if (row.backlog > maxBacklog) reasons.push(`backlog ${row.backlog} > ${maxBacklog}`);
@@ -385,6 +385,9 @@ try {
   }
   if (archiveEnabled && row.wallet_compact_mismatch_days > 0) {
     reasons.push(`${row.wallet_compact_mismatch_days} wallet compact parity mismatch days`);
+  }
+  if (archiveEnabled && row.wallet_compact_retry_days > 0) {
+    reasons.push(`${row.wallet_compact_retry_days} wallet compact operational retry days`);
   }
   if (
     archiveEnabled &&
@@ -471,6 +474,7 @@ try {
         lagSeconds: walletArchiveLagSeconds === null ? null : round(walletArchiveLagSeconds),
         compactPendingDays: row.wallet_compact_pending_days,
         compactMismatchDays: row.wallet_compact_mismatch_days,
+        compactRetryDays: row.wallet_compact_retry_days,
         compactLatestVerifiedEnd: row.wallet_compact_latest_verified_end?.toISOString() ?? null,
         compactOldestPendingVerifiedAt:
           row.wallet_compact_oldest_pending_verified_at?.toISOString() ?? null,
@@ -526,7 +530,9 @@ async function readSqlTelemetry(database: pg.Pool): Promise<{
     }
     await database.query("SET statement_timeout = '2s'");
     const [info, ranked] = await Promise.all([
-      database.query<{ stats_reset: Date | null }>("SELECT stats_reset FROM pg_stat_statements_info"),
+      database.query<{ stats_reset: Date | null }>(
+        "SELECT stats_reset FROM pg_stat_statements_info"
+      ),
       database.query<{
         metric: SqlTelemetryEntry["metric"];
         query_id: string;
