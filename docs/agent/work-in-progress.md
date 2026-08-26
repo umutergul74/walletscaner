@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:55:20Z
+updated_at_utc: 2026-08-26T01:58:20Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -671,3 +671,12 @@ blindly repeat the last mutation.
   revision 1/dead-letter with the proven generic HEAD mismatch, clear only their active error/lease
   fields and set `retry_verify`. Then run one exact R36 verifier with max two segments and explicit
   live-false/no-dependencies. Any real SHA/count/Object-Lock/GET mismatch must still dead-letter.
+- The guarded transaction matched exactly segments 67/69 at revision 1 and moved only those rows
+  from `dead_letter` to `retry_verify`; prior attempt audit rows and counters remain. A bounded exact
+  R36 one-shot then independently downloaded and verified both in 9,495 ms: processed 2, verified
+  2, failed 0. Global archive summary became verified 29 / pending 27 / dead-letter 0.
+- No B2 object was uploaded, overwritten or deleted during the retry. Content length, archive/source
+  SHA, semantic record counts, full restored envelopes and retention evidence all passed.
+- Next exact action: recreate writer, data maintenance, compact materializer and operations monitor
+  individually on R36 with `--no-build --no-deps`; after each, prove exact image, prior limits,
+  restart/OOM and live-false. Then run a bounded maintenance canary and refresh health/data flow.
