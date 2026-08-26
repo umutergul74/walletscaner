@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:32:00Z
+updated_at_utc: 2026-08-26T23:33:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1934,3 +1934,15 @@ blindly repeat the last mutation.
   `solana-ingestion`, then verify trade observation fills and remains bounded before touching the
   operations selector or materializer. Rollback is the inverse one-key update plus exact R30
   ingestion recreate.
+
+## R40 ingestion activation opened at 2026-08-26 23:33 UTC
+
+- Ledger revision 26 was dry-run checked and atomically advanced. Revision 27 is
+  `r40-ingestion-activation=in_progress`, SHA-256
+  `2a3edb54bec2a0183942b0e4bc4670ea354e9e6f612e40f4db3b99a8f6524c75`.
+- Evidence records candidate R40, rollback R30 image/container, live false, zero active trade lane
+  and disk reserve. No selector or service changed while opening the phase.
+- Next exact mutation is the guarded updater dry-run/apply changing only
+  `WALLETSCANER_INGEST_IMAGE` from `walletscaner-worker:pipeline-storage-r30-20260825` to
+  `walletscaner-worker:storage-r40-20260826`. Then render and verify only ingestion before its
+  no-dependency/no-build recreate. Operations/materializer remain R37/stopped.
