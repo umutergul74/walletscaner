@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T21:00:00Z
+updated_at_utc: 2026-08-26T21:02:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1614,3 +1614,22 @@ blindly repeat the last mutation.
 - No production action is authorized by this packaging checkpoint. After artifact identity is
   recorded, refresh server ledger/backup/offsite, free disk/RAM/load, heavy jobs, flow freshness,
   coverage, receipts, selector/materializer and all Compose identities before opening an R39 phase.
+
+## R39 release artifact ready at 2026-08-26 21:02 UTC
+
+- Exact R39 exported to a 463,433,216-byte temporary Docker tar. A network-disabled exact-image
+  container compressed it at zstd level 3/single-thread/checksum under 64 MiB/0.05 CPU and the
+  frame test passed.
+- Docker Desktop retained the bind-mounted `.partial` lock briefly after the compressor exited, so
+  the first final rename failed closed. No compression was repeated: compressor container absence,
+  source tar, final absence, partial bytes and SHA were rechecked, then only the rename was retried
+  after the lock released.
+- Final ignored release artifact
+  `deploy/walletscaner-worker-storage-r39-20260826.tar.zst` is 462,870,167 bytes with SHA-256
+  `9800833736f00c7f7355e87f17ba2e1b81cf015ce61fbafe047b8e464cb3b744`. The final hash matches the
+  verified partial and the uncompressed tar is absent. The four pre-existing transfer remnants
+  remain untouched.
+- No server byte/image/selector/service/database/B2 state changed. Next exact action is a fresh
+  read-only production preflight and flow resample. Do not open ledger R39 artifact staging unless
+  revision 24 is still failed, selector/materializer rollback is exact, recovery evidence is
+  current, no heavy job is active and staging plus temp margin remains above the 8-GiB reserve.
