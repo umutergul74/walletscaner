@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:34:00Z
+updated_at_utc: 2026-08-26T19:35:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1289,3 +1289,17 @@ blindly repeat the last mutation.
   `r38-artifact-staging=in_progress`, with rollback to the absent R38 paths plus loaded/stopped R37
   and running R36 operations. Then transfer only the exact R38 artifact to a `.partial` path,
   verify server bytes/SHA in a bounded R36 container and atomically rename before image load.
+
+## R38 staging ledger opened at 2026-08-26 19:35 UTC
+
+- Revision 20 was dry-run against exact prior SHA
+  `40a97af41a6082d34f2abb625046c125f4e9d8fcef445591481dab451bc3d659`, then the same guarded
+  transition was atomically applied. Server ledger is revision 21,
+  `r38-artifact-staging=in_progress`, SHA-256
+  `413e1c8ce247074ebb03334db9ab413468b5df6b0d31386ad93c1da480d7819b`.
+- The ledger records the exact 462,868,480-byte artifact, transfer SHA, candidate image prefix,
+  verified backup SHA and pre-staging free disk. No artifact byte, image, selector, service,
+  database row or B2 object changed during this bookkeeping step.
+- Next exact action is the ledger-encoded resumable transfer to
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r38-20260826.tar.zst.partial`; verify exact
+  server size and SHA before atomically renaming. Loading and activation remain separate phases.
