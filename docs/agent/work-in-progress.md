@@ -1698,3 +1698,22 @@ blindly repeat the last mutation.
   action is a coherent source commit, then the complete repository tests/build. If those pass,
   build a new immutable Linux image that includes both exact R39 compact-materializer bytes and
   this trade-lane fix; do not reuse or mutate the already hashed R39 artifact.
+
+## Trade-lane source checkpoint and host gates at 2026-08-26 21:17 UTC
+
+- Source/docs checkpoint `b56be24` contains the bounded trade observation lane. The four historical
+  untracked transfer remnants are still the only unrelated working-tree artifacts and remain
+  untouched. Exact R39 local image/tag remains
+  `sha256:9976fb84772180e6dde4dbda94243fe04ea4c41a619cb81337e257a9e68e7eba`;
+  populated PostgreSQL 16 clone `walletscaner-pg16-r31` remains running and intact.
+- Host `npm test` produced 403 passed / 47 skipped and three failures only in
+  `archive-artifact.test.ts`: Windows has no `zstd` executable (`spawn zstd ENOENT`). This is
+  recorded as an invalid host environment for those three tests, not a passing full gate.
+  Database suites were skipped without `TEST_DATABASE_URL`. The earlier targeted trade/provider
+  set remains 63/63; typecheck and ESLint pass.
+- `npm run build --workspaces --if-present` completed the Next.js production build successfully.
+  Next exact action is to build a new local Linux/amd64 R40 candidate from `b56be24`, verify it
+  contains the exact R39 materializer plus the new scheduler bytes, run the zstd-dependent tests
+  inside that image and run the applicable PostgreSQL 16 integration suites serially. No export,
+  server transfer or rollout is allowed until those gates and an isolated observation-lane canary
+  pass.
