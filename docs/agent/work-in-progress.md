@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:13:00Z
+updated_at_utc: 2026-08-26T23:16:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1829,3 +1829,19 @@ blindly repeat the last mutation.
 - Next exact action is to export this immutable tag to one named temporary tar, compress with zstd
   level 3/single-thread/checksum in a network-disabled bounded container, frame-test the partial,
   record its SHA-256 and atomically rename it. Preserve every older partial/remnant unchanged.
+
+## R40 release artifact ready at 2026-08-26 23:16 UTC
+
+- Exact R40 exported to a 463,437,312-byte temporary Docker tar. A network-disabled exact-image
+  container compressed it with zstd level 3, one thread and frame checksum under 64 MiB/0.05 CPU;
+  an independent `zstd -t` frame check passed.
+- Final ignored artifact `deploy/walletscaner-worker-storage-r40-20260826.tar.zst` is 462,733,489
+  bytes with SHA-256
+  `71ecf11c435d0449db2e9107f88abc25c1a9ad93ce2283bfcc8d28d490de6f07`. The final bytes/hash
+  match the verified `.partial`; the named temporary tar and R40 partial are absent. All four
+  historical transfer remnants remain untouched.
+- No production byte/image/selector/service/database/B2 or ledger state changed. Next exact action
+  is a fresh read-only production preflight: reconcile ledger revision, backup/off-site evidence,
+  free disk/RAM/swap/load, database/archive state, live-execution value, service identities,
+  migrations, trade/discovery flow and heavy jobs. Do not stage the artifact unless all hard gates
+  pass and transfer plus decompression preserves the 8-GiB host reserve.
