@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:12:00Z
+updated_at_utc: 2026-08-26T19:29:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1233,3 +1233,24 @@ blindly repeat the last mutation.
   server `.offsite-verified` acknowledgement, verify the marker digest, and let only the reviewed
   reconciliation path retire the older server generation. Then refresh disk/load/flow/ledger gates
   before opening revision 21 for `r38-artifact-staging`.
+
+## Off-site recovery gate completed at 2026-08-26 19:29 UTC
+
+- The existing reviewed `Walletscaner-Offsite-Backup` task was invoked once after the server dump
+  gate. It resumed/downloaded to a generation-specific `.partial`, reached the exact
+  1,936,729,703-byte server size, verified SHA-256
+  `5bb6961e89655a8033aec9fa5c3a42a7d367046d45b31d6e1ea5f6a899d7b9c0`, passed PostgreSQL 16
+  archive-list validation and only then atomically finalized the local file. The task completed
+  with result 0 at 19:28:04 UTC.
+- The server acknowledgement now contains the exact same digest. The reviewed reconciliation kept
+  the new verified server generation and removed the superseded 25-August server copy; the older
+  off-host recovery generation remains local. No database, B2 object or canonical evidence was
+  deleted.
+- Server free disk recovered from the two-generation low point to 16,061,800,448 bytes. Available
+  memory is about 1.07 GB, free swap 1.98 GB and load is settling after backup/transfer. The backup
+  scheduler is sleeping and no hash, dump, restore-list or SFTP process remains.
+- Next exact action: refresh the complete R38 production preflight against actual revision 20,
+  selected images, stopped R37 materializer, Compose projects/services, live-false controls,
+  migration checksums, database/archive/coverage/queue freshness, active transactions, disk/RAM/
+  swap/load and absence of R38 server paths/image. If every hard gate passes, dry-run then apply
+  revision 21 `r38-artifact-staging=in_progress` before the first R38 transfer byte.
