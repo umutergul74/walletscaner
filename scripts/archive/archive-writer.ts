@@ -6,7 +6,12 @@ import { loadArchiveRuntimeConfig } from "@memecoin-alpha/config";
 import { exportArchiveSegment, validateArchiveArtifact } from "@memecoin-alpha/db/archive-artifact";
 import { ArchiveStore } from "@memecoin-alpha/db/archive-store";
 import { S3CompatibleArchiveStore } from "@memecoin-alpha/providers/object-storage";
-import { archiveWorkerId, errorMessage, startLeaseHeartbeat } from "./runtime";
+import {
+  archiveWorkerId,
+  errorMessage,
+  serializeRecordTypeCounts,
+  startLeaseHeartbeat
+} from "./runtime";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for the archive writer");
@@ -131,7 +136,7 @@ try {
               "source-sha256": artifact.sourceSha256,
               "source-row-count": artifact.sourceRowCount.toString(),
               "canonical-metadata-row-count": artifact.canonicalMetadataRowCount.toString(),
-              "record-type-counts": JSON.stringify(artifact.recordTypeCounts),
+              "record-type-counts": serializeRecordTypeCounts(artifact.recordTypeCounts),
               "source-bytes": artifact.sourceBytes.toString(),
               "source-start": segment.rangeStart,
               "source-end": segment.rangeEnd,

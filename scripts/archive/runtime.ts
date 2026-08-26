@@ -5,6 +5,12 @@ export function archiveWorkerId(role: "writer" | "verifier"): string {
   return `archive-${role}:${hostname()}:${process.pid}`;
 }
 
+export function serializeRecordTypeCounts(counts: Record<string, number>): string {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)))
+  );
+}
+
 export function archiveMetadata(segment: ArchiveSegment): Record<string, string> {
   if (
     segment.sourceRowCount === undefined ||
@@ -19,7 +25,7 @@ export function archiveMetadata(segment: ArchiveSegment): Record<string, string>
     "source-sha256": segment.sourceSha256,
     "source-row-count": segment.sourceRowCount.toString(),
     "canonical-metadata-row-count": segment.canonicalMetadataRowCount.toString(),
-    "record-type-counts": JSON.stringify(segment.recordTypeCounts),
+    "record-type-counts": serializeRecordTypeCounts(segment.recordTypeCounts),
     "source-bytes": segment.sourceBytes.toString(),
     "source-start": segment.rangeStart,
     "source-end": segment.rangeEnd,

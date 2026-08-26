@@ -114,6 +114,40 @@ function normalizeMetadata(metadata: Record<string, string> | undefined): Record
   return normalized;
 }
 
+function canonicalRecordTypeCounts(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") return undefined;
+    const entries = Object.entries(parsed);
+    if (
+      entries.length === 0 ||
+      entries.length > 32 ||
+      entries.some(
+        ([key, count]) =>
+          !/^[a-z][a-z0-9_]{0,127}$/.test(key) ||
+          typeof count !== "number" ||
+          !Number.isSafeInteger(count) ||
+          count < 0
+      )
+    ) {
+      return undefined;
+    }
+    return JSON.stringify(entries.sort(([left], [right]) => left.localeCompare(right)));
+  } catch {
+    return undefined;
+  }
+}
+
+function metadataValueMatches(key: string, expected: string, actual: string | undefined): boolean {
+  if (actual === expected) return true;
+  if (key !== "record-type-counts") return false;
+  const expectedCanonical = canonicalRecordTypeCounts(expected);
+  return (
+    expectedCanonical !== undefined && expectedCanonical === canonicalRecordTypeCounts(actual)
+  );
+}
+
 function requirePositiveSafeInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${name} must be a positive safe integer`);
@@ -264,11 +298,20 @@ export class S3CompatibleArchiveStore {
         { abortSignal: controller.signal }
       );
       const remoteSha256 = head.Metadata?.sha256?.toLowerCase();
-      const metadataMatches = Object.entries(metadata).every(
-        ([metadataKey, value]) => head.Metadata?.[metadataKey] === value
-      );
-      if (head.ContentLength !== contentLength || remoteSha256 !== sha256 || !metadataMatches) {
-        throw new ArchiveIntegrityError("Archive HEAD metadata does not match the local manifest");
+      const mismatches = [
+        ...(head.ContentLength === contentLength ? [] : ["content-length"]),
+        ...(remoteSha256 === sha256 ? [] : ["sha256"]),
+        ...Object.entries(metadata)
+          .filter(
+            ([metadataKey, value]) =>
+              !metadataValueMatches(metadataKey, value, head.Metadata?.[metadataKey])
+          )
+          .map(([metadataKey]) => `metadata:${metadataKey}`)
+      ];
+      if (mismatches.length > 0) {
+        throw new ArchiveIntegrityError(
+          `Archive HEAD metadata does not match the local manifest (${mismatches.join(", ")})`
+        );
       }
       let objectLockMode =
         head.ObjectLockMode === "GOVERNANCE" || head.ObjectLockMode === "COMPLIANCE"

@@ -138,8 +138,9 @@ try {
            SELECT 1
            FROM ingestion_gap_repair_signatures signature
            JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
-           WHERE repair.status = 'completed'
-             AND signature.completed_at < NOW() - make_interval(days => $9::integer)
+           WHERE repair.status IN ('completed', 'failed')
+             AND COALESCE(signature.completed_at, signature.created_at) <
+                 NOW() - make_interval(days => $9::integer)
          ) AS ingestion_gap_repair_signatures,
          EXISTS(SELECT 1 FROM solana_transaction_finality
           WHERE status <> 'pending'
@@ -292,9 +293,11 @@ try {
            SELECT signature.repair_id, signature.signature
            FROM ingestion_gap_repair_signatures signature
            JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
-           WHERE repair.status = 'completed'
-             AND signature.completed_at < NOW() - make_interval(days => $1::integer)
-           ORDER BY signature.completed_at, signature.repair_id, signature.signature
+           WHERE repair.status IN ('completed', 'failed')
+             AND COALESCE(signature.completed_at, signature.created_at) <
+                 NOW() - make_interval(days => $1::integer)
+           ORDER BY COALESCE(signature.completed_at, signature.created_at),
+                    signature.repair_id, signature.signature
            LIMIT $2
            FOR UPDATE OF signature SKIP LOCKED
          )
@@ -649,7 +652,7 @@ try {
         processedChainEvents: inboxRetentionDays,
         entryCandidateSwaps: swapRetentionDays,
         completedSolanaSignatures: signatureQueueRetentionDays,
-        completedGapRepairSignatures: gapRepairSignatureRetentionDays,
+        terminalGapRepairSignatures: gapRepairSignatureRetentionDays,
         solanaFinality: finalityRetentionDays,
         rawChainEventPayloadHours: rawPayloadRetentionHours,
         walletAlphaScores: scoreRetentionDays,

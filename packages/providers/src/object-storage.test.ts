@@ -188,6 +188,63 @@ describe("S3CompatibleArchiveStore", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts semantically equal record-type counts regardless of JSON key order", async () => {
+    const content = Buffer.from("archive fixture");
+    const sha256 = createHash("sha256").update(content).digest("hex");
+    const send = vi.fn(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) {
+        return {
+          ContentLength: content.length,
+          Metadata: {
+            sha256,
+            "record-type-counts":
+              '{"wallet_signal_outcome":2,"wallet_entry_signal":1}'
+          }
+        };
+      }
+      if (command instanceof GetObjectCommand) return { Body: Readable.from([content]) };
+      throw new Error("unexpected command");
+    });
+    const store = new S3CompatibleArchiveStore(config(), { send } as unknown as S3Client);
+
+    await expect(
+      store.verifyObject({
+        relativeKey: "wallet-evidence/test.jsonl.zst",
+        contentLength: content.length,
+        sha256,
+        metadata: {
+          "record-type-counts":
+            '{"wallet_entry_signal":1,"wallet_signal_outcome":2}'
+        }
+      })
+    ).resolves.toMatchObject({ contentLength: content.length, sha256 });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails closed when record-type counts differ semantically", async () => {
+    const send = vi.fn(async (command: unknown) => {
+      expect(command).toBeInstanceOf(HeadObjectCommand);
+      return {
+        ContentLength: 4,
+        Metadata: {
+          sha256: "1".repeat(64),
+          "record-type-counts": '{"wallet_entry_signal":2}'
+        }
+      };
+    });
+    const store = new S3CompatibleArchiveStore(config(), { send } as unknown as S3Client);
+
+    await expect(
+      store.verifyObject({
+        relativeKey: "wallet-evidence/test.jsonl.zst",
+        contentLength: 4,
+        sha256: "1".repeat(64),
+        metadata: { "record-type-counts": '{"wallet_entry_signal":1}' }
+      })
+    ).rejects.toThrow("metadata:record-type-counts");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["", "/absolute", "../escape", "safe/../escape", "safe\\escape", "safe//empty"])(
     "rejects an unsafe relative key: %s",
     (relativeKey) => {

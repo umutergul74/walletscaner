@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:32:42Z
+updated_at_utc: 2026-08-26T01:40:40Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -593,3 +593,26 @@ blindly repeat the last mutation.
 - Next exact action is read-only: compare segment 67's expected and remote HEAD metadata
   semantically without printing credentials or metadata values, then query exact open discovery
   incident/repair cursor state. Only after both causes are proven may code/tests be changed.
+- Segment 67's remote HEAD was inspected with the verifier's existing read-only credential without
+  printing credentials or metadata values. Content length and archive SHA-256 match. The only raw
+  mismatch is `record-type-counts`: PostgreSQL JSONB returns entry/outcome order while B2 stores
+  outcome/entry order; parsed keys/counts are semantically identical. This proves a serializer
+  ordering defect rather than object corruption.
+- The local repair now writes record-type counts in sorted-key form and permits only this metadata
+  field to compare as a validated, bounded integer map. Content length, SHA-256, every other
+  metadata value, Object Lock and full streamed GET hash remain strict. Integrity errors name only
+  mismatch keys, never metadata values.
+- Operational maintenance now ages staged signatures from both `completed` and terminal `failed`
+  gap repairs. Failed 20,000-signature sessions previously remained forever because their pending
+  rows have no `completed_at`; the new predicate uses the immutable `created_at` fallback while
+  retaining the repair/incident summary and alpha-excluded disposition.
+- Targeted archive/runtime/maintenance tests pass 29/29. TypeScript and ESLint pass. No production
+  row, object, file, service or configuration has changed in this phase.
+- Live repair refresh at 2026-08-26 01:37 UTC found Pump.fun actively replaying its exact boundary:
+  14,450/17,228 complete with 2,778 pending. LaunchLab and CPMM exact repairs are complete. The
+  latest PumpSwap repair is terminal at the reviewed 20,000-signature cap and remains correctly
+  alpha-excluded; current transport has already recovered. This is historical coverage exclusion,
+  not current event-flow stoppage.
+- Next exact action: commit the coherent local repair, run the applicable production build/full
+  gate, build an immutable Linux image and verify its exact tests. Do not reset segment 67 or deploy
+  until artifact, backup/headroom, ledger and rollback gates pass.

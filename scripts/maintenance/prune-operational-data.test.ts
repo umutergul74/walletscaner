@@ -84,6 +84,16 @@ describe("operational maintenance SQL contract", () => {
     expect(source).toContain("positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50)");
   });
 
+  it("bounds staged signatures for both completed and permanently failed repairs", async () => {
+    const source = await readFile(scriptPath, "utf8");
+
+    expect(source.match(/repair\.status IN \('completed', 'failed'\)/g)).toHaveLength(2);
+    expect(
+      source.match(/COALESCE\(signature\.completed_at, signature\.created_at\)/g)
+    ).toHaveLength(3);
+    expect(source).toContain("terminalGapRepairSignatures");
+  });
+
   it("uses one pinned PostgreSQL session for the advisory lock lifecycle", async () => {
     const source = await readFile(scriptPath, "utf8");
 

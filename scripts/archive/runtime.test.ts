@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { resolveObjectLockEvidence } from "./runtime";
+import { resolveObjectLockEvidence, serializeRecordTypeCounts } from "./runtime";
+
+describe("serializeRecordTypeCounts", () => {
+  it("uses a deterministic key order for upload and verification metadata", () => {
+    expect(
+      serializeRecordTypeCounts({ wallet_signal_outcome: 2, wallet_entry_signal: 1 })
+    ).toBe('{"wallet_entry_signal":1,"wallet_signal_outcome":2}');
+  });
+});
 
 describe("resolveObjectLockEvidence", () => {
   it("preserves retention returned by the API", () => {
