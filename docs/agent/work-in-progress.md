@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:50:00Z
+updated_at_utc: 2026-08-26T23:51:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -2018,3 +2018,13 @@ blindly repeat the last mutation.
 - No container has been recreated yet; ingestion `22664aab2618...` still runs exact R40. Next exact
   action is secret-free R30 render followed by recreate of only `solana-ingestion` with
   `--no-deps --no-build --force-recreate`, then post-rollback identity/flow verification.
+
+## R40 ingestion rollback service checkpoint at 2026-08-26 23:51 UTC
+
+- Secret-free R30 rendering preserved live false and the exact 160-MiB/0.2-CPU/128-pid limits.
+  Only `solana-ingestion` was recreated. New container `ee10d1074016...` runs exact R30 image ID
+  `sha256:afd180aed4fb...`, restart 0/OOM false with those limits.
+- No other service, selector, migration, database row or B2 object changed. Next read-only gate is
+  the first R30 health/freshness sample plus every non-target container identity; then close ledger
+  revision 27 as failed with R40 canary evidence. Local work must fix and test bootstrap atomicity
+  before building a new immutable candidate.
