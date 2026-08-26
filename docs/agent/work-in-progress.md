@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T21:02:00Z
+updated_at_utc: 2026-08-26T23:11:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1795,3 +1795,25 @@ blindly repeat the last mutation.
 - Typecheck and full ESLint pass. The updated five-file trade/provider set passes 66/66. No runtime,
   database or provider state changed. Next exact action is a coherent source commit, final R40
   candidate rebuild and exact Linux/PG16 regression. Do not tag/export/deploy an earlier candidate.
+
+## Final R40 local regression gates passed at 2026-08-26 23:11 UTC
+
+- Coordinator source checkpoint is `b816481`. The final Linux/amd64 candidate
+  `walletscaner-worker:storage-r40-candidate-20260826` resolves to image ID
+  `sha256:909ee9932bb7aa394fe3e0897eb823cbc65a5cb3f3e1a5adea5f80d50b8ba474`
+  (463,404,236 bytes). Its embedded materializer SHA remains exact R39 `a64b479b...`; watch,
+  scheduler and release-coordinator bytes match the committed source.
+- The exact network-isolated candidate passed all 302 valid application/package tests. The 45
+  database integrations were intentionally separated. On three fresh PostgreSQL 16 instances,
+  archive passed 5/5 (heavy wallet case 4,598 ms), ingestion coverage passed 8/8 and canonical
+  PostgreSQL evidence passed 32/32. The interrupted terminal no longer existed after resume, so the
+  last two uncertain results were rerun rather than inferred. Every named disposable database and
+  network was removed after its gate.
+- The post-refactor workspace production build passed. Typecheck, full ESLint and the 66/66 focused
+  trade/provider tests were already green for this exact committed source. The four historical
+  untracked transfer remnants and the populated R31 clone remain untouched.
+- No production, provider, database, B2, selector, service or release-ledger state changed. Next
+  exact local action is to tag only image ID `sha256:909ee993...` as immutable
+  `walletscaner-worker:storage-r40-20260826`, verify the tag and embedded hashes, then create and
+  frame-test a checksummed single-thread zstd release artifact under bounded resources. Do not
+  stage or activate it until a fresh production backup/headroom/flow/rollback preflight passes.
