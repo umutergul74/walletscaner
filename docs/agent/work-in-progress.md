@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:50:00Z
+updated_at_utc: 2026-08-26T19:52:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1370,3 +1370,38 @@ blindly repeat the last mutation.
   Next exact read-only action is to render only the intended materializer service and verify exact
   R38 image, live false, one-day/one-connection, 80-MiB/0.05-CPU, 600-second statement and
   1,800-second run limits before recreating it with `--no-deps --no-build --force-recreate`.
+
+## R38 materializer service checkpoint at 2026-08-26 19:52 UTC
+
+- Secret-free Compose rendering passed: exact R38 image, live false, one day, one connection,
+  80 MiB, 0.05 CPU, 64 pids, 600,000-ms statement timeout and 1,800-second run budget.
+- Only `wallet-evidence-materializer-scheduler` was recreated with exact project/file/env/profile,
+  `--no-deps --no-build --force-recreate`. New container `b3704aca94ee...` runs exact R38 image ID
+  `sha256:81a987394f6e3470c8d9b901ef1ced21b28f03f1c554191479a85cd7239c44dc`, restart 0/OOM false,
+  with the rendered resource/live controls.
+- Ingestion, wallet-alpha, R36 operations/archive/maintenance, Telegram, PostgreSQL and Redis retain
+  their exact pre-state container IDs, restart 0/OOM false. The target scheduler is inside its
+  600-second initial sleep, so it cannot overlap the one-shot canary.
+- Recreate temporarily raised load1 to 2.21. Next exact read-only action is to wait for host load
+  and archive jobs to settle, then inspect the exact three retry receipts and run one R38 one-shot
+  with explicit live false/no dependencies. Stop and roll back the selector/service on any timeout,
+  parity mismatch, OOM, resource-reserve breach or unexpected receipt transition.
+
+## R38 automatic first run in progress at 2026-08-26 20:22 UTC
+
+- Interruption reconciliation found that the recreated scheduler's 600-second initial delay had
+  elapsed at about 20:01 UTC and its exact R38 worker was already materializing. No duplicate
+  one-shot was started. Container `b3704aca94ee...` remains restart 0/OOM false on exact image
+  `sha256:81a987394f6e3470c8d9b901ef1ced21b28f03f1c554191479a85cd7239c44dc`.
+- The active Node PID is `2741013`; PostgreSQL backend `213565` is progressing through the
+  bounded wallet lot/digest query with no blocking PID. The three pre-run receipts remain exactly
+  6 verified and 3 retry until the transaction publishes a terminal result; do not interpret or
+  retry them before this process exits.
+- During the run, free disk remains about 15.4 GB. On the one-vCPU host, load1 ranged about
+  2.0-3.3 while sampled CPU idle remained 60-78%. Canonical ingestion remained fresh at the
+  acceptance sample: inbox backlog/dead-letter 20/0 with oldest unresolved 27.2 seconds, pool age
+  3.3 seconds, swap age 9.3 seconds and wallet-trade age 38.3 seconds.
+- Next exact action is read-only: wait for PID `2741013` to exit, then inspect scheduler logs,
+  receipt transition/count/digests, backend/locks, exit/OOM state, database/WAL/temp/disk deltas,
+  canonical-flow freshness and every non-target container ID. Do not start another materializer
+  while PID `2741013` or backend `213565` exists.
