@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:50:00Z
+updated_at_utc: 2026-08-26T20:52:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1554,3 +1554,24 @@ blindly repeat the last mutation.
   ephemeral least-privilege role, capture a new baseline and run the same exact candidate/limits.
   Acceptance is verified parity with zero fact `updated_at` changes, no permanent DB growth, small
   bounded WAL/temp and exit 0/OOM false. Do not touch production.
+
+## R39 populated no-op canary passed at 2026-08-26 20:52 UTC
+
+- The same exact candidate/80-MiB/0.05-CPU/64-pid limits reran the eligible July-12 receipt after
+  facts were complete. Named container `walletscaner-r39-populated-canary-2` exited 0, OOM false,
+  restart 0 in 5,174 ms. Dimensions took 500 ms, reconcile-episodes 1,363 ms, episodes 146 ms,
+  open-lots 717 ms, followability 96 ms and every parity query at most 163 ms.
+- Episode/open-lot/followability source and fact dual digests matched exactly for 1,556 / 1,520 /
+  700 rows. Fact rows with `updated_at` at or after run start were exactly 0 / 0 / 0. Cumulative
+  temp files/bytes increased 0 / 0, WAL increased only 84,541 bytes and database size increased a
+  bounded 16,384 bytes for the receipt/page write.
+- Public clone receipt remained the single 2026-08-24 row. The second ephemeral role was revoked
+  with `DROP OWNED` and dropped successfully; no `r39_materializer` role remains. Production was
+  not contacted or changed during either local canary.
+- The populated acceptance gates are now met: the original 210,827-lot production-shaped scan is
+  bounded to 1,520 lots; first reconciliation is about 122x faster than the failed R38 run and the
+  steady repeat is about 285x faster, without parity loss or fact rewrite churn.
+- Next exact action is regression breadth, not deployment: run the full non-integration repository
+  gate with zstd inside the exact candidate, the four PostgreSQL 16 integration files serially,
+  local workspace builds, then inspect git/image identity. Keep shadow schema and named exited
+  canaries until evidence is recorded; production remains R37 materializer stopped.
