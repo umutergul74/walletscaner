@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:40:40Z
+updated_at_utc: 2026-08-26T01:43:15Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -616,3 +616,17 @@ blindly repeat the last mutation.
 - Next exact action: commit the coherent local repair, run the applicable production build/full
   gate, build an immutable Linux image and verify its exact tests. Do not reset segment 67 or deploy
   until artifact, backup/headroom, ledger and rollback gates pass.
+- Repair commit is `89e3042`. The full host test run passed 390 tests and skipped 47 integration
+  tests; its three failures were exclusively `spawn zstd ENOENT` on Windows. The exact Linux/Node 24
+  image then passed all 33 relevant archive/artifact/runtime/maintenance tests with zstd present.
+  The root Compose pinning test separately passed on the host. TypeScript, ESLint and the production
+  workspace build pass.
+- Immutable candidate image `walletscaner-worker:storage-r36-20260826` resolves locally to
+  `sha256:24bcc3fa77d3a0a9e4369eb43ec4d33084b4985f1feedcc41db97cde1548d00a`.
+  One deliberately combined image test also included the known host-only Compose suite and failed
+  only because the worker image intentionally omits `/app/docker-compose.server.yml`; the separated
+  exact-image and host reruns above remove this infrastructure ambiguity.
+- Next exact action: commit this evidence, export/compress/hash R36, then refresh production
+  backup/headroom/ledger/runtime identities before staging. Loading is not activation. The rollout
+  must change only the operations image selector and named archive/maintenance/monitor services;
+  ingestion, sampler, wallet-alpha, Telegram and protected co-tenant state stay untouched.
