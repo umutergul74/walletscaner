@@ -60,7 +60,10 @@ import {
   fetchLatestSolanaAddressActivity,
   fetchSolanaSignatureStatus
 } from "./discovery-supervisor.js";
-import { activateTradeSubscription, excludeTradeCoverage } from "./trade-coverage.js";
+import {
+  activateTradeSubscription,
+  TradeCoverageReleaseCoordinator
+} from "./trade-coverage.js";
 import {
   evaluateTradeObservationHealth,
   planTradeObservationAdmission
@@ -381,7 +384,7 @@ const poolSamplingDiagnostics = {
   tradeCoverageReleaseErrorCount: 0,
   lastTradeCoverageReleaseError: null as string | null
 };
-const tradeCoverageReleaseInFlight = new Set<string>();
+const tradeCoverageReleaseCoordinator = new TradeCoverageReleaseCoordinator();
 const tradeObservationDiagnostics = {
   admissionCount: 0,
   replacementCount: 0,
@@ -2491,41 +2494,17 @@ async function releaseRpcTradeObservation(
   reason: string,
   gapAt: Date
 ): Promise<void> {
-  if (tradeCoverageReleaseInFlight.has(pool.poolAddress)) return;
-  tradeCoverageReleaseInFlight.add(pool.poolAddress);
-  try {
-    const previous = {
-      subscribedToBuys: pool.subscribedToBuys,
-      controlledFlow: pool.controlledFlow,
-      tradeCoverageComplete: pool.tradeCoverageComplete,
-      tradeCoveragePersisted: pool.tradeCoveragePersisted,
-      tradeCoverageGapAt: pool.tradeCoverageGapAt,
-      tradeCoverageGapReason: pool.tradeCoverageGapReason
-    };
-    const changed = excludeTradeCoverage(pool, reason, gapAt.toISOString());
-    if (!changed) {
-      liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-      pool.subscribedToBuys = false;
-      return;
+  const result = await tradeCoverageReleaseCoordinator.release(
+    pool.poolAddress,
+    pool,
+    reason,
+    gapAt.toISOString(),
+    {
+      persist: () => persistTradeCoverageState(pool),
+      unsubscribe: () => liveTradeSource?.unsubscribeAddress(pool.poolAddress)
     }
-    // Keep the occupied slot visible until the durable gap commit succeeds;
-    // otherwise an asynchronous pressure release could momentarily exceed the hard cap.
-    pool.subscribedToBuys = previous.subscribedToBuys;
-    try {
-      await persistTradeCoverageState(pool);
-    } catch (error) {
-      pool.subscribedToBuys = previous.subscribedToBuys;
-      pool.controlledFlow = previous.controlledFlow;
-      pool.tradeCoverageComplete = previous.tradeCoverageComplete;
-      pool.tradeCoveragePersisted = previous.tradeCoveragePersisted;
-      if (previous.tradeCoverageGapAt === undefined) delete pool.tradeCoverageGapAt;
-      else pool.tradeCoverageGapAt = previous.tradeCoverageGapAt;
-      if (previous.tradeCoverageGapReason === undefined) delete pool.tradeCoverageGapReason;
-      else pool.tradeCoverageGapReason = previous.tradeCoverageGapReason;
-      throw error;
-    }
-    pool.subscribedToBuys = false;
-    liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+  );
+  if (result === "released") {
     poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
     console.warn(
       JSON.stringify({
@@ -2535,8 +2514,6 @@ async function releaseRpcTradeObservation(
         disposition: "durable-before-unsubscribe"
       })
     );
-  } finally {
-    tradeCoverageReleaseInFlight.delete(pool.poolAddress);
   }
 }
 
@@ -2550,7 +2527,7 @@ function handleTradeQueuePressure(pressure: {
   if (
     !pool ||
     !pool.tradeCoverageComplete ||
-    tradeCoverageReleaseInFlight.has(pool.poolAddress)
+    tradeCoverageReleaseCoordinator.isInFlight(pool.poolAddress)
   ) {
     return;
   }

@@ -1784,3 +1784,14 @@ blindly repeat the last mutation.
   failure, same-pool in-flight coalescing and no unbounded state. After that small refactor, rerun
   type/lint/target tests and rebuild the final candidate; the current image is evidence but will not
   be the immutable release artifact.
+
+## Trade coverage release coordinator passed at 2026-08-26 23:04 UTC
+
+- `TradeCoverageReleaseCoordinator` now owns the bounded per-pool in-flight set, staged gap,
+  persist-before-unsubscribe order, exact rollback and cleanup. Unit tests prove ordering, retain
+  the subscription and restore every state field on database failure, and coalesce a concurrent
+  same-pool release without a second persistence/unsubscribe. The main worker only supplies the
+  repository persist and provider unsubscribe operations.
+- Typecheck and full ESLint pass. The updated five-file trade/provider set passes 66/66. No runtime,
+  database or provider state changed. Next exact action is a coherent source commit, final R40
+  candidate rebuild and exact Linux/PG16 regression. Do not tag/export/deploy an earlier candidate.
