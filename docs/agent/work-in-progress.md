@@ -933,3 +933,16 @@ blindly repeat the last mutation.
   error before changing only those statuses to `retry` with `not_before=NOW()`. Then run one R37
   materializer one-shot with explicit live false/no dependencies and observe the oldest July 12
   cohort. Any count/digest mismatch or unexpected pre-state aborts without mutation.
+
+## Compact receipt correction checkpoint at 2026-08-26 06:30 UTC
+
+- One transaction matched exactly all three required tuples: July 12/13/14, segments 71/72/73,
+  revision 1, archive status verified, compact status mismatch, attempt 1 and exact PostgreSQL
+  statement-timeout text. It updated exactly three compact receipts to `retry` with
+  `not_before=NOW()` while preserving attempt/error audit. Pre- and postcondition `DO` blocks passed
+  and the transaction committed.
+- No trade, entry, outcome, compact fact, archive segment, B2 object or source count changed. The
+  oldest unresolved day is now July 12 and, under R37, blocks July 13/14 until it resolves.
+- Next exact action is one explicit R37/no-dependencies/live-false materializer canary. It must use
+  the rendered 600-second statement and one-day limit, then prove exact image/resources, digest
+  parity, updated receipt, current ingestion freshness and no restart/OOM/dead-letter regression.
