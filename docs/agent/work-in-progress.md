@@ -1109,3 +1109,22 @@ blindly repeat the last mutation.
   `walletscaner-worker:storage-r38-20260826`, record its image ID/runtime versions, and run the
   zstd/materializer unit gate plus all four isolated PostgreSQL 16 integration files through that
   exact image. The production materializer remains stopped.
+
+## Exact R38 image gate at 2026-08-26 17:50 UTC
+
+- The first default-root build attempt failed before creating an image because this repository
+  intentionally has no root `Dockerfile`. The corrected reviewed path is
+  `docker/worker.Dockerfile`; no production action resulted from the failed attempt.
+- Immutable local tag `walletscaner-worker:storage-r38-20260826` resolves to Linux/amd64 image ID
+  `sha256:81a987394f6e3470c8d9b901ef1ced21b28f03f1c554191479a85cd7239c44dc` with Node 24.18.0,
+  zstd 1.5.7 and PostgreSQL client 16.14.
+- The exact image passed the zstd/archive/materializer/Telegram/operational-health unit gate 28/28.
+  Against the isolated PostgreSQL 16 test container, the four files ran serially and passed 47/47:
+  archive pipeline 5, ingestion coverage 8, canonical evidence 32 and derived reclaim 2.
+- The exact image has not been exported, transferred, loaded or selected on production. The server
+  ledger remains R37 revision 19/in-progress until live state is refreshed; production materializer
+  remains stopped.
+- Next exact action: commit this checkpoint, remove only the named exited local clone canary and
+  disposable R38 integration database, drop only the disposable clone role, then export R38 to an
+  uncompressed temporary tar, zstd it single-threaded to `.partial`, verify bytes/SHA and atomically
+  rename. Preserve all four pre-existing untracked transfer artifacts.
