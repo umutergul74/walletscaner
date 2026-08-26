@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:19:00Z
+updated_at_utc: 2026-08-26T23:20:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1873,3 +1873,18 @@ blindly repeat the last mutation.
   match exactly. Next exact mutation is revision-checked dry-run/apply of ledger phase
   `r40-artifact-staging=in_progress`, with rollback to absent R40 server paths, ingestion R30 and
   stopped materializer R37. Only then may the exact `.partial` transfer begin.
+
+## R40 artifact staging ledger opened at 2026-08-26 23:20 UTC
+
+- Revision 24 was dry-run checked and atomically advanced to revision 25,
+  `r40-artifact-staging=in_progress`; ledger SHA-256 is
+  `04e43cbf5ffd03e95b2e57e2efeec78051efa02fe9312e393812711080d863ab`. A trailing read-only
+  formatting command failed because of shell quoting after the successful apply; independent
+  ledger read-back confirms the exact phase, status and evidence. It was not reapplied.
+- The ledger records exact artifact bytes/SHA, candidate image prefix, verified backup SHA,
+  pre-staging disk and zero active trade subscriptions. Both intended R40 server paths remain
+  absent. No image, selector, service, database or B2 state changed.
+- Next exact action is resumable rate-limited transfer to
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r40-20260826.tar.zst.partial`, followed by
+  exact byte/SHA verification in a network-disabled bounded container and atomic rename. Loading
+  remains a separate verified step.
