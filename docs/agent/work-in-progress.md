@@ -801,3 +801,36 @@ blindly repeat the last mutation.
   relevant database tests. Only if those gates pass may a new revision-checked rollout phase be
   opened. The two production rows currently labelled `mismatch` must not be rewritten until their
   exact segment/revision/error preconditions are re-proven immediately before a guarded transaction.
+
+## Exact R37 candidate gate at 2026-08-26 06:02 UTC
+
+- The server ledger was re-read from `/opt/walletscaner/deploy/storage-r34-rollout-state.json` and
+  still exactly matches revision 15, phase `storage-equilibrium-observation-r36`, status
+  `in_progress` and SHA-256
+  `6224c45bef08aa2c9a5d09e96bd5e71fd06aaa4b1a54b0d02af023a24c7f2c67`.
+- Production remains current-flow operational but storage-degraded: open coverage incidents and
+  dead letters are zero, recent pool/wallet ages were 5/38 seconds, finality unresolved-24h is zero,
+  PostgreSQL was 15,805,045,783 bytes and free disk was about 17.69 GB. Archive catch-up advanced
+  to nine verified wallet days and 23 pending. Three compact rows, exact segments 71/72/73 revision
+  1 for July 12/13/14, are labelled `mismatch`; every one has the same statement-timeout error.
+  This is the R36 classification defect, not observed count/digest divergence.
+- All running Walletscaner containers remain restart 0/OOM false and every selected worker reports
+  `ENABLE_LIVE_EXECUTION=false`. Ingestion and archive writer/verifier continue to make progress.
+  The protected Compose project was not listed by Docker and was not inspected or touched.
+- Immutable Linux/amd64 candidate `walletscaner-worker:storage-r37-20260826` was built off host from
+  Git `529af29` and resolves to image ID
+  `sha256:3978e4156d887c09b0e6b0484b7332c8b5b57183acd8a6c0f3f5fa51eeab4e8a`.
+  Its Node 24.18.0, zstd 1.5.7 and PostgreSQL client 16.14 runtime is explicit.
+- The exact image passed 49/49 relevant zstd/archive/materializer/maintenance/health/Telegram tests.
+  Host-only Compose and Python rollout tests passed 8/8 and both Python tools compile. A deliberately
+  broad worker-image test had 13 environment-only failures because that runtime intentionally omits
+  Python and the root Compose file; this matches the already documented R36 split gate and is not
+  counted as product verification.
+- A new isolated PostgreSQL 16 container with a new isolated network then ran the four database
+  integration files serially through the exact R37 image: archive pipeline 5/5, coverage lifecycle
+  8/8, canonical evidence 32/32 and derived reclaim 2/2. The exact disposable container/network were
+  removed afterward; the populated performance clone and its evidence remain untouched.
+- Next exact action: export, compress and hash only R37; then revalidate the newest production dump
+  sidecar/offsite marker and restore-list evidence, available disk and exact runtime identities. Do
+  not load or activate R37 until ledger revision 15 is closed with observed failure and a new
+  revision-checked R37 rollout phase is opened.
