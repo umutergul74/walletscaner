@@ -946,3 +946,19 @@ blindly repeat the last mutation.
 - Next exact action is one explicit R37/no-dependencies/live-false materializer canary. It must use
   the rendered 600-second statement and one-day limit, then prove exact image/resources, digest
   parity, updated receipt, current ingestion freshness and no restart/OOM/dead-letter regression.
+
+## R37 canary failure checkpoint at 2026-08-26 17:06 UTC
+
+- The explicit R37 one-day canary remained within exact 80 MiB/0.05 CPU limits and did not block
+  current ingestion: sampled wallet/pool ages were 17.8/2.8 seconds, inbox/dead-letter 4/0,
+  materializer RSS about 36-39 MiB and PostgreSQL about 22% CPU. The periodic scheduler acquired no
+  duplicate work while the advisory lock was held and later logged a zero-work completed cycle.
+- The canary did not pass. After 953,879 ms it failed in `open-lots` with exact error
+  `wallet_open_lot_facts_episode_hash_fkey`; R37 correctly persisted this as operational `retry`, not
+  parity `mismatch`. The transaction rollback preserved source and compact fact state. No source
+  retirement, B2 action or canonical deletion occurred.
+- Revision 19 remains `r37-materializer-activation=in_progress`; it must not be marked completed.
+  The next exact action is read-only: for the oldest July 12 cohort compare the episode set selected
+  by `materializeEpisodes` and `materializeOpenLots`, prove which wallet/token/strategy dimension or
+  parent fact is absent, and reproduce on the populated PostgreSQL 16 clone. No second production
+  canary is allowed until the invariant and regression test are fixed in a new immutable candidate.
