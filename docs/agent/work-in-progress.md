@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:49:00Z
+updated_at_utc: 2026-08-26T23:50:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -2009,3 +2009,12 @@ blindly repeat the last mutation.
   mutation is the guarded inverse selector update R40 -> R30, render and recreate only ingestion,
   then verify exact R30/live-false/non-target identities and close revision 27 as failed. Do not
   touch operations/materializer or normalize this canary as passed.
+
+## R40 ingestion rollback selector checkpoint at 2026-08-26 23:50 UTC
+
+- Guarded updater dry-run/applied only `WALLETSCANER_INGEST_IMAGE` from exact R40 back to exact R30;
+  `.env.server` returned byte-for-byte to SHA-256 `b1e6ce998c...`. Live false and operations R37
+  remain unchanged.
+- No container has been recreated yet; ingestion `22664aab2618...` still runs exact R40. Next exact
+  action is secret-free R30 render followed by recreate of only `solana-ingestion` with
+  `--no-deps --no-build --force-recreate`, then post-rollback identity/flow verification.
