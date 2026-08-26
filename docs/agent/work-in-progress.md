@@ -834,3 +834,16 @@ blindly repeat the last mutation.
   sidecar/offsite marker and restore-list evidence, available disk and exact runtime identities. Do
   not load or activate R37 until ledger revision 15 is closed with observed failure and a new
   revision-checked R37 rollout phase is opened.
+
+## R37 artifact checkpoint at 2026-08-26 06:04 UTC
+
+- The exact R37 image was exported off host, compressed with single-thread zstd-3 and finalized only
+  after hashing. Local artifact
+  `deploy/walletscaner-worker-storage-r37-20260826.tar.zst` is 462,694,845 bytes with SHA-256
+  `f28c2ffbbfa0a70ae4eedef17371e83f4ddac2afbeffea12acdd597a8eb158ba`; the uncompressed temporary
+  tar was removed. The artifact is ignored by Git and the four older pre-existing partial artifacts
+  remain untouched.
+- Next exact action is production read-only validation of the newest dump file, SHA sidecar,
+  offsite marker and `pg_restore --list` evidence under low I/O priority. If that passes, transfer
+  R37 to a server `.partial` path with resume support, compare exact bytes/SHA, and only then close
+  ledger revision 15 and open an R37 rollout phase. Loading remains distinct from activation.
