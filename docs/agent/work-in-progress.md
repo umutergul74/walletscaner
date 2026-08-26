@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:27:00Z
+updated_at_utc: 2026-08-26T20:31:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1436,3 +1436,27 @@ blindly repeat the last mutation.
 - The selector is still exact R38 and ledger revision 23 remains activation in progress. Next exact
   mutation is the reviewed updater dry-run and apply changing only the operations image selector
   from exact R38 to exact R37; do not recreate or touch another service.
+
+## R38 rollback completed at 2026-08-26 20:31 UTC
+
+- The guarded updater changed only `WALLETSCANER_OPERATIONS_IMAGE` from exact R38 back to exact R37;
+  `.env.server` returned byte-for-byte to SHA-256
+  `b1e6ce998c6217b99d16eb09d9d67afcb354cb264649703690a4f85b8246f9cd`. Live execution remains
+  false. Secret-free Compose rendering preserved one day, 1,800-second run, 600-second statement,
+  80-MiB, 0.05-CPU and 64-pid limits.
+- Only the materializer was recreated as exact R37 image
+  `sha256:3978e4156d887c09b0e6b0484b7332c8b5b57183acd8a6c0f3f5fa51eeab4e8a` and immediately stopped
+  during its initial sleep. New target `28e6a9099e69...` is exited 143, restart 0/OOM false. All 12
+  non-target Walletscaner container IDs, states, image IDs, restart and OOM values matched exactly
+  before/after; no co-tenant service was touched.
+- Post-rollback database state is 17,346,362,391 bytes; materializer backend and transactions older
+  than five minutes are both zero. Compact receipts remain 6 verified / 3 retry, with 12 July at
+  attempt 13. Free disk is 15,496,060,928 bytes, available RAM about 1.06 GB and swap free about
+  1.97 GB.
+- Server ledger revision 24 closes `r38-materializer-activation=failed`, SHA-256
+  `d8790ddb765601aabcda17446a0f33eb9d0c94da1d2402e85119d4eae5ac89a9`. The next allowed path is
+  an open-lots query redesign and populated-clone acceptance; do not activate R38 or another
+  materializer build on production before that evidence passes.
+- Canonical flow at the immediate rollback sample had backlog/dead-letter 0/0 and pool age 1.3
+  seconds. Swap and wallet-trade ages were both 316.3 seconds after being 9.3/38.3 seconds during
+  the canary; resample this before classifying it as a transport/parser fault.
