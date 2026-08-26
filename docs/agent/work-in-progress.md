@@ -847,3 +847,23 @@ blindly repeat the last mutation.
   offsite marker and `pg_restore --list` evidence under low I/O priority. If that passes, transfer
   R37 to a server `.partial` path with resume support, compare exact bytes/SHA, and only then close
   ledger revision 15 and open an R37 rollout phase. Loading remains distinct from activation.
+
+## Production preflight and ledger checkpoint at 2026-08-26 06:15 UTC
+
+- The newest server recovery dump is
+  `backups/memecoin_alpha_20260825T150924Z.dump`, 2,053,352,363 bytes, SHA-256
+  `ba26a3c89fdb8dc671d92976659ae177a6d8f76be40a45b8b8f774bb54238160`. A complete low-priority
+  content hash passed, its sidecar and offsite marker match, and PostgreSQL 16 `pg_restore --list`
+  passed. The first host-side check used the sidecar's container path and therefore could not open
+  the file; the correct mounted-container check then passed without changing the artifact.
+- Immediately before rollout bookkeeping, server free disk was 17,859,948,544 bytes. The R37
+  partial/final paths and R37 image tag were absent. R36 resolved to exact image
+  `sha256:24bcc3fa77d3a0a9e4369eb43ec4d33084b4985f1feedcc41db97cde1548d00a`.
+  Rendered R36 materializer state was live false, one day, 80 MiB, 0.05 CPU, 300-second run and
+  120-second statement timeout; its container was running, restart 0 and OOM false.
+- Revision 15 was closed as `storage-equilibrium-observation-r36=failed` because three compact days
+  timed out under the old budget. A separately dry-run and applied transition opened revision 17 as
+  `r37-artifact-staging=in_progress`; ledger SHA-256 is
+  `0904429432a19324ec4066a9c8fac2f51008897085b937359436c0aab2a079e0`. The next exact action encoded
+  there is resumable transfer to `.partial`, exact byte/SHA verification, then load. No service,
+  selector, database row or B2 object changed during these ledger transitions.
