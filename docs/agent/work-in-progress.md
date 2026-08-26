@@ -1128,3 +1128,20 @@ blindly repeat the last mutation.
   disposable R38 integration database, drop only the disposable clone role, then export R38 to an
   uncompressed temporary tar, zstd it single-threaded to `.partial`, verify bytes/SHA and atomically
   rename. Preserve all four pre-existing untracked transfer artifacts.
+
+## R38 release artifact checkpoint at 2026-08-26 17:52 UTC
+
+- The exited clone canary and disposable R38 PostgreSQL integration container were removed only
+  after their evidence was recorded. The fixed local-only `r38_materializer` clone role had zero
+  sessions and was dropped. The populated PostgreSQL clone and all four pre-existing untracked
+  transfer artifacts remain intact.
+- Exact image `walletscaner-worker:storage-r38-20260826` was exported to a temporary tar, compressed
+  with zstd level 3/single-thread/checksum, frame-tested and finalized only after hashing. Local
+  artifact `deploy/walletscaner-worker-storage-r38-20260826.tar.zst` is 462,868,480 bytes with
+  SHA-256 `1976fce09466f15a67352301deca0731d1ccaba484ad7d9951f034b4248c28d9`. The uncompressed tar was
+  removed after its resolved path was verified inside the repository deploy directory.
+- No server file, image, selector, service, database row or B2 object changed. Next exact action is
+  production read-only preflight: release-ledger revision/SHA, dump plus off-site/restore-list proof,
+  disk/RAM/load/temp headroom, Compose identities, exact live-false values, archive activity,
+  canonical freshness/coverage/dead letters and current R37 materializer stopped state. Do not
+  transfer R38 unless the 2 GiB temp margin above the 8 GiB reserve and all hard gates pass.
