@@ -45,14 +45,12 @@ export function evaluateTradeObservationHealth(
 ): TradeObservationHealth {
   const eligible = nonNegativeInteger(input.marketEligibleTrackedPools);
   const active = nonNegativeInteger(input.activePoolSubscriptions);
+  const configured = nonNegativeInteger(input.configuredAddressCount);
+  const subscribed = nonNegativeInteger(input.subscribedAddressCount);
   if (eligible > 0 && active === 0) {
     return { status: "degraded", reason: "eligible-lane-starved" };
   }
-  if (
-    active > 0 &&
-    (nonNegativeInteger(input.configuredAddressCount) < active ||
-      nonNegativeInteger(input.subscribedAddressCount) < active)
-  ) {
+  if (configured !== active || subscribed !== active) {
     return { status: "degraded", reason: "subscription-ack-gap" };
   }
   return active > 0

@@ -1750,3 +1750,21 @@ blindly repeat the last mutation.
   one in-flight-guarded durable-before-unsubscribe path. Persistence failure must retain the live
   subscription and restore the prior coverage state. Rebuild/retest the exact candidate afterward;
   do not reuse the current candidate identity as final release evidence.
+
+## Durable-before-unsubscribe hardening implemented at 2026-08-26 23:00 UTC
+
+- Cheap-market observation reconciliation now runs before awaited token-risk enrichment. Risk is
+  still evaluated immediately afterward and remains mandatory for `controlledFlow`; no alpha,
+  entry, score, signal or notification threshold changed.
+- Capacity rotation, age expiry, rug, queue pressure and known-pool backfill truncation now share
+  one guarded release function. It stages fail-closed coverage, keeps the occupied slot visible
+  while PostgreSQL commits the gap, restores every prior field on persistence failure, and only
+  then unsubscribes. Concurrent release requests for the same pool coalesce. Unknown-pool provider
+  state still unsubscribes and throws because there is no canonical row that can record a gap.
+- Release failures are explicit health diagnostics. Observation health also detects both missing
+  ACKs and provider subscriptions that exceed in-memory active state; zero candidates/zero provider
+  addresses remains legitimate idle state. Typecheck, ESLint and the five-file trade/provider set
+  pass again at 63/63.
+- No production or database mutation occurred. Next exact action is commit this hardening, rebuild
+  the candidate to a new exact image identity and rerun Linux application plus serial PostgreSQL
+  gates before any production preflight.

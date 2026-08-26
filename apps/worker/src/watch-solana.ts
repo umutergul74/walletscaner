@@ -377,8 +377,11 @@ const poolSamplingDiagnostics = {
   lastError: null as string | null,
   evictedActivePoolCount: 0,
   tradeQueuePressureCount: 0,
-  tradeCoverageExcludedPoolCount: 0
+  tradeCoverageExcludedPoolCount: 0,
+  tradeCoverageReleaseErrorCount: 0,
+  lastTradeCoverageReleaseError: null as string | null
 };
+const tradeCoverageReleaseInFlight = new Set<string>();
 const tradeObservationDiagnostics = {
   admissionCount: 0,
   replacementCount: 0,
@@ -1610,6 +1613,15 @@ async function sampleDuePoolsOnce() {
   for (const sample of dueSamples) {
     const { pool, pair, priceUsd, liquidityUsd, rugged, marketEligible } = sample;
     pool.observationMarketEligible = marketEligible;
+    if (tradeIngestMode === "rpc") {
+      if (rugged && pool.subscribedToBuys) {
+        await releaseRpcTradeObservation(pool, "rpc-trade-observation-rugged", now);
+      } else if (!rugged) {
+        // Observation admission intentionally precedes token-risk provider I/O.
+        // Risk remains a separate, fail-closed downstream alpha gate.
+        await reconcileRpcTradeObservation(pool, marketEligible, now);
+      }
+    }
     const compactPair = compactDexScreenerPair(pair);
     const tokenRisk = marketEligible
       ? await refreshTokenRisk(pool, now)
@@ -1621,13 +1633,6 @@ async function sampleDuePoolsOnce() {
       flowEvidence.tokenRiskKnown &&
       flowEvidence.tokenRiskPassed;
     pool.controlledFlow = evidenceEligible;
-    if (tradeIngestMode === "rpc") {
-      if (rugged && pool.subscribedToBuys) {
-        await releaseRpcTradeObservation(pool, "rpc-trade-observation-rugged", now);
-      } else {
-        await reconcileRpcTradeObservation(pool, marketEligible, now);
-      }
-    }
     if (
       shouldPersistPoolState({
         nowMs: now.getTime(),
@@ -2486,43 +2491,53 @@ async function releaseRpcTradeObservation(
   reason: string,
   gapAt: Date
 ): Promise<void> {
-  const previous = {
-    subscribedToBuys: pool.subscribedToBuys,
-    controlledFlow: pool.controlledFlow,
-    tradeCoverageComplete: pool.tradeCoverageComplete,
-    tradeCoveragePersisted: pool.tradeCoveragePersisted,
-    tradeCoverageGapAt: pool.tradeCoverageGapAt,
-    tradeCoverageGapReason: pool.tradeCoverageGapReason
-  };
-  const changed = excludeTradeCoverage(pool, reason, gapAt.toISOString());
-  if (!changed) {
-    liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-    pool.subscribedToBuys = false;
-    return;
-  }
+  if (tradeCoverageReleaseInFlight.has(pool.poolAddress)) return;
+  tradeCoverageReleaseInFlight.add(pool.poolAddress);
   try {
-    await persistTradeCoverageState(pool);
-  } catch (error) {
+    const previous = {
+      subscribedToBuys: pool.subscribedToBuys,
+      controlledFlow: pool.controlledFlow,
+      tradeCoverageComplete: pool.tradeCoverageComplete,
+      tradeCoveragePersisted: pool.tradeCoveragePersisted,
+      tradeCoverageGapAt: pool.tradeCoverageGapAt,
+      tradeCoverageGapReason: pool.tradeCoverageGapReason
+    };
+    const changed = excludeTradeCoverage(pool, reason, gapAt.toISOString());
+    if (!changed) {
+      liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+      pool.subscribedToBuys = false;
+      return;
+    }
+    // Keep the occupied slot visible until the durable gap commit succeeds;
+    // otherwise an asynchronous pressure release could momentarily exceed the hard cap.
     pool.subscribedToBuys = previous.subscribedToBuys;
-    pool.controlledFlow = previous.controlledFlow;
-    pool.tradeCoverageComplete = previous.tradeCoverageComplete;
-    pool.tradeCoveragePersisted = previous.tradeCoveragePersisted;
-    if (previous.tradeCoverageGapAt === undefined) delete pool.tradeCoverageGapAt;
-    else pool.tradeCoverageGapAt = previous.tradeCoverageGapAt;
-    if (previous.tradeCoverageGapReason === undefined) delete pool.tradeCoverageGapReason;
-    else pool.tradeCoverageGapReason = previous.tradeCoverageGapReason;
-    throw error;
+    try {
+      await persistTradeCoverageState(pool);
+    } catch (error) {
+      pool.subscribedToBuys = previous.subscribedToBuys;
+      pool.controlledFlow = previous.controlledFlow;
+      pool.tradeCoverageComplete = previous.tradeCoverageComplete;
+      pool.tradeCoveragePersisted = previous.tradeCoveragePersisted;
+      if (previous.tradeCoverageGapAt === undefined) delete pool.tradeCoverageGapAt;
+      else pool.tradeCoverageGapAt = previous.tradeCoverageGapAt;
+      if (previous.tradeCoverageGapReason === undefined) delete pool.tradeCoverageGapReason;
+      else pool.tradeCoverageGapReason = previous.tradeCoverageGapReason;
+      throw error;
+    }
+    pool.subscribedToBuys = false;
+    liveTradeSource?.unsubscribeAddress(pool.poolAddress);
+    poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
+    console.warn(
+      JSON.stringify({
+        type: "solana-trade-coverage-excluded",
+        poolAddress: pool.poolAddress,
+        reason,
+        disposition: "durable-before-unsubscribe"
+      })
+    );
+  } finally {
+    tradeCoverageReleaseInFlight.delete(pool.poolAddress);
   }
-  liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-  poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
-  console.warn(
-    JSON.stringify({
-      type: "solana-trade-coverage-excluded",
-      poolAddress: pool.poolAddress,
-      reason,
-      disposition: "durable-before-unsubscribe"
-    })
-  );
 }
 
 function handleTradeQueuePressure(pressure: {
@@ -2532,36 +2547,31 @@ function handleTradeQueuePressure(pressure: {
   maxQueuedSignatures: number;
 }): void {
   const pool = activePools.get(pressure.address);
-  if (!pool || !pool.tradeCoverageComplete) return;
-  if (pool.subscribedToBuys) liveTradeSource?.unsubscribeAddress(pool.poolAddress);
-  excludeTradeCoverage(pool, `rpc-trade-queue-${pressure.reason}`, new Date().toISOString());
+  if (
+    !pool ||
+    !pool.tradeCoverageComplete ||
+    tradeCoverageReleaseInFlight.has(pool.poolAddress)
+  ) {
+    return;
+  }
   poolSamplingDiagnostics.tradeQueuePressureCount += 1;
-  poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
-  console.warn(
-    JSON.stringify({
-      type: "solana-trade-coverage-excluded",
-      poolAddress: pool.poolAddress,
-      reason: pool.tradeCoverageGapReason,
-      queuedSignatures: pressure.queuedSignatures,
-      maxQueuedSignatures: pressure.maxQueuedSignatures
-    })
-  );
+  void releaseRpcTradeObservation(
+    pool,
+    `rpc-trade-queue-${pressure.reason}`,
+    new Date()
+  ).catch((error) => recordTradeCoverageReleaseError(pool, error, pressure));
 }
 
 async function handleTradeBackfillTruncation(truncation: SolanaBackfillTruncation): Promise<void> {
   const pool = activePools.get(truncation.address);
-  liveTradeSource?.unsubscribeAddress(truncation.address);
   if (!pool) {
+    liveTradeSource?.unsubscribeAddress(truncation.address);
     throw new Error(
       `Trade backfill truncated for unknown active pool ${truncation.address}; subscription rejected.`
     );
   }
   const reason = `rpc-trade-backfill-${truncation.reason}`;
-  const changed = excludeTradeCoverage(pool, reason, new Date().toISOString());
-  if (changed) {
-    poolSamplingDiagnostics.tradeCoverageExcludedPoolCount += 1;
-  }
-  await persistTradeCoverageState(pool);
+  await releaseRpcTradeObservation(pool, reason, new Date());
   console.warn(
     JSON.stringify({
       type: "solana-trade-coverage-excluded",
@@ -2569,6 +2579,29 @@ async function handleTradeBackfillTruncation(truncation: SolanaBackfillTruncatio
       reason,
       fetchedSignatureCount: truncation.fetchedSignatureCount,
       limit: truncation.limit
+    })
+  );
+}
+
+function recordTradeCoverageReleaseError(
+  pool: TrackedPool,
+  error: unknown,
+  pressure?: { queuedSignatures: number; maxQueuedSignatures: number }
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  poolSamplingDiagnostics.tradeCoverageReleaseErrorCount += 1;
+  poolSamplingDiagnostics.lastTradeCoverageReleaseError = message;
+  console.error(
+    JSON.stringify({
+      type: "solana-trade-coverage-release-error",
+      poolAddress: pool.poolAddress,
+      message,
+      ...(pressure
+        ? {
+            queuedSignatures: pressure.queuedSignatures,
+            maxQueuedSignatures: pressure.maxQueuedSignatures
+          }
+        : {})
     })
   );
 }

@@ -148,6 +148,14 @@ describe("trade observation scheduler", () => {
     ).toEqual({ status: "degraded", reason: "subscription-ack-gap" });
     expect(
       evaluateTradeObservationHealth({
+        marketEligibleTrackedPools: 0,
+        activePoolSubscriptions: 0,
+        configuredAddressCount: 1,
+        subscribedAddressCount: 1
+      })
+    ).toEqual({ status: "degraded", reason: "subscription-ack-gap" });
+    expect(
+      evaluateTradeObservationHealth({
         marketEligibleTrackedPools: 2,
         activePoolSubscriptions: 2,
         configuredAddressCount: 2,
