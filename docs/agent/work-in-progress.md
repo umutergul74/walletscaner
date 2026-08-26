@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:11:00Z
+updated_at_utc: 2026-08-26T23:13:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1817,3 +1817,15 @@ blindly repeat the last mutation.
   `walletscaner-worker:storage-r40-20260826`, verify the tag and embedded hashes, then create and
   frame-test a checksummed single-thread zstd release artifact under bounded resources. Do not
   stage or activate it until a fresh production backup/headroom/flow/rollback preflight passes.
+
+## Immutable R40 tag verified at 2026-08-26 23:13 UTC
+
+- `walletscaner-worker:storage-r40-20260826` now resolves to the exact tested Linux/amd64 image ID
+  `sha256:909ee9932bb7aa394fe3e0897eb823cbc65a5cb3f3e1a5adea5f80d50b8ba474`; the candidate alias
+  resolves to the same ID.
+- Local and embedded SHA-256 values match exactly for the materializer (`a64b479b...`), Solana
+  watcher (`e7772a68...`), scheduler (`7c35433c...`), release coordinator (`b1c57c02...`) and its
+  tests (`5ea48ad6...`). No production state changed.
+- Next exact action is to export this immutable tag to one named temporary tar, compress with zstd
+  level 3/single-thread/checksum in a network-disabled bounded container, frame-test the partial,
+  record its SHA-256 and atomically rename it. Preserve every older partial/remnant unchanged.
