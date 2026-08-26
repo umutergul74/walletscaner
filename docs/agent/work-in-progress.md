@@ -1092,3 +1092,20 @@ blindly repeat the last mutation.
   typecheck, full lint and workspace builds, then build an immutable R38 image and rerun the four
   isolated PostgreSQL integration files through that exact image. Only after that may production
   backup/headroom/live-flow/ledger preflight be refreshed.
+
+## R38 repository gate checkpoint at 2026-08-26 17:49 UTC
+
+- Full Windows test discovery ran 445 tests: 394 passed and 47 integration tests were intentionally
+  skipped without `TEST_DATABASE_URL`. Three archive-artifact tests failed only because Windows has
+  no `zstd`, the same recorded platform gap. The release-checkpoint test crossed its default
+  five-second limit while the test, lint, typecheck and build jobs were deliberately run in
+  parallel; it passed 3/3 alone under a 30-second ceiling in 3.55 seconds.
+- Full typecheck, full ESLint and the production Next.js workspace build passed. The isolated
+  exact-Linux archive/materializer PostgreSQL gate already passes 10/10 with zstd present.
+- Git checkpoint commits are `7b42c70` (repeatable snapshot/concurrency/stale reconciliation) and
+  `ee6255c` (MERGE/no-op WAL elimination). The working tree contains only this WIP update plus the
+  four pre-existing untracked transfer artifacts; no source edit is uncommitted.
+- Next exact action: commit this test checkpoint, build immutable
+  `walletscaner-worker:storage-r38-20260826`, record its image ID/runtime versions, and run the
+  zstd/materializer unit gate plus all four isolated PostgreSQL 16 integration files through that
+  exact image. The production materializer remains stopped.
