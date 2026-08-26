@@ -1717,3 +1717,22 @@ blindly repeat the last mutation.
   inside that image and run the applicable PostgreSQL 16 integration suites serially. No export,
   server transfer or rollout is allowed until those gates and an isolated observation-lane canary
   pass.
+
+## R40 candidate and first PostgreSQL 16 gate at 2026-08-26 22:55 UTC
+
+- Local-only Linux/amd64 candidate `walletscaner-worker:storage-r40-candidate-20260826` resolves to
+  image ID `sha256:c5af5a7f1b004a46c94e8866db2d3a96d9cd41d89694508042d73b95cc465f99`
+  (463,403,065 bytes), with Node 24.18.0, zstd 1.5.7 and PostgreSQL client 16.14. Its embedded
+  materializer SHA remains exact R39 `a64b479b...`; watch/scheduler/test hashes match local source.
+- Inside the exact network-disabled candidate, the valid application/package suite passed 299/299;
+  the 45 PostgreSQL integrations were intentionally skipped for the isolated database pass. This
+  includes the three zstd artifact tests that Windows could not execute.
+- A fresh disposable PostgreSQL 16 serial pass produced 44/45. PostgreSQL evidence passed 32/32
+  and ingestion coverage passed 8/8. Four of five archive-pipeline cases passed; the wallet archive
+  case hit only Vitest's fixed 5,000-ms test timeout at 5,016 ms, with no reported digest/parity or
+  SQL failure. This is not normalized as pass. The named disposable container/network were removed
+  and no credential was printed or retained.
+- Next exact action is a new empty PostgreSQL 16 instance running only the archive-pipeline file.
+  If it passes 5/5, record the first result as cumulative cold-start timing sensitivity; if it
+  repeats, stop and diagnose the archive test/runtime regression before any canary or deployment.
+  Production and the populated clone remain unchanged.
