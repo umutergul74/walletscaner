@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T02:06:20Z
+updated_at_utc: 2026-08-26T02:09:10Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -706,3 +706,13 @@ blindly repeat the last mutation.
   open a separate artifact-cleanup phase, recheck server/local artifact SHA and loaded R36/R34 image
   IDs, and delete only the exact server R36 transfer tar. No Docker image prune or database/B2
   deletion is permitted.
+- Server ledger revision 12 closed `storage-integrity-repair-r36=completed`; revision 13 opened
+  `r36-artifact-cleanup=in_progress`, SHA-256
+  `541e3c5ffdcfa70a9061a7032b02790889beaad033de30914b4656def7043baa`.
+- The server R36 transfer tar exactly matched the retained local 463,137,765-byte copy and SHA.
+  R36 and R34 image IDs were re-proven before deleting only that exact server file. Both loaded
+  images remain. Free disk increased by 463,142,912 bytes to 18,701,819,904 bytes. No wildcard,
+  Docker prune, database row or B2 object was touched.
+- Next exact action: close artifact cleanup at ledger revision 14, then open a fresh storage
+  equilibrium observation. That observation must not be called validated: wallet archive catch-up,
+  compact parity, the Pump repair and the clean 24-hour/seven-future-day gates remain outstanding.
