@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:20:00Z
+updated_at_utc: 2026-08-26T23:28:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1888,3 +1888,18 @@ blindly repeat the last mutation.
   `/opt/walletscaner/deploy/walletscaner-worker-storage-r40-20260826.tar.zst.partial`, followed by
   exact byte/SHA verification in a network-disabled bounded container and atomic rename. Loading
   remains a separate verified step.
+
+## R40 server artifact checkpoint at 2026-08-26 23:28 UTC
+
+- Initial `reput` correctly refused because no remote partial existed and created no byte. The first
+  transfer then used rate-limited SFTP `put`; any future interruption can resume the resulting
+  partial with `reput`.
+- The remote partial reached exactly 462,733,489 bytes. A network-disabled R36 container with
+  64-MiB/0.04-CPU/32-pid limits independently matched SHA-256
+  `71ecf11c435d0449db2e9107f88abc25c1a9ad93ce2283bfcc8d28d490de6f07` and passed `zstd -t`.
+  Only after those checks was it atomically renamed to
+  `/opt/walletscaner/deploy/walletscaner-worker-storage-r40-20260826.tar.zst`; the partial is absent.
+- Server free disk after staging is 14,581,055,488 bytes. Ledger remains revision 25 staging in
+  progress. No image, selector, service, database or B2 object changed. Next exact step is a
+  single-thread low-I/O/CPU zstd stream into `docker load`, then exact image ID/platform/hash
+  verification against local `sha256:909ee993...`. Do not activate on any mismatch.
