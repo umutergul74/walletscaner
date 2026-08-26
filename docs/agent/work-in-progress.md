@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T18:26:00Z
+updated_at_utc: 2026-08-26T19:12:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1209,3 +1209,27 @@ blindly repeat the last mutation.
   verified generation as the recovery gate while acknowledgement safely catches up). Only after
   the backup process and any heavy off-site transfer are idle may revision 21 be opened for
   `r38-artifact-staging`.
+
+## Daily recovery artifact checkpoint at 2026-08-26 19:12 UTC
+
+- The same uninterrupted `pg_dump` completed normally after progressing through the large wallet
+  tables. Its temporary path was atomically finalized as
+  `backups/memecoin_alpha_20260826T173517Z.dump`, 1,936,729,703 bytes. The scheduler's internal
+  PostgreSQL 16 `pg_restore --list` passed before rename, then it wrote a 112-byte SHA sidecar and
+  returned to its normal sleep interval; no temporary dump remains.
+- The generated SHA-256 is
+  `5bb6961e89655a8033aec9fa5c3a42a7d367046d45b31d6e1ea5f6a899d7b9c0`. A second, independent
+  low-I/O-priority `sha256sum -c` reread the full 1.94-GB file and passed, followed by another
+  successful PostgreSQL 16 `pg_restore --list`. This generation is a valid server recovery
+  artifact but is not yet off-site acknowledged.
+- The Windows `Walletscaner-Offsite-Backup` task ran at its normal 22:00:01 local time before the
+  new sidecar was ready and failed closed with result 1. The older 25-August dump remains present
+  with its matching sidecar and off-site acknowledgement, so recovery coverage was never lost.
+- After verification the host has 13,985,484,800 bytes free, about 1.01 GB available RAM and
+  1.98 GB free swap. The new dump plus prior verified generation temporarily explain the lower
+  disk headroom. Do not begin R38 while the retrying off-site transfer is active.
+- Next exact action: invoke the existing reviewed off-site task once now that the completed dump and
+  non-empty sidecar are stable. Wait for its local checksum/archive-list verification and matching
+  server `.offsite-verified` acknowledgement, verify the marker digest, and let only the reviewed
+  reconciliation path retire the older server generation. Then refresh disk/load/flow/ledger gates
+  before opening revision 21 for `r38-artifact-staging`.
