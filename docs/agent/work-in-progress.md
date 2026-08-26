@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:35:00Z
+updated_at_utc: 2026-08-26T23:43:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1973,3 +1973,20 @@ blindly repeat the last mutation.
   require 1-3 matching configured/subscribed/active pools when eligible candidates exist, fresh
   swaps/trades, zero drop/dead-letter/open-incident growth, bounded resources and all non-target
   container IDs unchanged. Roll back ingestion immediately on a hard gate.
+
+## R40 ingestion canary in progress at 2026-08-26 23:43 UTC
+
+- The lane passed its minimum 300-second hold and remained active. Successive exact R40 health
+  samples moved active/configured/subscribed from `1/1/1` to `2/2/2`; ACK wait, dropped signatures,
+  queue pressure and trade dead letters remain zero. One sample had 31/2,000 transient queued trade
+  signatures, with fresh wallet trades at 20 seconds. Ingestion is restart 0/OOM false and stayed
+  below its 160-MiB limit.
+- Restart hydration correctly persisted three historical pool backfill truncations, then admitted a
+  complete new observation instead of collapsing the lane to zero. The lane has produced roughly
+  540-600 wallet trades per rolling five minutes. Strict alpha/risk admission remains unchanged;
+  these counts prove collection, not alpha quality.
+- Discovery live sockets have zero current slot lag/drops, but the scoped restart opened three
+  fail-closed historical intervals. Durable repair is progressing: Pump/PumpSwap boundary collection
+  reached 5,000 signatures and CPMM replay reached 450/638. Inbox/dead-letter remain bounded/zero.
+  Operations/materializer activation stays blocked until open discovery incidents return to zero;
+  do not restart or duplicate the ingestion canary.
