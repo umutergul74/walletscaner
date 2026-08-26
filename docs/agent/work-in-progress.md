@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:52:00Z
+updated_at_utc: 2026-08-26T20:27:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1405,3 +1405,25 @@ blindly repeat the last mutation.
   receipt transition/count/digests, backend/locks, exit/OOM state, database/WAL/temp/disk deltas,
   canonical-flow freshness and every non-target container ID. Do not start another materializer
   while PID `2741013` or backend `213565` exists.
+
+## R38 first-run failure and rollback plan at 2026-08-26 20:27 UTC
+
+- The existing scheduler run ended fail-closed after 1,474,428 ms. It processed only the oldest
+  2026-07-12 receipt and reported `verified=0`, `failed=1`: the R38 `open-lots` statement reached
+  the explicit 600,000-ms timeout. No process was OOM-killed, no blocking PID existed and no
+  canonical/archive/B2 row was deleted.
+- The 2026-07-12 receipt atomically remained `retry`; attempt count advanced from 12 to 13 and its
+  terminal error is the bounded open-lots timeout. Compact aggregate is unchanged at 6 verified / 3
+  retry. The scheduler is now in its 900-second failure sleep, so there is no active materializer
+  backend and no safe basis for calling R38 operational.
+- Pre-rollback selector is exact R38, env SHA-256
+  `1299945c9b7b6a4643272552901fcd00ff059ecda316dfb95d4478c4f9f1ad91`; target container is
+  `b3704aca94ee...`, running exact R38, restart 0/OOM false. Ledger revision 23 remains
+  `r38-materializer-activation=in_progress` with rollback ref to selector R37 and a stopped R37
+  materializer.
+- Next exact mutations: stop only `wallet-evidence-materializer-scheduler`; use the guarded updater
+  dry-run/apply to change only `WALLETSCANER_OPERATIONS_IMAGE` from exact R38 to exact R37; render
+  and recreate only that named service with `--no-deps --no-build --force-recreate`, then stop it so
+  the rollback state is a stopped exact-R37 materializer. Verify every non-target ID, live false,
+  flow freshness and resource reserve, then close ledger revision 23 as failed. Do not retry the
+  materializer until the open-lots query is redesigned and repopulated-clone evidence passes.
