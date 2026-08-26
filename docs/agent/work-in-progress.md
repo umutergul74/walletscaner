@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:30:00Z
+updated_at_utc: 2026-08-26T23:32:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1918,3 +1918,19 @@ blindly repeat the last mutation.
 - Image load briefly raised load1 to 3.33. Next exact read-only action is to wait for load and
   archive activity to settle, verify flow/resource reserve again, then close ledger revision 25 as
   staging completed. Do not open activation or mutate selectors while the load gate is elevated.
+
+## R40 artifact staging completed at 2026-08-26 23:32 UTC
+
+- The scheduled archive verifier completed naturally before activation: one object independently
+  restored/verified in 57,234 ms, archive summary 47 verified / 10 pending / 0 retry / 0 dead-letter.
+  No dump, restore, writer, verifier or materializer job remains active. Short `vmstat` samples kept
+  50-61% CPU idle with no sustained I/O wait; free disk is 14,606,802,944 bytes.
+- Ledger revision 25 was dry-run checked and closed atomically. Revision 26 is
+  `r40-artifact-staging=completed`, SHA-256
+  `5cda1db04eaae59d5e6858eb959cec6fc62c67e8cad6f87fc0aa4b32e624b545`.
+- No selector/service/database/B2 state changed during staging. The next production phase is scoped
+  ingestion activation only: open revision 27 before mutation, guarded-update only
+  `WALLETSCANER_INGEST_IMAGE` R30 -> R40, render exact limits/live-false, recreate only
+  `solana-ingestion`, then verify trade observation fills and remains bounded before touching the
+  operations selector or materializer. Rollback is the inverse one-key update plus exact R30
+  ingestion recreate.
