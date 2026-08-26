@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:36:00Z
+updated_at_utc: 2026-08-26T20:44:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1486,3 +1486,29 @@ blindly repeat the last mutation.
   limits; source/fact digests match; repeat run causes no fact rewrite; dirty episode/lot counts are
   bounded near 1,556/1,520 rather than 191,922/210,827; permanent DB/WAL/temp/runtime and OOM are
   measured. Production remains R37 materializer stopped until these gates pass.
+
+## Bounded dirty-scope implementation checkpoint at 2026-08-26 20:44 UTC
+
+- `wallet-evidence-materializer.ts` now derives affected episodes from distinct daily
+  chain/wallet/token/strategy pairs and requires the episode interval to overlap that day. The same
+  materialized CTE drives token dimensions, episode MERGE, open-lot stale reconciliation/MERGE and
+  episode/lot parity. Missing-episode cleanup is also token- and interval-bounded, so it can remove
+  corrected current-day facts without deleting an unrelated historical same-wallet position.
+- A PostgreSQL integration negative control adds an unrelated same-wallet token/episode/lot and
+  proves neither compact fact is created or counted. Typecheck, full ESLint and targeted unit 6/6
+  pass. The first Windows integration attempt was non-evidence because host `zstd` is absent; an
+  immutable Linux candidate image then passed the full archive pipeline file 5/5 against a new
+  localhost-only PostgreSQL 16 gate.
+- Local candidate tag `walletscaner-worker:storage-r39-candidate-20260826` exists only off host. It
+  has not been exported, transferred or selected. Production remains selector R37 with exact R37
+  materializer stopped and ledger revision 24 failed.
+- The populated clone has only one real wallet-evidence archive segment, 2026-08-24, so it cannot
+  directly claim the production 2026-07-12 retry. Next local mutation is isolated: create a new
+  `r39_canary` schema containing a structural copy of `archive_segments`, a synthetic July-12
+  verified manifest whose counts are computed from immutable public sources, migration-051 compact
+  tables, and copied existing compact facts. Connect through a temporary least-privilege
+  `r39_materializer` role and `search_path=r39_canary,public`.
+- Public clone sources, public compact tables/receipt, production, B2 and canonical retention must
+  remain unchanged. After the bounded first and no-op repeat canaries, capture parity/counts,
+  phase durations, WAL/temp/permanent size and fact timestamps, then drop only the named temporary
+  role/schema and disposable PG16 integration container after recording evidence.

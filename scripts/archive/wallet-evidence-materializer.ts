@@ -308,6 +308,22 @@ async function materializeDay(
   }
 }
 
+const affectedEpisodesCte = `WITH touched AS MATERIALIZED (
+  SELECT DISTINCT chain, wallet_address, token_address, strategy_version
+  FROM wallet_trade_events
+  WHERE observed_at >= $1 AND observed_at < $2
+), affected AS MATERIALIZED (
+  SELECT episode.*,
+         digest(convert_to(episode.id,'UTF8'),'sha256') AS compact_episode_hash
+  FROM wallet_position_episodes episode
+  JOIN touched ON touched.chain=episode.chain
+    AND touched.wallet_address=episode.wallet_address
+    AND touched.token_address=episode.token_address
+    AND touched.strategy_version=episode.strategy_version
+  WHERE episode.opened_at < $2
+    AND (episode.closed_at IS NULL OR episode.closed_at >= $1)
+)`;
+
 async function materializeDimensions(client: pg.PoolClient, start: string, end: string) {
   await client.query(
     `WITH touched AS (
@@ -330,10 +346,7 @@ async function materializeDimensions(client: pg.PoolClient, start: string, end: 
     [start, end]
   );
   await client.query(
-    `WITH touched_wallets AS (
-       SELECT chain, wallet_address, strategy_version FROM wallet_trade_events
-       WHERE observed_at >= $1 AND observed_at < $2
-     ), tokens AS (
+    `${affectedEpisodesCte}, tokens AS (
        SELECT chain, token_address FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
        UNION
@@ -348,11 +361,7 @@ async function materializeDimensions(client: pg.PoolClient, start: string, end: 
        WHERE outcome.observed_at >= $1 AND outcome.observed_at < $2
        UNION
        SELECT episode.chain, episode.token_address
-       FROM wallet_position_episodes episode
-       JOIN touched_wallets touched
-         ON touched.chain=episode.chain
-        AND touched.wallet_address=episode.wallet_address
-        AND touched.strategy_version=episode.strategy_version
+       FROM affected episode
      )
      INSERT INTO wallet_evidence_token_dimensions (chain, token_address)
      SELECT chain, token_address FROM tokens
@@ -379,12 +388,8 @@ async function materializeDimensions(client: pg.PoolClient, start: string, end: 
 
 async function materializeEpisodes(client: pg.PoolClient, start: string, end: string) {
   await client.query(
-    `WITH touched AS MATERIALIZED (
-       SELECT DISTINCT chain, wallet_address, strategy_version
-       FROM wallet_trade_events
-       WHERE observed_at >= $1 AND observed_at < $2
-     ), desired AS MATERIALIZED (
-       SELECT digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash,
+    `${affectedEpisodesCte}, desired AS MATERIALIZED (
+       SELECT episode.compact_episode_hash AS episode_hash,
               wallet.id AS wallet_id, token.id AS token_id, strategy.id AS strategy_id,
               episode.episode_index, episode.status, episode.opened_at,
               episode.closed_at, episode.cost_basis_usd, episode.proceeds_usd,
@@ -392,10 +397,7 @@ async function materializeEpisodes(client: pg.PoolClient, start: string, end: st
               episode.remaining_raw_amount, episode.token_decimals,
               episode.realized_lot_count, episode.high_quality_price_coverage,
               episode.terminal_reason
-       FROM wallet_position_episodes episode
-       JOIN touched ON touched.chain=episode.chain
-         AND touched.wallet_address=episode.wallet_address
-         AND touched.strategy_version=episode.strategy_version
+       FROM affected episode
        JOIN wallet_evidence_wallet_dimensions wallet
          ON wallet.chain=episode.chain AND wallet.wallet_address=episode.wallet_address
        JOIN wallet_evidence_token_dimensions token
@@ -450,18 +452,22 @@ async function materializeEpisodes(client: pg.PoolClient, start: string, end: st
 async function reconcileMissingEpisodes(client: pg.PoolClient, start: string, end: string) {
   await client.query(
     `WITH touched AS MATERIALIZED (
-       SELECT DISTINCT chain, wallet_address, strategy_version
+       SELECT DISTINCT chain, wallet_address, token_address, strategy_version
        FROM wallet_trade_events
        WHERE observed_at >= $1 AND observed_at < $2
      ), stale AS (
        SELECT fact.episode_hash
        FROM wallet_profitability_episode_facts fact
        JOIN wallet_evidence_wallet_dimensions wallet ON wallet.id=fact.wallet_id
+       JOIN wallet_evidence_token_dimensions token ON token.id=fact.token_id
        JOIN wallet_evidence_strategy_dimensions strategy ON strategy.id=fact.strategy_id
        JOIN touched ON touched.chain=wallet.chain
          AND touched.wallet_address=wallet.wallet_address
+         AND touched.token_address=token.token_address
          AND touched.strategy_version=strategy.strategy_version
-       WHERE NOT EXISTS (
+       WHERE fact.opened_at < $2
+         AND (fact.closed_at IS NULL OR fact.closed_at >= $1)
+         AND NOT EXISTS (
          SELECT 1 FROM wallet_position_episodes episode
          WHERE digest(convert_to(episode.id,'UTF8'),'sha256')=fact.episode_hash
        )
@@ -474,27 +480,16 @@ async function reconcileMissingEpisodes(client: pg.PoolClient, start: string, en
 
 async function materializeOpenLots(client: pg.PoolClient, start: string, end: string) {
   await client.query(
-    `WITH touched AS MATERIALIZED (
-       SELECT DISTINCT chain, wallet_address, strategy_version
-       FROM wallet_trade_events
-       WHERE observed_at >= $1 AND observed_at < $2
-     ), affected AS MATERIALIZED (
-       SELECT episode.id AS episode_id,
-              digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash
-       FROM wallet_position_episodes episode
-       JOIN touched ON touched.chain=episode.chain
-         AND touched.wallet_address=episode.wallet_address
-         AND touched.strategy_version=episode.strategy_version
-     ), current_lots AS MATERIALIZED (
+    `${affectedEpisodesCte}, current_lots AS MATERIALIZED (
        SELECT digest(convert_to(lot.id,'UTF8'),'sha256') AS lot_hash,
-              affected.episode_hash
+              affected.compact_episode_hash AS episode_hash
        FROM wallet_position_lots lot
-       JOIN affected ON affected.episode_id=lot.episode_id
+       JOIN affected ON affected.id=lot.episode_id
        WHERE lot.status <> 'realized'
      )
      DELETE FROM wallet_open_lot_facts fact
      USING affected
-     WHERE fact.episode_hash=affected.episode_hash
+     WHERE fact.episode_hash=affected.compact_episode_hash
        AND NOT EXISTS (
          SELECT 1 FROM current_lots current
          WHERE current.lot_hash=fact.lot_hash
@@ -503,21 +498,14 @@ async function materializeOpenLots(client: pg.PoolClient, start: string, end: st
     [start, end]
   );
   await client.query(
-    `WITH touched AS MATERIALIZED (
-       SELECT DISTINCT chain, wallet_address, strategy_version
-       FROM wallet_trade_events
-       WHERE observed_at >= $1 AND observed_at < $2
-     ), desired AS MATERIALIZED (
+    `${affectedEpisodesCte}, desired AS MATERIALIZED (
        SELECT digest(convert_to(lot.id,'UTF8'),'sha256') AS lot_hash,
-              digest(convert_to(episode.id,'UTF8'),'sha256') AS episode_hash,
+              episode.compact_episode_hash AS episode_hash,
               lot.lot_sequence, lot.raw_amount, lot.remaining_raw_amount,
               lot.token_decimals, lot.quote_cost_usd, lot.fees_usd,
               lot.slippage_usd, lot.opened_at, lot.closed_at, lot.status
        FROM wallet_position_lots lot
-       JOIN wallet_position_episodes episode ON episode.id=lot.episode_id
-       JOIN touched ON touched.chain=episode.chain
-         AND touched.wallet_address=episode.wallet_address
-         AND touched.strategy_version=episode.strategy_version
+       JOIN affected episode ON episode.id=lot.episode_id
        WHERE lot.status <> 'realized'
      )
      MERGE INTO wallet_open_lot_facts AS fact
@@ -792,18 +780,8 @@ function safeJsonCast(field: string, type: string): string {
   return `CASE WHEN pg_input_is_valid(${value}, '${type}') THEN (${value})::${type} END`;
 }
 
-const affectedEpisodesCte = `WITH touched AS MATERIALIZED (
-  SELECT DISTINCT chain, wallet_address, strategy_version
-  FROM wallet_trade_events WHERE observed_at >= $1 AND observed_at < $2
-), affected AS MATERIALIZED (
-  SELECT episode.* FROM wallet_position_episodes episode
-  JOIN touched ON touched.chain=episode.chain
-    AND touched.wallet_address=episode.wallet_address
-    AND touched.strategy_version=episode.strategy_version
-)`;
-
 const episodePayloadSource = `jsonb_build_array(
-  encode(digest(convert_to(episode.id,'UTF8'),'sha256'),'hex'), episode.chain,
+  encode(episode.compact_episode_hash,'hex'), episode.chain,
   episode.wallet_address, episode.token_address, episode.strategy_version,
   episode.episode_index, episode.status, episode.opened_at, episode.closed_at,
   episode.cost_basis_usd, episode.proceeds_usd, episode.realized_pnl_usd,
@@ -827,7 +805,7 @@ const episodeSourceAggregateSql = `${affectedEpisodesCte}, payloads AS (
 const episodeFactAggregateSql = `${affectedEpisodesCte}, payloads AS (
   SELECT ${episodePayloadFact} AS payload
   FROM wallet_profitability_episode_facts fact
-  JOIN affected episode ON fact.episode_hash=digest(convert_to(episode.id,'UTF8'),'sha256')
+  JOIN affected episode ON fact.episode_hash=episode.compact_episode_hash
   JOIN wallet_evidence_wallet_dimensions wallet ON wallet.id=fact.wallet_id
   JOIN wallet_evidence_token_dimensions token ON token.id=fact.token_id
   JOIN wallet_evidence_strategy_dimensions strategy ON strategy.id=fact.strategy_id
@@ -837,7 +815,7 @@ const episodeFactAggregateSql = `${affectedEpisodesCte}, payloads AS (
 
 const lotPayloadSource = `jsonb_build_array(
   encode(digest(convert_to(lot.id,'UTF8'),'sha256'),'hex'),
-  encode(digest(convert_to(episode.id,'UTF8'),'sha256'),'hex'), lot.lot_sequence,
+  encode(episode.compact_episode_hash,'hex'), lot.lot_sequence,
   lot.raw_amount, lot.remaining_raw_amount, lot.token_decimals, lot.quote_cost_usd,
   lot.fees_usd, lot.slippage_usd, lot.opened_at, lot.closed_at, lot.status
 )::text`;
@@ -854,7 +832,7 @@ const lotSourceAggregateSql = `${affectedEpisodesCte}, payloads AS (
   COALESCE(SUM(hashtextextended(payload,1)::numeric),0)::text AS digest1 FROM payloads`;
 const lotFactAggregateSql = `${affectedEpisodesCte}, payloads AS (
   SELECT ${lotPayloadFact} AS payload FROM wallet_open_lot_facts fact
-  JOIN affected episode ON fact.episode_hash=digest(convert_to(episode.id,'UTF8'),'sha256')
+  JOIN affected episode ON fact.episode_hash=episode.compact_episode_hash
 ) SELECT COUNT(*)::text AS rows,
   COALESCE(SUM(hashtextextended(payload,0)::numeric),0)::text AS digest0,
   COALESCE(SUM(hashtextextended(payload,1)::numeric),0)::text AS digest1 FROM payloads`;

@@ -51,6 +51,30 @@ describe("wallet evidence materializer control flow", () => {
     expect(source).not.toContain("DELETE FROM wallet_open_lot_facts fact\n     USING affected\n     WHERE fact.episode_hash=affected.episode_hash`");
   });
 
+  it("bounds dirty episodes to the traded token and overlapping episode interval", async () => {
+    const source = await readFile(sourcePath, "utf8");
+    const scope = source.slice(
+      source.indexOf("const affectedEpisodesCte"),
+      source.indexOf("async function materializeDimensions")
+    );
+    const staleReconciliation = source.slice(
+      source.indexOf("async function reconcileMissingEpisodes"),
+      source.indexOf("async function materializeOpenLots")
+    );
+
+    expect(scope).toContain(
+      "SELECT DISTINCT chain, wallet_address, token_address, strategy_version"
+    );
+    expect(scope).toContain("touched.token_address=episode.token_address");
+    expect(scope).toContain("episode.opened_at < $2");
+    expect(scope).toContain("episode.closed_at IS NULL OR episode.closed_at >= $1");
+    expect(staleReconciliation).toContain("touched.token_address=token.token_address");
+    expect(staleReconciliation).toContain("fact.opened_at < $2");
+    expect(staleReconciliation).toContain(
+      "fact.closed_at IS NULL OR fact.closed_at >= $1"
+    );
+  });
+
   it("reports retryable work separately from proven parity mismatches", async () => {
     const source = await readFile(healthSourcePath, "utf8");
 

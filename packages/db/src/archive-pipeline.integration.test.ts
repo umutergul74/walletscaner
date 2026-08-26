@@ -248,6 +248,30 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
        )`,
       [observedAt]
     );
+    await testPool.query(
+      `INSERT INTO wallet_position_episodes (
+         id, chain, wallet_address, token_address, strategy_version, episode_index,
+         status, opened_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
+         remaining_raw_amount, token_decimals, realized_lot_count,
+         high_quality_price_coverage, metadata
+       ) VALUES (
+         'wallet-episode-unrelated-1', 'solana', 'WalletArchive111',
+         'TokenArchiveUnrelated111', 'evidence-v1', 1, 'open', $1,
+         4, 0, 0, 20, 6, 0, 1, '{}'::jsonb
+       )`,
+      [observedAt]
+    );
+    await testPool.query(
+      `INSERT INTO wallet_position_lots (
+         id, episode_id, source_event_idempotency_key, lot_sequence, raw_amount,
+         remaining_raw_amount, token_decimals, quote_cost_usd, fees_usd,
+         slippage_usd, opened_at, status, metadata
+       ) VALUES (
+         'wallet-lot-unrelated-1', 'wallet-episode-unrelated-1',
+         'wallet-trade-unrelated-1', 1, 20, 20, 6, 4, 0, 0, $1, 'open', '{}'::jsonb
+       )`,
+      [observedAt]
+    );
 
     await expect(store.seedEligibleWalletEvidenceSegments(24, 1)).resolves.toBe(1);
     const segment = await store.claimWriter({
@@ -332,8 +356,31 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
       mature_followability_count: "1"
     });
     await expect(
-      testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_open_lot_facts")
-    ).resolves.toMatchObject({ rows: [{ rows: 1 }] });
+      testPool.query(
+        `SELECT COUNT(*)::int AS rows,
+                EXISTS (
+                  SELECT 1 FROM wallet_profitability_episode_facts
+                  WHERE episode_hash=digest(
+                    convert_to('wallet-episode-unrelated-1','UTF8'),'sha256'
+                  )
+                ) AS unrelated_episode_materialized,
+                EXISTS (
+                  SELECT 1 FROM wallet_open_lot_facts
+                  WHERE lot_hash=digest(
+                    convert_to('wallet-lot-unrelated-1','UTF8'),'sha256'
+                  )
+                ) AS unrelated_lot_materialized
+         FROM wallet_open_lot_facts`
+      )
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          rows: 1,
+          unrelated_episode_materialized: false,
+          unrelated_lot_materialized: false
+        }
+      ]
+    });
 
     const openLotBlocker = await testPool.connect();
     let blockedMaterializer:
