@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:33:00Z
+updated_at_utc: 2026-08-26T23:34:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1946,3 +1946,16 @@ blindly repeat the last mutation.
   `WALLETSCANER_INGEST_IMAGE` from `walletscaner-worker:pipeline-storage-r30-20260825` to
   `walletscaner-worker:storage-r40-20260826`. Then render and verify only ingestion before its
   no-dependency/no-build recreate. Operations/materializer remain R37/stopped.
+
+## R40 ingestion selector checkpoint at 2026-08-26 23:34 UTC
+
+- The guarded updater dry-ran and atomically changed exactly one key:
+  `WALLETSCANER_INGEST_IMAGE` R30 -> exact R40. `.env.server` SHA-256 changed from
+  `b1e6ce998c6217b99d16eb09d9d67afcb354cb264649703690a4f85b8246f9cd` to
+  `c1e15170a71bd594f4f9d4d3e1c2e12e36e4d669ad475583cbea9b08502f1522`.
+- Live execution remains false and operations remains exact R37. No container was recreated yet;
+  ingestion ID `fec291346d30...` is still running exact R30. Rollback is the inverse guarded
+  one-key update from exact R40 to R30.
+- Next exact read-only action is secret-free Compose render/inspection for only ingestion: require
+  exact R40 image, live false, existing CPU/memory/pid limits and bounded trade controls. If it
+  passes, recreate only `solana-ingestion` with `--no-deps --no-build --force-recreate`.
