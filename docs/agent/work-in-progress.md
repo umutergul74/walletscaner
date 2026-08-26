@@ -1170,3 +1170,17 @@ blindly repeat the last mutation.
   dry-run then close revision 19 as failed with the proven FK/snapshot/WAL canary evidence. Do not
   open R38 staging or transfer anything until `pg_dump` exits cleanly, its new or prior complete
   recovery artifact passes checksum/off-site/restore-list gates, and load falls to a safe window.
+
+## R37 terminal ledger checkpoint at 2026-08-26 18:00 UTC
+
+- Local/server `scripts/deploy/release-checkpoint.py` SHA-256 matched exactly at
+  `a907032e824f79ae97d378fc51c1f66276105402dc58015fa0901a0a690158ef`.
+- Revision-19 transition was dry-run with the exact prior ledger SHA and then atomically applied.
+  Server ledger is now revision 20, `r37-materializer-activation=failed`, SHA-256
+  `40a97af41a6082d34f2abb625046c125f4e9d8fcef445591481dab451bc3d659`.
+  Evidence records the FK/snapshot/rewrite-WAL failure, exact R38 test gate, operational canonical
+  flow and stopped materializer. No service, selector, database or B2 object changed.
+- Current production hold remains the active daily `pg_dump`. Next exact read-only action is to
+  poll that one transaction and backup container exit/progress without interrupting it. Only after
+  it finishes may the newest complete dump be selected and its checksum, off-site marker and
+  `pg_restore --list` proof revalidated before opening revision 21 for R38 artifact staging.
