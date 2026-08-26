@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:34:00Z
+updated_at_utc: 2026-08-26T23:35:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1959,3 +1959,17 @@ blindly repeat the last mutation.
 - Next exact read-only action is secret-free Compose render/inspection for only ingestion: require
   exact R40 image, live false, existing CPU/memory/pid limits and bounded trade controls. If it
   passes, recreate only `solana-ingestion` with `--no-deps --no-build --force-recreate`.
+
+## R40 ingestion service checkpoint at 2026-08-26 23:35 UTC
+
+- Secret-free Compose rendering passed: exact R40, live false, RPC/standard-Helius hybrid, hard
+  three-pool trade cap, six fetch attempts, 160 MiB, 0.2 CPU and 128 pids. The optional hold env is
+  absent and therefore uses the tested/documented code default of 300 seconds.
+- Only `solana-ingestion` was recreated with exact project/file/env plus
+  `--no-deps --no-build --force-recreate`. New container `22664aab2618...` runs exact image ID
+  `sha256:909ee9932bb7...`, restart 0/OOM false with the rendered resource/live controls.
+- Operations remains R37 and materializer remains stopped. No migration, canonical row, B2 object
+  or other service was changed. Next action is a minimum five-minute observation-lane canary:
+  require 1-3 matching configured/subscribed/active pools when eligible candidates exist, fresh
+  swaps/trades, zero drop/dead-letter/open-incident growth, bounded resources and all non-target
+  container IDs unchanged. Roll back ingestion immediately on a hard gate.
