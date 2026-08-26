@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:50:45Z
+updated_at_utc: 2026-08-26T01:52:10Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -648,3 +648,11 @@ blindly repeat the last mutation.
 - Next exact action: atomically rename the verified artifact and load it at low CPU/I/O priority;
   prove the loaded image ID before touching the operations selector or any container. Preserve the
   transfer artifact and R34/R29 rollback images until the repair canary completes.
+- The verified artifact was atomically renamed and loaded at low CPU/I/O priority. Server tag R36
+  resolves exactly to image ID
+  `sha256:24bcc3fa77d3a0a9e4369eb43ec4d33084b4985f1feedcc41db97cde1548d00a`.
+  Host free space after loading is 18,265,366,528 bytes. No selector, container, PostgreSQL row or
+  B2 object changed during loading.
+- Next exact action: use the guarded release-image updater in dry-run and apply mode to move only
+  `WALLETSCANER_OPERATIONS_IMAGE` from exact R34 to exact R36. Verify the resulting env hash and
+  rendered service images before recreating named services one at a time with `--no-build --no-deps`.
