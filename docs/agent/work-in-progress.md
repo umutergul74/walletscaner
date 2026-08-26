@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T20:31:00Z
+updated_at_utc: 2026-08-26T20:36:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1460,3 +1460,29 @@ blindly repeat the last mutation.
 - Canonical flow at the immediate rollback sample had backlog/dead-letter 0/0 and pool age 1.3
   seconds. Swap and wallet-trade ages were both 316.3 seconds after being 9.3/38.3 seconds during
   the canary; resample this before classifying it as a transport/parser fault.
+
+## Open-lots redesign baseline at 2026-08-26 20:36 UTC
+
+- The populated 12.48-GB PostgreSQL 16 clone `walletscaner-pg16-r31` is intact and contains
+  2,175,963 wallet trades, 424,013 episodes, 807,507 lots, 218,492 compact episode facts and
+  251,460 compact open-lot facts. This is the restored full-data test target; do not repeat the
+  restore.
+- For 2026-07-12, the current wallet-wide scope expands 4,043 touched wallet/strategy identities
+  into 191,922 historical episodes and 210,827 non-realized lots. The intended direct dirty scope
+  uses day-touched wallet/token/strategy pairs plus episode interval overlap and yields 1,556
+  episodes / 1,520 lots. All 1,556 episodes opened or closed that day are included; uncovered
+  opened/closed episodes are zero.
+- Root cause: compact materialization reprocessed virtually the whole historical ledger for every
+  wallet with any daily trade, including unrelated tokens and old episodes. R38 removed no-op WAL
+  rewrites but did not bound this read/compare cardinality, so production's one-vCPU PostgreSQL
+  backend still reached the 600-second open-lots timeout.
+- Next exact implementation: make the shared affected-episode CTE token-aware and interval-bounded;
+  use it in dimensions, episode materialization, open-lot reconciliation/MERGE and episode/lot
+  parity; make stale-episode reconciliation pair-aware so deleted facts remain removable. Add an
+  integration negative control proving an unrelated same-wallet token is neither materialized nor
+  counted. Do not change retention, receipt ordering, archive manifests or production.
+- Acceptance before any new artifact: targeted unit/integration gates pass; the populated clone
+  materializes one eligible full day under the existing 600-second statement/1,800-second run
+  limits; source/fact digests match; repeat run causes no fact rewrite; dirty episode/lot counts are
+  bounded near 1,556/1,520 rather than 191,922/210,827; permanent DB/WAL/temp/runtime and OOM are
+  measured. Production remains R37 materializer stopped until these gates pass.
