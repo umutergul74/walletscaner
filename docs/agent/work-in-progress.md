@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:29:00Z
+updated_at_utc: 2026-08-26T19:34:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1254,3 +1254,38 @@ blindly repeat the last mutation.
   migration checksums, database/archive/coverage/queue freshness, active transactions, disk/RAM/
   swap/load and absence of R38 server paths/image. If every hard gate passes, dry-run then apply
   revision 21 `r38-artifact-staging=in_progress` before the first R38 transfer byte.
+
+## R38 final production preflight at 2026-08-26 19:34 UTC
+
+- Server ledger remains exact revision 20/SHA-256
+  `40a97af41a6082d34f2abb625046c125f4e9d8fcef445591481dab451bc3d659`; Compose remains
+  `8c57d28c53145bbd7fe5669c53eb1329047c2821e748e8d24553d01937ae3288`. Release-checkpoint and
+  guarded image-updater hashes still match local. No R38 server path or image exists.
+- The new 1,936,729,703-byte recovery dump is now reported `offsiteAcknowledged=true` with exact
+  digest `5bb6961e89655a8033aec9fa5c3a42a7d367046d45b31d6e1ea5f6a899d7b9c0`. Server, independent
+  reread, local off-host bytes/SHA and both PostgreSQL 16 archive-list checks passed.
+- Migrations 050/051 are present with repository-exact SHA-256 values
+  `fa0e8372ae65cf39e83fc1f7c92c9608bffd4b3531eb6e2ce3ffbd21d4e96886` and
+  `bceaa2f4493f4791f1125c6a74074c86184fa150d2d2c4de7069fd7f838ab856`. PostgreSQL is
+  17,254,906,903 bytes at the query boundary; no transaction older than five minutes exists.
+- Canonical flow is operational: open coverage incidents 0; health backlog/dead-letter 0/0; pool,
+  swap and wallet-trade ages 6/31/45 seconds at the direct sample; 377 trades from 135 wallets in
+  the preceding 15 minutes. Alpha ready work is 1,042 (priority lanes P1/P0 518/526), one
+  fail-closed quarantine and two retained error rows; this backlog has fallen materially from the
+  earlier 13,481 and is not the materializer target.
+- Archive state is 25 verified chain-payload days and wallet evidence 18 verified/14 pending with
+  zero dead letter. Compact state is actually 6 verified/3 retry, not three parity mismatches; R36
+  health uses the stale mismatch label. Writer and verifier are sleeping after a zero-work verifier
+  cycle, and backup/hash/SFTP are idle.
+- All selected workers report `ENABLE_LIVE_EXECUTION=false`. Ingestion R30, wallet-alpha R34,
+  Telegram R23, PostgreSQL and Redis are running restart 0/OOM false. Running archive/maintenance/
+  ops stay R36. The exact R37 materializer remains stopped exit 143, restart 0/OOM false. Only the
+  `walletscaner` Compose project is listed.
+- Free disk is 16,053,837,824 bytes, available memory about 1.08 GB, free swap 1.98 GB and load1
+  settled to 1.17. This exceeds the 8-GiB hard reserve plus the measured 1.86-GB materializer temp
+  requirement after staging headroom. Local R38 was independently rehashed at 462,868,480 bytes and
+  SHA-256 `1976fce09466f15a67352301deca0731d1ccaba484ad7d9951f034b4248c28d9`.
+- Next exact mutation: dry-run then apply revision 21
+  `r38-artifact-staging=in_progress`, with rollback to the absent R38 paths plus loaded/stopped R37
+  and running R36 operations. Then transfer only the exact R38 artifact to a `.partial` path,
+  verify server bytes/SHA in a bounded R36 container and atomically rename before image load.
