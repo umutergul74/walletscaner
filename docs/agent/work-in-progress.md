@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:16:00Z
+updated_at_utc: 2026-08-26T23:19:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1845,3 +1845,31 @@ blindly repeat the last mutation.
   free disk/RAM/swap/load, database/archive state, live-execution value, service identities,
   migrations, trade/discovery flow and heavy jobs. Do not stage the artifact unless all hard gates
   pass and transfer plus decompression preserves the 8-GiB host reserve.
+
+## R40 production preflight passed at 2026-08-26 23:19 UTC
+
+- Read-only resume/preflight reconciled actual server state with the human checkpoint and machine
+  ledger. Ledger remains revision 24, `r38-materializer-activation=failed`, SHA-256
+  `d8790ddb765601aabcda17446a0f33eb9d0c94da1d2402e85119d4eae5ac89a9`. Selectors remain exact
+  ingestion R30 and operations R37; the R37 materializer is stopped exit 143/restart 0/OOM false.
+  Every other Walletscaner container is restart 0/OOM false. Only the Walletscaner Compose project
+  is listed; no protected co-tenant target was changed.
+- Host `/` has 15,072,665,600 bytes free at 80% use, about 1.06 GB available RAM and 1.97 GB free
+  swap. No dump, restore, archive writer/verifier or materializer job is active. Transfer plus
+  stream-load plus the tested materializer exceeds the 8-GiB hard reserve with margin.
+- Latest server recovery point `memecoin_alpha_20260826T173517Z.dump` is 1,936,729,703 bytes.
+  Sidecar, server full SHA, off-site acknowledgement and local verified generation all match SHA
+  `5bb6961e...`; an independent PostgreSQL 16 `pg_restore --list` passed. Multiple earlier verified
+  local/off-host generations remain.
+- Database is 17,656,724,503 bytes; migrations 050/051 checksums match local source, invalid indexes
+  and transactions older than five minutes are zero. Inbox/dead letter are 0/0, pool age 5 seconds,
+  open discovery incidents zero, and discovery remains live. Swap/wallet-trade age is 186 seconds
+  and R30 reports zero configured/subscribed trade addresses: the known silent trade-lane hard gate
+  remains present and is the exact R40 repair target.
+- Archive state is fail-closed and progressing: chain payload 25 verified; wallet evidence 21
+  verified / 11 pending / 0 dead-letter; compact shadow 6 verified / 3 retry. No canonical retirement
+  or B2 deletion is part of this rollout. Live execution is false in every selected worker.
+- Local/server Compose, release-checkpoint, guarded selector updater and migrations 050/051 hashes
+  match exactly. Next exact mutation is revision-checked dry-run/apply of ledger phase
+  `r40-artifact-staging=in_progress`, with rollback to absent R40 server paths, ingestion R30 and
+  stopped materializer R37. Only then may the exact `.partial` transfer begin.
