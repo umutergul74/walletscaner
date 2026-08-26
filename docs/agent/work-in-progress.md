@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T03:19:00Z
+updated_at_utc: 2026-08-26T05:41:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R36 integrity repair and exact server artifact cleanup completed; ledger revision 15 observes storage equilibrium; canonical retirement remains disabled
+last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
 ---
 
 # Walletscaner Work In Progress
@@ -736,3 +736,35 @@ blindly repeat the last mutation.
   backup, database/disk slope and service restart/OOM/live state. Do not retire canonical wallet
   evidence until archive catch-up, restored cohort parity, reader dual-read, a clean post-catch-up
   24-hour slope and seven future shadow days all pass.
+
+## Compact catch-up incident and permanent-lifecycle phase at 2026-08-26 05:41 UTC
+
+- Resume reconciliation started from Git `c6b3951`; the four pre-existing untracked transfer
+  artifacts remain untouched. No interrupted migration, upload, cleanup or service operation was
+  found after R36. Server ledger revision 15 remains the declared observation boundary; its actual
+  file location/hash must be re-proven before any future rollout mutation.
+- The exact Pump.fun repair that previously had 28 signatures remaining is now complete. Open
+  discovery incidents are zero, and there are no collecting/replaying repair sessions. Current
+  pipeline backlog/dead-letter is 0/0. The gap was not skipped or relabeled: it completed through
+  the durable oldest-first replay path.
+- At 05:29 UTC health remained `degraded`, but not because live ingestion stopped. Pool age was
+  5.43 seconds, finality unresolved-24h zero and archive dead letters zero. PostgreSQL was about
+  15.74 GB and the host had about 17.69 GB free. The recent 24-hour estimate improved to roughly
+  0.36 GB/day database growth and 0.72 GB/day disk consumption, still only 12.68 days above the
+  8-GiB reserve and therefore below the 14-day warning gate.
+- Wallet evidence advanced to nine verified days with 23 pending. Compact state has six verified
+  days and two rows labelled `mismatch` for 12/13 July. Both active errors are exactly PostgreSQL
+  statement timeouts, not digest/count differences: one occurred after 150.9 seconds on a
+  17,669-trade day and one after 137.1 seconds on a 54,933-trade day. The current implementation
+  incorrectly records every exception as `mismatch`, then skips the six-hour retry and claims a
+  later day. This misstates parity health and violates intended oldest-first compact catch-up.
+- No source row may be retired while those rows are unresolved. The next exact action is local and
+  additive: identify the timed-out materializer phase, separate operational `retry` from proven
+  digest `mismatch`, prevent claims from advancing past an unresolved older verified day, and make
+  the expensive materialization bounded. Verify on PostgreSQL 16 representative data before any
+  image or production change.
+- The existing compact facts are not yet a complete scorer reader. Wallet alpha still loads the
+  detailed trade/entry/outcome relations directly, and the profitability fact currently stores
+  episode scalars rather than each partial-sale return observation used by scoring. Deleting source
+  rows now would change score hashes. Reader parity and filesystem-returning source cutover remain
+  separate hard gates; `DELETE` or normal vacuum is not an acceptable shortcut.
