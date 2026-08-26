@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T01:53:15Z
+updated_at_utc: 2026-08-26T01:55:20Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: read-only production refresh completed; no mutation for this phase yet; R34 services remain operational, server ledger revision 9 remains in progress, canonical retirement remains disabled
@@ -664,3 +664,10 @@ blindly repeat the last mutation.
   exact action: parse rendered Compose without emitting environment values, recreate verifier
   alone, prove R36/resource/live gates, then transactionally reset only proven segments 67/69 to
   `retry_verify` and run a bounded two-segment verifier canary.
+- Rendered Compose selects R36 for the five named operations services. Verifier alone was recreated:
+  old container `991e36b72a96...`, new `8933757576cc...`, exact R36 image, running, restart 0/OOM
+  false, 128 MiB/0.04 CPU and live execution false. No other container changed at this checkpoint.
+- Next exact action: in one guarded PostgreSQL transaction, require segments 67/69 to remain
+  revision 1/dead-letter with the proven generic HEAD mismatch, clear only their active error/lease
+  fields and set `retry_verify`. Then run one exact R36 verifier with max two segments and explicit
+  live-false/no-dependencies. Any real SHA/count/Object-Lock/GET mismatch must still dead-letter.
