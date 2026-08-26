@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T19:45:00Z
+updated_at_utc: 2026-08-26T19:48:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -1333,3 +1333,14 @@ blindly repeat the last mutation.
   archive activity to settle, then close ledger revision 21 as completed and open a separate R38
   materializer-activation phase. Do not change the selector while the host is above the canary
   load gate.
+
+## R38 artifact staging completed at 2026-08-26 19:48 UTC
+
+- Host load settled and the archive verifier completed a zero-work cycle in 2.2 seconds; no
+  archive/export/backup process is active.
+- Revision 21 was dry-run against exact prior ledger SHA, then atomically closed. Ledger revision
+  22 is `r38-artifact-staging=completed`, SHA-256
+  `8bfaafe4904188bcf346842f235d3e75d99f967d4f6a7c8d801e09dc6bea9143`, with exact remote
+  bytes/SHA and loaded image prefix recorded.
+- Selector, services, database and B2 remain unchanged. Next exact mutation is to dry-run then open
+  revision 23 `r38-materializer-activation=in_progress` before changing the operations selector.
