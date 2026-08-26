@@ -1768,3 +1768,19 @@ blindly repeat the last mutation.
 - No production or database mutation occurred. Next exact action is commit this hardening, rebuild
   the candidate to a new exact image identity and rerun Linux application plus serial PostgreSQL
   gates before any production preflight.
+
+## Rebuilt R40 regression gates passed at 2026-08-26 23:02 UTC
+
+- Rebuilt local Linux/amd64 candidate now resolves to exact image ID
+  `sha256:011298f24f34d1a2eff6a47a79123ceaf515bd7b5abe9bf28f194147975469c2`
+  (463,403,436 bytes). Embedded hashes match local source; the R39 materializer remains exact
+  `a64b479b...`, watch is `1b70d735...`, scheduler `7c35433c...` and its test `e4e9e4e1...`.
+- The rebuilt exact image passed 299/299 valid Linux application/package tests with 45 database
+  integrations intentionally separated. Three fresh, serial PostgreSQL 16 gates then passed
+  archive 5/5 (heavy case 4,655 ms), ingestion coverage 8/8 and PostgreSQL evidence 32/32. Every
+  named disposable database and network was removed; the populated clone was not used or changed.
+- Before final image/tag, move durable release orchestration into a directly testable coordinator.
+  Its acceptance tests must prove persist-before-unsubscribe ordering, exact rollback on persist
+  failure, same-pool in-flight coalescing and no unbounded state. After that small refactor, rerun
+  type/lint/target tests and rebuild the final candidate; the current image is evidence but will not
+  be the immutable release artifact.
