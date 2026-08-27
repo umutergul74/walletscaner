@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:42:00Z
+updated_at_utc: 2026-08-27T20:48:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: only ingestion now runs exact R42 container adf43a6e with all oversized repairs durably alpha-excluded and zero open incidents; revision 39 canary is still in progress and R30 remains rollback
+last_safe_checkpoint: R42 repaired incident churn but failed the growing-inbox gate and was rolled back exactly; ingestion runs R30 container 71a03044, R37 materializer is stopped, and ledger revision 40 is failed
 ---
 
 # Walletscaner Work In Progress
@@ -2533,3 +2533,22 @@ ingestion selector update.
   with active/configured/subscribed `1/1/1`, queue zero. Pool/trade flow remains fresh and
   dead-letter zero. Canary is not complete until the minimum five-minute hold shows no new incident
   churn, equality drift, restart/OOM or growing inbox backlog.
+
+## First R42 observe-only canary failed and rolled back at 2026-08-27 20:48 UTC
+
+- Repair/transport behavior passed: no new incident churn, discovery stayed `ok`, trade subscription
+  state remained equal through `1/1/1`, `2/2/2`, `1/1/1` and `3/3/3`; dead-letter/restart/OOM
+  stayed zero and current flow stayed fresh.
+- The canonical throughput gate failed as all three observation slots filled. Inbox backlog grew
+  monotonically `123 -> 182 -> 290 -> 339 -> 504`, oldest unresolved age reached 105 seconds and
+  the measured last-minute rates were 458 received versus 338 processed. Parser diagnostics had
+  1,950/1,950 claimed/completed and zero errors, proving capacity mismatch rather than a poisoned
+  row or retry loop.
+- Guarded inverse update restored only the ingestion selector and `.env.server` exact SHA
+  `b1e6ce998c...`; only ingestion was recreated. Container `71a03044cd1b...` runs exact R30 image
+  `sha256:afd180aed4fb...`, restart 0/OOM false, live false, with non-target hash unchanged at
+  `7391a3c65cd8...`. Collected events and explicit excluded-gap evidence were preserved.
+- Ledger revision 40 closes this canary as failed, SHA-256 `bd763fb0a041...`. Next exact work is let
+  the existing parser drain the bounded backlog, add/test a guarded one-key updater for
+  `RPC_TRADE_MAX_ACTIVE_POOLS`, change only 3 to 1, and then retry the exact R42 image. Do not raise
+  CPU, parser concurrency, queues or memory to hide the measured capacity mismatch.
