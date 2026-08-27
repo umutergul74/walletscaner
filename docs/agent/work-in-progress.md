@@ -2657,3 +2657,17 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
 - Next exact mutation is only the named materializer no-dependency/no-build force recreate under
   profile `archive-scheduled`; immediately verify image, limits, restart/OOM/live state and
   non-target identity before waiting through its default 600-second initial delay.
+
+## R42 materializer service checkpoint at 2026-08-27 23:18 UTC
+
+- Only `wallet-evidence-materializer-scheduler` was force-recreated with the exact Walletscaner
+  project/file/env/profile plus `--no-deps --no-build`. New container ID is `116e4cc4e7e3...` on
+  exact R42 image `sha256:4d9cbf85ada0...`; it is running with restart 0/OOM false, live false,
+  one day, 1,800-second run, 600-second statement, 0.05 CPU, 80 MiB and 64 PIDs.
+- The normalized non-target container hash remained exactly `3072723b0af3...` before and after.
+  Process inspection shows only the reviewed scheduler shell plus `sleep 600`; no materialization
+  query has started and the database has not yet changed from this service.
+- If interrupted now, do not recreate or start another worker. Re-read container ID/image/state,
+  PostgreSQL backend activity and the oldest compact receipt. The next exact action is observe the
+  first post-delay R42 pass for the eligible 2026-07-12 retry, then verify parity receipt, runtime,
+  WAL/temp/database deltas, canonical backlog, resource ceiling and every non-target identity.
