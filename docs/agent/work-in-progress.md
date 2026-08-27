@@ -2218,3 +2218,18 @@ blindly repeat the last mutation.
 - No service, selector, database row, B2 object or production file changed. Next exact action is to
   let the active dump finish, verify its checksum/custom-archive/off-site evidence, then run the
   seven Python-backed files in a disposable Linux harness before any PostgreSQL gate or activation.
+
+## 27 August recovery generation checkpoint at 2026-08-27 19:15 UTC
+
+- The bounded scheduler completed `memecoin_alpha_20260827T173517Z.dump` atomically at exactly
+  2,030,534,774 bytes. PostgreSQL 16 `pg_restore --list` passed and the completed sidecar records
+  SHA-256 `ae4ecfe40cc11318809032df35205a2b0194c456a56ed150eb1b94509ad7a587`.
+- The hidden Windows off-site task ran successfully at 19:00 UTC, but the new server dump completed
+  at 19:05 UTC. It therefore reconciled the prior 26-August generation instead of this one. The
+  schedule/dump-duration race would leave the new generation unacknowledged and block the next
+  server dump; do not call backup freshness operational until corrected.
+- Current server free space is about 13.13 GB. The prior verified server generation remains intact.
+  Next exact mutation is the reviewed `run-offsite-backup.ps1`: resumably pull only the newest dump,
+  match its SHA-256, validate the byte-identical archive, atomically write the remote acknowledgement
+  and then let the path-pinned reconciliation script retain the newest server generation while
+  removing only the older already-verified server copy. On any failure, preserve both generations.
