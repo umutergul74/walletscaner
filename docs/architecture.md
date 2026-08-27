@@ -88,6 +88,8 @@ The active worker uses two source roles and one selectable trade-ingest mode:
 - `HELIUS_INGEST_MODE=rpc` is the active fixed-cost profile. Public RPC performs reviewed program
   discovery while Helius standard `logsSubscribe` follows at most three pools that pass the cheap
   market observation gate. Observation admission is deliberately separate from alpha admission:
+  the accepted one-vCPU shared-host override is one active pool because its measured parser
+  throughput drains while three active pools do not.
   known/passed critical risk, controlled flow and complete coverage remain downstream requirements.
   A pool is held for at least five minutes before an unprotected observation can rotate; an
   alpha-protected subscription is never evicted for an exploratory candidate. Every rotation,

@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-27T23:15:00Z
+status: complete
+updated_at_utc: 2026-08-27T23:45:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R42 materializer preflight passed without mutation; ledger revision 42 remains completed, exact R42 ingestion is healthy and exact R37 materializer remains stopped
+last_safe_checkpoint: R42 ingestion and bounded materializer are operational, cleanup returned 7.34 GB, and ledger revision 45 tracks only autonomous shadow observation
 ---
 
 # Walletscaner Work In Progress
@@ -14,7 +14,8 @@ blindly repeat the last mutation.
 
 ## Resume dashboard — 2026-08-27 23:15 UTC
 
-This task has six bounded phases. Five are complete and phase six has passed its read-only preflight:
+This task had six bounded implementation/rollout phases. All six are complete; future storage
+validation is an explicitly separate waiting gate:
 
 1. **Complete — root cause:** R40 proved the trade-observation lane can collect wallet trades, but
    also exposed a real async bootstrap race: three provider subscriptions could be configured/ACKed
@@ -31,25 +32,23 @@ This task has six bounded phases. Five are complete and phase six has passed its
    trade-observation slot. The five-minute canary and subsequent two-hour observation have fresh
    pool/trade flow, zero open incidents/dead letters/restart/OOM and bounded current queues. Historical
    restart gaps are explicitly alpha-excluded rather than falsely reconciled.
-6. **Preflight passed — compact catch-up and bounded cleanup:** select R42 for only the stopped
-   materializer, run an oldest-first bounded canary/catch-up, then remove only exact
-   Walletscaner release artifacts/images whose recovery copies and hashes are already proven. No
-   canonical wallet evidence or B2 object may be retired in this phase.
+6. **Complete — compact catch-up and bounded cleanup:** exact R42 materializer passed a real oldest-
+   first production day with count/digest parity and now catches up autonomously at one day per
+   thirty minutes. Exact locally recoverable server artifacts and unreferenced Walletscaner images
+   were removed without touching canonical data, B2, volumes, BuildKit or any container.
 
-Fresh production pre-state: only Compose project `walletscaner` is listed; disk free is
-13,295,349,760 bytes and PostgreSQL is 19,016,645,655 bytes. Exact R42 ingestion container
-`b8d01f1c0d29...` is running with restart 0/OOM false; exact R37 materializer container
-`28e6a9099e69...` is stopped with exit 143/restart 0/OOM false. `ENABLE_LIVE_EXECUTION=false`,
-ingestion capacity is one and environment SHA-256 is `d2fa49d7db72...`. The current dump
-`memecoin_alpha_20260827T173517Z.dump` is 2,030,534,774 bytes; server sidecar/off-site marker match,
-PostgreSQL 16 archive-list passes and the same-size local generation is present. Migrations reach
-051 with zero invalid indexes. Thirty-three wallet archive days are verified; six compact receipts
-are verified, three old R37 timeout receipts are eligible retries and 27 verified days remain.
-There is no materializer backend. Inbox samples drained `27/15s -> 20/15s -> 20/15s`, dead letters
-and open discovery incidents are zero, wallet trades remained 340-359 per five minutes and current
-trade queue is zero. Rollout ledger revision 42 is completed. The next exact mutation is ledger
-revision 43 followed by a guarded one-key operations selector update from exact R37 to exact R42;
-only `wallet-evidence-materializer-scheduler` may then be recreated.
+Final production post-state: only Compose project `walletscaner` is listed; disk free is
+20,495,110,144 bytes (72% used) and PostgreSQL is 19,111,582,743 bytes. Exact R42 ingestion
+`b8d01f1c0d29...` and materializer `116e4cc4e7e3...` are running with restart 0/OOM false and live
+execution false. Ingestion capacity is one and environment SHA-256 is `4ad5b9bcc543...`. The current
+2,030,534,774-byte dump remains sidecar/off-site verified and independently present locally.
+Migrations reach 051 with zero invalid indexes. Thirty-three wallet archive days are verified;
+seven compact receipts are verified, two old retries and 26 days remain for bounded catch-up. The
+first R42 production day passed count/dual-digest parity in 112,917 ms with zero temp growth.
+Post-cleanup flow was inbox `43/14s`, dead-letter/incident `0/0`, last pool/trade ages `18/18s` and
+415 wallet trades/five minutes. Rollout ledger revision 45/SHA-256 `141c96ac8acd...` records
+`r42-storage-shadow-observation=in_progress`; its only next action is wait for autonomous catch-up
+and a clean 24-hour storage slope. No further deployment mutation is pending.
 
 ## Objective and acceptance criteria
 
@@ -2731,3 +2730,24 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
   filesystem gain were printed. Do not rerun cleanup. Next exact action is read-only inspection of
   the retained R42 and R30 image IDs, artifact absence, Compose/container state, materializer sleep
   and canonical flow; only that trailing verification remains incomplete.
+
+## R42 rollout complete; storage observation waiting at 2026-08-27 23:45 UTC
+
+- Trailing verification read the real retained identities rather than a guessed digest: current
+  R42 is `sha256:4d9cbf85ada0...` and rollback R30 is
+  `sha256:afd180aed4fbdddd...`. Every running/created Walletscaner container still resolves its image;
+  all five exact server artifacts remain absent and their independent local copies remain retained.
+- Full container state hash remains exact `d0b867d8d378...`; materializer `116e4cc4e7e3...` is
+  restart 0/OOM false in its 1,800-second sleep, and ingestion `b8d01f1c0d29...` is unchanged exact
+  R42. Only project `walletscaner` is listed.
+- Final free disk is 20,495,110,144 bytes at 72% use. PostgreSQL is 19,111,582,743 bytes; archive
+  state is chain payload 26 verified and wallet evidence 33 verified with no other status. Compact
+  state is seven verified/two retry; no materializer backend remains active after the canary.
+  Canonical post-state is inbox `43/14s`, dead-letter/open incident `0/0`, pool/trade age `18/18s`
+  and 415 wallet trades/five minutes. The current off-site backup marker still matches its sidecar.
+- Ledger revision 44 closed `r42-materializer-catch-up=completed`. Revision 45 is
+  `r42-storage-shadow-observation=in_progress`, SHA-256 `141c96ac8acd...`, with next action to wait
+  for the remaining 26 bounded days and a clean 24-hour slope. The rollout task is complete; storage
+  equilibrium, canonical retirement and alpha validation remain waiting gates, not unfinished
+  implementation. Future work must begin a new active checkpoint rather than appending mutations to
+  this completed one.

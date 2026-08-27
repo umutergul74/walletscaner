@@ -3,6 +3,35 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-27 R42 bounded ingestion/materializer rollout
+
+- **Operational — exact R42 ingestion:** `solana-ingestion` runs immutable R42
+  `sha256:4d9cbf85ada0...` from source `423559147ea6...`, live execution false, restart 0/OOM false.
+  Public discovery repair resumes are capped at 500 signatures and oversized historical intervals
+  close only as alpha-excluded. The fixed shared-host profile uses one exact-pool observation slot;
+  its 336-second canary ended at `1/1/1`, zero trade queue/dead-letter/incident and fresh flow.
+- **Operational — exact R42 compact materializer:** the same immutable image runs only the bounded
+  materializer at 0.05 CPU, 80 MiB, 64 PIDs, one day/1,800 seconds and 600 seconds per statement.
+  Its first oldest production retry completed in 112,917 ms and passed count plus two-digest parity
+  for 1,477 episodes, 1,341 open lots and 700 mature followability facts. Compact state became seven
+  verified/two retry with 26 independently verified days left; it advances one oldest day every
+  thirty minutes without a second worker.
+- **Operational — recovery and cleanup:** current dump
+  `memecoin_alpha_20260827T173517Z.dump` is 2,030,534,774 bytes; server sidecar/off-site marker,
+  PostgreSQL 16 archive-list and the independent local generation pass. Five exact release-transfer
+  artifacts had byte-identical local copies and were removed from the server. The reviewed
+  Walletscaner-only image cleanup preserved every container image plus R42 current and R30 rollback,
+  recovered 7,340,040,192 filesystem bytes and did not touch BuildKit, volumes, B2 or canonical data.
+- **Operational post-state:** only Compose project `walletscaner` is listed. Host free disk is
+  20,495,110,144 bytes (72% used), PostgreSQL is 19,111,582,743 bytes and migrations reach 051 with
+  zero invalid indexes. Final flow was inbox `43/14s`, dead-letter/open incident `0/0`, pool/trade
+  age `18/18s` and 415 wallet trades/five minutes. Ingestion and materializer are exact R42,
+  restart 0/OOM false; every non-target identity remained unchanged.
+- **Waiting — validation, not implementation:** ledger revision 45/SHA-256 `141c96ac8acd...`
+  tracks `r42-storage-shadow-observation`. Wait for 26-day compact catch-up, a clean 24-hour storage
+  slope and the existing seven-day dual-read gate before claiming equilibrium or retiring canonical
+  evidence. Paper/live and alpha delivery remain unauthorized.
+
 ## 2026-08-26 R36 archive-integrity and terminal-repair retention rollout
 
 - **Operational — R36 storage operations:** archive writer/verifier, wallet-evidence materializer,

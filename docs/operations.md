@@ -35,9 +35,11 @@ Required for the canonical production path:
 - `HELIUS_INGEST_MODE=rpc` with `HELIUS_STANDARD_TRADE_WS_ENABLED=true` for the recommended
   free-plan hybrid: broad program discovery and HTTP gap repair remain on the configured Solana
   RPC, while only market-eligible pools use Helius standard `logsSubscribe`;
-- `RPC_TRADE_MAX_ACTIVE_POOLS=3` keeps the metered WebSocket stream bounded and leaves free-plan
-  headroom for token-risk fallback/DAS calls; `SOLANA_TRADE_WS_URL` can explicitly override the
-  trade WebSocket without changing discovery;
+- `RPC_TRADE_MAX_ACTIVE_POOLS=3` is the general bounded ceiling and leaves free-plan headroom for
+  token-risk fallback/DAS calls. The current one-vCPU shared-host production profile uses `1`:
+  three slots measured 458 events/minute ingress versus 338/minute parser egress, while one slot
+  passed a sustained R42 drain canary. Do not restore three without a new throughput canary.
+  `SOLANA_TRADE_WS_URL` can explicitly override the trade WebSocket without changing discovery;
 - `RPC_TRADE_MINIMUM_OBSERVATION_HOLD_SECONDS=300` prevents candidate churn. A market-qualified pool
   can fill an empty exact-pool lane before token-risk enrichment passes, but this never makes it
   alpha-eligible. At capacity, only the oldest non-alpha-protected observation that completed the
@@ -605,8 +607,9 @@ uses:
   is ambiguous and emits nothing until a later bounded attempt can prove a below-limit boundary;
 - `RPC_TRADE_BACKFILL_PAGE_LIMIT=500` and `RPC_TRADE_MAX_BACKFILL_PAGES=4`, matching the existing
   2,000-signature queue ceiling for a bounded reconnect recovery window;
-- at most three active pools, one ordered worker per active address, 0.20 ingestion CPU and the
-  existing 160 MiB memory ceiling;
+- at most three active pools in the general profile, but one in the accepted fixed shared-host
+  profile; one ordered worker per active address, 0.20 ingestion CPU and the existing 160 MiB
+  memory ceiling;
 - a five-minute minimum observation hold. Rotation never treats the resulting partial interval as
   complete wallet-profitability evidence; the exact pool remains fail-closed after its durable gap.
 
