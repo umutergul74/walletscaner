@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:34:00Z
+updated_at_utc: 2026-08-27T20:35:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R41 canary failed the five-minute gap-repair gate and was rolled back exactly; ingestion runs R30 container d4e2eb0, R37 materializer is stopped, live execution is false, and rollout revision 34 is failed
+last_safe_checkpoint: R42 candidate passed its exact Linux focused gate but is not selected; production remains R30 container d4e2eb0 with R37 materializer stopped and rollout revision 35 test staging open
 ---
 
 # Walletscaner Work In Progress
@@ -2458,3 +2458,27 @@ ingestion selector update.
   overlay on the exact tested/recoverable R41 image, copying only the changed runtime provider and
   worker files; verify embedded hashes and run the affected Linux tests before any new rollout
   ledger phase or service mutation.
+
+## R42 isolated server gate at 2026-08-27 20:32 UTC
+
+- Fresh preflight retained 14,305,562,624 bytes free, about 1.09 GB available memory and 1.99 GB
+  free swap; no dump/restore/materializer/image-transfer job was active. Exact R30 ingestion and
+  current server/off-site backup SHA remained unchanged. Ledger revision 35 opened
+  `r42-server-test-staging=in_progress`, SHA-256 `becf8c154f2a...`.
+- The tracked-only 358,400-byte source archive has SHA-256 `ac94c8abe6ea...` and embedded commit
+  `1cbc34fd1805...`. It was uploaded through a new `.partial`, verified, atomically renamed and
+  extracted only under `/opt/walletscaner/deploy/r42-context-166313c`; production source was not
+  overlaid.
+- Minimal networkless build on exact R41 produced candidate image
+  `sha256:4d9cbf85ada0...`, linux/amd64, 463,498,358 bytes, release `storage-r42-20260827`, source
+  `423559147ea6...`. Context/image SHA-256 values match exactly for provider source, provider test
+  and worker entrypoint: `37773acc...`, `b3e6b854...`, `e0db7e55...`. R41 trade bootstrap and R39
+  materializer bytes remain unchanged in the image.
+- The first image test invocation used unsupported Vitest `--minWorkers` and was rejected before
+  test collection; its `--rm` container is not evidence. The corrected networkless 0.12-CPU,
+  384-MiB, 64-PID run passed the affected provider/supervisor/backfill/trade suite 93/93 in 43.8
+  seconds. Local typecheck/lint remain green.
+- No selector, Compose service, database, B2 object or canonical row changed. Next exact mutation is
+  close ledger revision 35 as completed, create a separate immutable R42 artifact phase, final-tag
+  this exact candidate without rebuilding, and preserve a hash-verified off-host recovery artifact
+  before any observe-only ingestion activation.
