@@ -165,6 +165,7 @@ class MemoryGapRepairStore implements DurableSolanaGapRepairStore {
       ...repair,
       collectionAttemptCount: repair.collectionAttemptCount + (phase === "collection" ? 1 : 0),
       replayAttemptCount: repair.replayAttemptCount + (phase === "replay" ? 1 : 0),
+      status: error.startsWith("gap-repair-signature-cap-") ? "failed" : repair.status,
       lastError: error
     });
     return true;
@@ -539,6 +540,61 @@ describe("StandardSolanaEventSource", () => {
       gapRepairReplayedSignatureCount: 4,
       lastGapRepairError: null
     });
+  });
+
+  it("fails a persisted replay that exceeds a lowered active repair cap without more RPC", async () => {
+    const gapRepairStore = new MemoryGapRepairStore();
+    gapRepairStore.repairs.set("persisted-over-cap", {
+      repairId: "persisted-over-cap",
+      incidentId: "incident-over-cap",
+      provider: "solana-rpc",
+      programAddress: "ProgramOverCap111",
+      cursorSignature: "captured-cursor",
+      cursorSlot: 10,
+      boundarySource: "truncation_cursor",
+      targetSignature: "repair-target",
+      targetSlot: 14,
+      status: "replaying",
+      boundaryReached: true,
+      fetchedSignatureCount: 4,
+      completedSignatureCount: 1,
+      collectionAttemptCount: 2,
+      replayAttemptCount: 1
+    });
+    let rpcCalls = 0;
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramOverCap111"],
+      cursorStore: new MemoryCursorStore(),
+      gapRepairStore,
+      gapRepairMaxSignatures: 3,
+      fetchImpl: async () => {
+        rpcCalls += 1;
+        throw new Error("over-cap resume must not call RPC");
+      }
+    });
+
+    await expect(
+      source.repairGap("ProgramOverCap111", "incident-over-cap", () => undefined, {
+        signature: "captured-cursor",
+        slot: 10,
+        source: "truncation_cursor"
+      })
+    ).resolves.toEqual({
+      repairId: "persisted-over-cap",
+      status: "blocked",
+      fetchedSignatureCount: 4,
+      completedSignatureCount: 1,
+      error: "gap-repair-signature-cap-3"
+    });
+    expect(rpcCalls).toBe(0);
+    expect(gapRepairStore.repairs.get("persisted-over-cap")).toMatchObject({
+      status: "failed",
+      replayAttemptCount: 2,
+      lastError: "gap-repair-signature-cap-3"
+    });
+    expect(source.getDiagnostics().lastGapRepairError).toBe("gap-repair-signature-cap-3");
   });
 
   it("anchors repair to the captured truncation cursor even after the live cursor advances", async () => {

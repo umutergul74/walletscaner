@@ -503,7 +503,7 @@ const discoveryGapRepairReplayLimit = boundedInteger(
 );
 const discoveryGapRepairMaxSignatures = boundedInteger(
   process.env.SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES,
-  20_000,
+  500,
   500,
   100_000
 );

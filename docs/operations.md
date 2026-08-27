@@ -643,11 +643,16 @@ per-program signature-rate window, must remain at or below the hard 2,000-signat
 still prove cursor-boundary reachability before any event is admitted as recovered.
 
 The incident repair path is separate: it stages at most 500 signatures per cycle, resumes its
-`before_signature` from PostgreSQL after restart, and caps the entire session at
-`SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES=20000`. It replays at most
+`before_signature` from PostgreSQL after restart, and caps the public instruction-filtered session
+at `SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES=500`. Public
+`getSignaturesForAddress` cannot reapply the live log predicate, so a larger default accumulates
+mostly irrelevant program traffic and cannot meet the five-minute shared-host recovery budget. It
+replays at most
 `SOLANA_DISCOVERY_GAP_REPAIR_REPLAY_LIMIT=50` oldest signatures per cycle with a 30-second default
-cooldown. This bounds RPC, CPU, RAM and database write pressure while allowing a gap larger than one
-reconnect window to converge. An unresolved transaction leaves the incident open for bounded retry.
+cooldown. A persisted collecting or replaying repair already above the active cap fails immediately
+on resume. This bounds RPC, CPU, RAM and database write pressure; an exact boundary inside the cap
+may converge, while a larger interval is retained as alpha-excluded. An unresolved transaction
+leaves the incident open for bounded retry.
 
 A signature-cap breach is terminal for that bounded repair, not permission to raise the cap until
 the database fills. After two independently fresh current-transport samples, the supervisor closes

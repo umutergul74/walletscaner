@@ -833,6 +833,27 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       };
     }
 
+    // A reviewed repair cap may be lowered after an incident has already
+    // staged signatures. Re-check the durable total before either collection
+    // or replay so a restarted worker cannot bypass the active bound and keep
+    // an infeasible historical scan consuming RPC/database capacity forever.
+    if (repair.fetchedSignatureCount > this.gapRepairMaxSignatures) {
+      const error = `gap-repair-signature-cap-${this.gapRepairMaxSignatures}`;
+      await store.recordIngestionGapRepairError(
+        repair.repairId,
+        repair.status === "replaying" ? "replay" : "collection",
+        error
+      );
+      this.diagnostics.lastGapRepairError = error;
+      return {
+        repairId: repair.repairId,
+        status: "blocked",
+        fetchedSignatureCount: repair.fetchedSignatureCount,
+        completedSignatureCount: repair.completedSignatureCount,
+        error
+      };
+    }
+
     if (repair.status === "collecting") {
       const staged: Array<{ signature: string; slot: number; positionFromHead: number }> = [];
       let before = repair.beforeSignature;
