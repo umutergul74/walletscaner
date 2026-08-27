@@ -2187,3 +2187,34 @@ blindly repeat the last mutation.
   the non-database full Linux suite concurrently with a single Vitest worker, 0.05 CPU, idle I/O,
   lowest process priority, network disabled, 512 MiB memory and 64 PIDs. PostgreSQL integration,
   image export, service activation and cleanup remain blocked on dump completion.
+
+## R41 throttled full Linux gate result at 2026-08-27 18:28 UTC
+
+- The one-shot `walletscaner-r41-full-linux-test` container finished with `exit=1`; it was removed
+  by `--rm`. This is not recorded as a passed full gate. Most suites passed, including the exact
+  R41 provider/transport/coverage path and Linux zstd archive tests, while PostgreSQL suites were
+  intentionally skipped in this networkless phase.
+- At the deliberately extreme 0.05-CPU ceiling, fixed-five-second performance cases and several
+  subprocess-based deployment tests exceeded their time budgets. Two Compose/backup scheduler
+  assertion files also failed and must not be classified as throttle artifacts without a direct
+  rerun. No production service, selector, database row or B2 object changed.
+- The daily dump remains active and reached 1,035,873,319 temporary bytes after about 52 minutes.
+  Next exact action is a single networkless rerun of only the observed failed files at 0.20 CPU,
+  512 MiB, 64 PIDs, one Vitest worker and idle I/O. This separates time-budget artifacts from real
+  candidate drift while leaving PostgreSQL integration, export and activation blocked on the dump.
+
+## R41 failed-file classification at 2026-08-27 18:31 UTC
+
+- At 0.20 CPU the two real fixed-time application/research suites passed 24/24; their earlier
+  failures were caused by the artificial 0.05-CPU ceiling, not an R41 regression.
+- The two Compose/backup assertions initially proved the candidate intentionally lacks the root
+  Compose file. With the exact commit-`5902ac0` Compose file mounted read-only, both passed 2/2.
+  Two earlier harness attempts are rejected evidence: one lacked a writable Vitest cache and one
+  overconstrained Vitest worker processes. Neither reached application assertions.
+- The remaining 11 failures across seven deploy-tool test files all report child-process status
+  `null`, because the Alpine worker runtime intentionally has no `python3`. The same files pass in
+  the Windows host gate, but a Linux Python-enabled ephemeral harness will run them after the dump;
+  they are not silently waived. The production runtime does not execute these host-side scripts.
+- No service, selector, database row, B2 object or production file changed. Next exact action is to
+  let the active dump finish, verify its checksum/custom-archive/off-site evidence, then run the
+  seven Python-backed files in a disposable Linux harness before any PostgreSQL gate or activation.
