@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T18:03:00Z
+updated_at_utc: 2026-08-27T18:07:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2150,3 +2150,18 @@ blindly repeat the last mutation.
   mutation occurred. Docker Desktop processes are stopped.
 - Do not retry blindly or request elevation inside this rollout. Resume the already ledgered server
   test path only after the daily production dump and host load finish/recover.
+
+## R41 candidate build boundary at 2026-08-27 18:07 UTC
+
+- Report-only project-scoped image retention identified 39 obsolete Walletscaner tags and Docker
+  reports 2.111 GB reclaimable image bytes. Three verified prior transfer artifacts total about
+  1.388 GB. Nothing was deleted. The 8.864-GB globally reclaimable BuildKit cache is explicitly
+  out of scope and will not be pruned because ownership cannot be isolated from the protected
+  co-tenant.
+- Minimal overlay definition commit `d916169` copies only the three R41 files onto exact tested R40;
+  its transferred Dockerfile is 784 bytes, SHA-256 `e4ae7693...`. R40 already passed the full
+  Linux 302/302 and isolated PG16 45/45 gates, while the exact R41 delta passed Linux 67/67 and host
+  full application code passed 409 tests apart from unchanged Windows-only zstd availability.
+- A candidate-only overlay build is safe during the dump because it has no package install,
+  compilation, network or large context; it must not recreate services or trigger cleanup. Final
+  test/immutable tag/activation remain blocked until the dump completes and load recovers.
