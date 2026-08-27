@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:41:00Z
+updated_at_utc: 2026-08-27T20:42:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: immutable R42 recovery is complete and ledger revision 39 opened observe-only ingestion activation; production is still exact R30 container d4e2eb0 and R37 materializer remains stopped
+last_safe_checkpoint: only ingestion now runs exact R42 container adf43a6e with all oversized repairs durably alpha-excluded and zero open incidents; revision 39 canary is still in progress and R30 remains rollback
 ---
 
 # Walletscaner Work In Progress
@@ -2517,3 +2517,19 @@ ingestion selector update.
   no-dependency/no-build recreate. Pass requires the three oversized repairs to become terminal and
   their incidents close only as alpha-excluded, no new open-incident churn, exact trade subscription
   equality, fresh flow, zero dead-letter/restart/OOM and unchanged non-target identities.
+
+## R42 observe-only ingestion service checkpoint at 2026-08-27 20:42 UTC
+
+- Guarded updater changed only ingestion selector R30 to exact R42; `.env.server` read-back SHA-256
+  is `ff0e6514258f...`. Secret-free render proved R42, live false, 0.20 CPU, 160 MiB and 128 PIDs.
+- Only ingestion was recreated. Container `adf43a6e0601...` runs exact image
+  `sha256:4d9cbf85ada0...`, restart 0/OOM false; target-external hash remained exact
+  `7391a3c65cd8...` before and after.
+- R42 immediately terminalized all three persisted oversized sessions with
+  `gap-repair-signature-cap-500`, including the already-replaying 3,668-signature CPMM session.
+  After two fresh transport samples, open incidents became zero and all three close rows explicitly
+  record `alpha_excluded_unreconciled`; reconciled close count is zero.
+- First post-close health is discovery `ok`, repair maximum 500 and trade observation `ok/active`
+  with active/configured/subscribed `1/1/1`, queue zero. Pool/trade flow remains fresh and
+  dead-letter zero. Canary is not complete until the minimum five-minute hold shows no new incident
+  churn, equality drift, restart/OOM or growing inbox backlog.
