@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:09:00Z
+updated_at_utc: 2026-08-27T20:11:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: rollout ledger revision 33 has opened R41 ingestion activation; R41 is still not selected and production remains exact R30 ingestion with R37 materializer stopped and live execution false
+last_safe_checkpoint: rollout ledger revision 33 is open and the guarded selector now renders exact R41 for ingestion, but the running ingestion container is still exact R30; R37 materializer remains stopped and live execution is false
 ---
 
 # Walletscaner Work In Progress
@@ -2360,3 +2360,17 @@ ingestion selector update.
   only `WALLETSCANER_INGEST_IMAGE`, followed by a secret-free Compose render. Only after the render
   proves R41, live false and unchanged resource limits may `solana-ingestion` be recreated with
   `--no-deps --no-build`.
+
+## R41 ingestion selector checkpoint at 2026-08-27 20:11 UTC
+
+- Guarded dry-run and apply changed only `WALLETSCANER_INGEST_IMAGE` from exact R30 to exact R41;
+  `.env.server` read back at the expected SHA-256 `b43baee037ca...`.
+- The first secret-free render probe used the wrong normalized-Compose field path (`deploy`) and
+  failed after the selector apply. It changed nothing. A bounded key inspection showed the expected
+  normalized top-level fields, and the corrected render proved image R41, live false, 0.20 CPU,
+  167,772,160-byte memory, 128 PIDs and `unless-stopped` restart.
+- The still-running ingestion container remains exact R30 ID `ee10d1074016...`; this proves no
+  implicit dependency or service recreation occurred. Next exact mutation is recreate only
+  `solana-ingestion` with exact project/file/env plus `--no-deps --no-build --force-recreate`, then
+  verify its R41 identity/resources/live flag and every non-target container ID before canary time
+  starts. Rollback is the guarded inverse selector update and R30-only recreate.
