@@ -2287,3 +2287,22 @@ blindly repeat the last mutation.
   The byte-identical R40 storage/materializer implementation retains its earlier PG16 45/45 gate.
   Next exact mutation is close rollout revision 29 as completed, then open a separate immutable
   artifact phase before final tagging/export; no production selector changes in either transition.
+
+## R41 immutable recovery artifact checkpoint at 2026-08-27 19:50 UTC
+
+- Rollout test-staging was closed as completed at revision 30; revision 31 opened
+  `r41-immutable-artifact=in_progress`. Both transitions were dry-run/read-back checked before any
+  image mutation.
+- Final tag `walletscaner-worker:storage-r41-20260827` resolves to the exact tested candidate image
+  ID `sha256:229148f8616c695cf4b9da536c892c0ee59fe2f106ee2d852b6b763f5a39465c`, linux/amd64,
+  463,434,958 bytes, with exact release/source labels. No layer was rebuilt.
+- The server exported only that tag at low CPU/I/O priority. Its 463,110,427-byte zstd artifact
+  passed `zstd -t` and has SHA-256
+  `80feee488b214fdedae26d473520e3a023deb9bc3668ca1cdad79b744c4ad2ce`.
+- A 20-Mbps transfer placed a byte-identical copy outside the repository at
+  `~/WalletscanerBackups/_release-artifacts/walletscaner-worker-storage-r41-20260827.tar.zst`;
+  local size and SHA-256 match exactly. Local Docker availability is not required for byte-level
+  recovery storage. No production selector/service changed.
+- Next exact action is close ledger revision 31 as completed, refresh the complete production
+  preflight and only then open an ingestion-only R41 activation phase. Rollback remains the exact
+  R30 tag/image/container path; operations R37 and the materializer remain unchanged/stopped.
