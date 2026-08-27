@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T18:07:00Z
+updated_at_utc: 2026-08-27T18:08:30Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2165,3 +2165,16 @@ blindly repeat the last mutation.
 - A candidate-only overlay build is safe during the dump because it has no package install,
   compilation, network or large context; it must not recreate services or trigger cleanup. Final
   test/immutable tag/activation remain blocked until the dump completes and load recovers.
+
+## R41 candidate image checkpoint at 2026-08-27 18:08 UTC
+
+- The minimal networkless overlay build completed in 1.8 seconds with a 125.28-KB context; it did
+  not install dependencies or fetch a base. Candidate
+  `walletscaner-worker:storage-r41-candidate-20260827` is exact linux/amd64 image ID
+  `sha256:229148f8616c695cf4b9da536c892c0ee59fe2f106ee2d852b6b763f5a39465c`, 463,434,958 bytes,
+  release label `storage-r41-20260827` and source label exact `5902ac0c3cdb...`.
+- A 0.02-CPU/networkless byte verifier confirmed the three R41 file SHA-256 values as
+  `9c7e0239...`, `e7115001...`, `fab4d158...`; the storage materializer remains byte-identical to
+  the fully PG16-tested R40/R39 implementation at `a64b479b...`.
+- This is only a candidate. No immutable final tag, export, selector, service, database or cleanup
+  changed. Daily `pg_dump` still gates final tests and activation.
