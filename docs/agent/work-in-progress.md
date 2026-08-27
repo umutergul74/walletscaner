@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:51:00Z
+updated_at_utc: 2026-08-26T23:53:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
@@ -2028,3 +2028,20 @@ blindly repeat the last mutation.
   the first R30 health/freshness sample plus every non-target container identity; then close ledger
   revision 27 as failed with R40 canary evidence. Local work must fix and test bootstrap atomicity
   before building a new immutable candidate.
+
+## R40 ingestion rollback completed at 2026-08-26 23:53 UTC
+
+- Post-rollback ingestion `ee10d1074016...` is exact R30, running restart 0/OOM false with live
+  execution false. All 12 non-target Walletscaner container IDs match pre-canary exactly; operations
+  remains R37 and materializer remains stopped. R30 trade lane returned to its known zero-address
+  state. Restart repair temporarily raised the canonical working set to 160, with zero dead letter;
+  no evidence was deleted.
+- Ledger revision 27 was dry-run checked and closed as failed. Revision 28 is
+  `r40-ingestion-activation=failed`, SHA-256
+  `329c14e5ee00a5b56cb91d4cf9f597b861a47e98ffad2d2af4f2a78ff4ce0d69`. Free disk is
+  14,515,924,992 bytes. R40 server artifact/image remain loaded but inactive as forensic evidence.
+- Next exact action is local only: add a directly tested bootstrap coordinator/state transition so
+  a provider-configured pool occupies the bounded lane during its awaited backfill, truncation
+  still persists before unsubscribe, and failure restores or excludes deterministically. Run
+  focused concurrency/backfill tests, type/lint, exact Linux and PostgreSQL gates, then build a new
+  immutable R41; never reactivate R40.
