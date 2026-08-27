@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:13:00Z
+updated_at_utc: 2026-08-27T20:18:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: rollout revision 33 is open and only ingestion runs exact R41 container 696e4a4f with target-external container identities unchanged; canary is not yet passed and rollback remains exact R30
+last_safe_checkpoint: R41 canary failed the five-minute gap-repair gate and was rolled back exactly; ingestion runs R30 container d4e2eb0, R37 materializer is stopped, live execution is false, and rollout revision 34 is failed
 ---
 
 # Walletscaner Work In Progress
@@ -2392,3 +2392,24 @@ ingestion selector update.
   existing recovery gate, trade state must remain internally equal across later rotations and the
   minimum five-minute hold must complete. Any unresolved/recurrent hard-gate failure triggers the
   exact R30 rollback rather than being called degraded success.
+
+## R41 ingestion canary failed and rolled back at 2026-08-27 20:18 UTC
+
+- R41 fixed the targeted scheduler race in production: successive health samples were internally
+  exact at `1/1/1`, then `2/2/2`; observation stayed `ok/active`, queue was at most three, the last
+  five-minute sample contained 593 wallet trades and dead-letter stayed zero.
+- The independent recovery gate failed. Three restart-bootstrap discovery incidents remained open
+  at 324 seconds. Durable repairs were progressing (up to 4,000 collected signatures; one entered
+  replay) but did not close inside the contractual five-minute limit. This is a real recovery-
+  throughput defect, not permission to call R41 operational.
+- Guarded dry-run/apply restored only the ingestion selector to exact R30 and returned `.env.server`
+  byte-for-byte to SHA-256 `b1e6ce998c...`. Only ingestion was recreated; container
+  `d4e2eb0b2b8b...` runs image `sha256:afd180aed4fb...`, restart 0/OOM false, 0.20 CPU, 160 MiB,
+  128 PIDs and live false. The non-target name/ID/image hash remains exact `7391a3c65cd8...`.
+- The final non-target verification command inherited a harmless CR byte after printing its exact
+  hash; a separate read-only rerun printed the same exact hash and target identity. Rollout ledger
+  revision 34 closes `r41-ingestion-activation=failed`, SHA-256 `0fc683541153...`.
+- No canonical evidence, B2 object, migration, materializer or other service changed. Next exact
+  work is source/config diagnosis of durable repair throughput and restart admission. Do not
+  reactivate R41 or the materializer until a change-proportional fix proves every supported-program
+  restart gap closes inside five minutes under the shared-host resource ceiling.
