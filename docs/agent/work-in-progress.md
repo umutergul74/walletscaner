@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:35:00Z
+updated_at_utc: 2026-08-27T20:40:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R42 candidate passed its exact Linux focused gate but is not selected; production remains R30 container d4e2eb0 with R37 materializer stopped and rollout revision 35 test staging open
+last_safe_checkpoint: immutable R42 image and server/off-host recovery artifact are exact and ledger revision 38 is completed; production remains R30 container d4e2eb0 with R37 materializer stopped
 ---
 
 # Walletscaner Work In Progress
@@ -2482,3 +2482,21 @@ ingestion selector update.
   close ledger revision 35 as completed, create a separate immutable R42 artifact phase, final-tag
   this exact candidate without rebuilding, and preserve a hash-verified off-host recovery artifact
   before any observe-only ingestion activation.
+
+## R42 immutable recovery artifact completed at 2026-08-27 20:40 UTC
+
+- Ledger revision 36 closed test staging and revision 37 opened immutable artifact staging. Final
+  tag `walletscaner-worker:storage-r42-20260827` points to the exact tested candidate image ID
+  `sha256:4d9cbf85ada0...`; no layer was rebuilt.
+- The first export invocation used zstd's unsupported `--checksum` spelling. Version 1.4.8 rejected
+  it before producing a `.partial`; the final tag was already valid and was not recreated. The
+  supported default-enabled `--check` spelling then produced a 463,001,919-byte artifact, passed
+  `zstd -t`, and has SHA-256 `435504b983c38dee2718fe8d828516b422c49834fb8a873752deba0bafd0cebc`.
+- A 20-Mbps bounded transfer created a byte-identical off-host copy at
+  `~/WalletscanerBackups/_release-artifacts/walletscaner-worker-storage-r42-20260827.tar.zst`.
+  Size and SHA were verified on the `.partial` before its exact local final rename.
+- Ledger revision 38 closes `r42-immutable-artifact=completed`, SHA-256 `99c58285b196...`. No
+  production selector/service/database/B2 state changed. Next exact action is a fresh preflight,
+  then a separately ledgered observe-only ingestion activation. Its pass condition permits only
+  durably explicit `alpha_excluded_unreconciled` historical gaps; it does not validate full alpha
+  coverage or authorize paper/live delivery.
