@@ -2635,3 +2635,12 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
   scheduler with `--no-deps --no-build --force-recreate`. Roll back the selector and stop/recreate
   exact R37 if the first oldest-day pass exceeds the existing limits, records retry/mismatch, grows
   canonical backlog, restarts/OOMs or disturbs any non-target identity.
+
+## R42 materializer catch-up opened at 2026-08-27 23:17 UTC
+
+- Local/server checkpoint and guarded-updater SHA-256 values matched exactly before use. Ledger
+  revision 43 is now `r42-materializer-catch-up=in_progress`, read-back SHA-256
+  `cfbbf76c2ed0...`; rollback remains the stopped exact-R37 materializer and R37 operations selector.
+- No environment selector, Compose service, database row, B2 object or release artifact changed in
+  this checkpoint. Next exact mutation remains the guarded dry-run/apply of only the operations
+  selector, followed by secret-free materializer render and a named-service-only recreate.
