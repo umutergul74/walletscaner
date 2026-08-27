@@ -2269,3 +2269,21 @@ blindly repeat the last mutation.
   16 network/database, run `ingestion-coverage.integration.test.ts` against the R41 candidate,
   then remove both exact test resources. R40's storage/materializer bytes and prior 45/45 PG16
   evidence remain unchanged; this direct R41 gate targets the affected coverage boundary.
+
+## R41 direct PostgreSQL 16 gate completed at 2026-08-27 19:45 UTC
+
+- A fresh PostgreSQL 16 container ran on an internal-only Docker network with no host port, 0.10
+  CPU, 256 MiB and 64 PIDs. The R41 candidate runner used 0.20 CPU/512 MiB/64 PIDs and no external
+  network path.
+- `packages/db/src/ingestion-coverage.integration.test.ts` applied the complete ordered migration
+  set to its fresh schema and passed 8/8 in 24.34 seconds. This directly covers immutable incident
+  lifecycle, oldest-first repair, exact coverage exclusion, Telegram suppression and final paper
+  admission guards at the boundary affected by R41.
+- The runner removed itself. The exact PostgreSQL container, its internal network and anonymous
+  volume `d343c751...` were then removed and independently verified absent. Production PostgreSQL
+  was never used by this test.
+- R41 now has a complete change-proportional gate: host type/lint/build, focused 67/67, Linux full
+  suite with every throttle/harness failure resolved, Linux deploy tools 19/19 and direct PG16 8/8.
+  The byte-identical R40 storage/materializer implementation retains its earlier PG16 45/45 gate.
+  Next exact mutation is close rollout revision 29 as completed, then open a separate immutable
+  artifact phase before final tagging/export; no production selector changes in either transition.
