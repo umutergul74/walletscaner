@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:52:00Z
+updated_at_utc: 2026-08-27T20:55:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R42 repaired incident churn but failed the growing-inbox gate and was rolled back exactly; ingestion runs R30 container 71a03044, R37 materializer is stopped, and ledger revision 40 is failed
+last_safe_checkpoint: ledger revision 41 is open and env renders exact R42 with one observation slot, but running ingestion is still exact R30 container 71a03044; R37 materializer remains stopped
 ---
 
 # Walletscaner Work In Progress
@@ -2566,3 +2566,20 @@ ingestion selector update.
   is backlog count/oldest age plus selector/environment/image/non-target identity. Do not transfer
   or apply the updater, open a new rollout phase or restart R42 until the R30 parser has drained the
   canary backlog to a non-growing bounded baseline.
+
+## R42 single-slot selector checkpoint at 2026-08-27 20:55 UTC
+
+- R30 drained the first canary backlog from 504 to ten with oldest age 16 seconds and dead-letter
+  zero. Its restart also opened three new high-volume repairs already at 2,000–2,500 signatures,
+  confirming the bounded R42 policy remains necessary.
+- Ledger revision 41 opened `r42-single-slot-ingestion-activation=in_progress`, SHA-256
+  `61920c0f73ba...`. The guarded updater was transferred via a new `.partial`; local, partial and
+  final server bytes are exactly 4,205 with SHA-256 `0f8f71b19253...`.
+- Capacity updater dry-run/apply changed only `RPC_TRADE_MAX_ACTIVE_POOLS` 3 to 1, moving env SHA
+  `b1e6ce998c...` to `51763f95fc71...`. Release updater then changed only ingestion R30 to R42,
+  producing final env SHA `d2fa49d7db72...`.
+- Secret-free render proves exact R42, capacity one, live false, 0.20 CPU, 160 MiB and 128 PIDs.
+  Running ingestion is still exact R30 container `71a03044...`, proving neither update implicitly
+  recreated a service. Next exact mutation is ingestion-only no-dependency/no-build recreate, then
+  a fresh five-minute canary. Rollback restores selector R30 and capacity three with both guarded
+  inverse updates if the single-slot throughput gate still fails.
