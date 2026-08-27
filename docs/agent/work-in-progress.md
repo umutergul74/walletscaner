@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T17:57:32Z
+updated_at_utc: 2026-08-27T18:02:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2131,3 +2131,13 @@ blindly repeat the last mutation.
 - Next exact action is read-only load recovery sampling. Only after load1 is below 1.0, run the full
   networkless non-DB Linux suite under the same hard resource boundary, then open fresh isolated
   PostgreSQL gates one at a time; do not overlap tests or production maintenance.
+
+## Local Docker repair checkpoint at 2026-08-27 18:02 UTC
+
+- Production daily `pg_dump` is currently active; no further server test/build may overlap it.
+- Docker Desktop's already downloaded in-place updater is version 4.88.1.237512, 180,802,992 bytes,
+  and has a valid Docker Inc Authenticode signature. Installed version is the broken 4.85.0.235549.
+- Next local action is the documented `update --quiet --accept-license` operation with Docker
+  processes stopped. This is not uninstall/factory-reset and must preserve all images, volumes and
+  the populated PostgreSQL clone. Afterward verify engine version plus the previously known image
+  and clone identities before using it; if any data identity is absent, stop rather than recreate.
