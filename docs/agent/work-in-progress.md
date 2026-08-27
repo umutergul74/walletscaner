@@ -2671,3 +2671,28 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
   PostgreSQL backend activity and the oldest compact receipt. The next exact action is observe the
   first post-delay R42 pass for the eligible 2026-07-12 retry, then verify parity receipt, runtime,
   WAL/temp/database deltas, canonical backlog, resource ceiling and every non-target identity.
+
+## R42 production materializer canary passed at 2026-08-27 23:32 UTC
+
+- The first delayed R42 run claimed only the oldest eligible 2026-07-12 retry and completed one
+  day with `processed=1 / verified=1 / failed=0` in 112,917 ms. Its largest phase was bounded
+  episode reconciliation at 27,678 ms; every phase stayed far below the existing 600-second
+  statement and 1,800-second run limits.
+- The production snapshot matched source and compact facts exactly by both row count and two
+  deterministic digests: 1,477 episodes, 1,341 open lots and 700 mature followability rows. The
+  receipt moved from old R37 `retry` to `verified`; compact state is now seven verified, two retry
+  and 26 verified archive days pending. There is no active materializer backend after the run.
+- Across the broad pre-start-to-post-run window, database size moved 19,045,792,791 to
+  19,099,622,423 bytes (+53,829,632), cumulative temp bytes did not change and cumulative WAL moved
+  724,784,979,914 to 725,193,933,889 (+408,953,975). The WAL window includes concurrent ingestion
+  and wallet-alpha writers and is not attributed solely to materialization. Compact totals moved
+  4,684/3,521/4,021 to 6,113/4,830/4,721 episode/open-lot/followability facts.
+- The target remained exact R42, restart 0/OOM false and entered the reviewed 1,800-second sleep at
+  about 1.23 MiB. PostgreSQL and ingestion remained inside their limits; normalized non-target hash
+  stayed exact `3072723b0af3...`. Post-run inbox samples drained `17/15s -> 14/12s -> 8/11s`;
+  wallet trades stayed fresh, with zero open incident and zero inbox dead letter.
+- The bounded production materializer is now operational and will catch up one oldest day every
+  thirty minutes; completing 26 current days is a waiting condition, not permission to increase
+  concurrency or start a second worker. Next exact phase is report-only Walletscaner release image
+  cleanup plus exact artifact recovery-copy proof. No canonical or B2 evidence retirement is part
+  of that cleanup.
