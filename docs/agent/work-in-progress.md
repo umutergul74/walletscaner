@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T21:00:00Z
+updated_at_utc: 2026-08-27T23:15:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: single-slot R42 ingestion canary passed and ledger revision 42 is completed; exact R42 container b8d01f1c runs live-false while R37 materializer remains stopped
+last_safe_checkpoint: R42 materializer preflight passed without mutation; ledger revision 42 remains completed, exact R42 ingestion is healthy and exact R37 materializer remains stopped
 ---
 
 # Walletscaner Work In Progress
@@ -12,41 +12,44 @@ This is the durable resume point for an interrupted multi-step task. It contains
 does not grant production authority. On resume, verify every recorded fact before continuing; never
 blindly repeat the last mutation.
 
-## Resume dashboard — 2026-08-27 20:07 UTC
+## Resume dashboard — 2026-08-27 23:15 UTC
 
-This task has six bounded phases. Four are complete, phase five is ready to start and phase six has
-not started:
+This task has six bounded phases. Five are complete and phase six has passed its read-only preflight:
 
 1. **Complete — root cause:** R40 proved the trade-observation lane can collect wallet trades, but
    also exposed a real async bootstrap race: three provider subscriptions could be configured/ACKed
    while the scheduler reported only two occupied slots.
-2. **Complete — source repair:** commit `5902ac0` reserves scheduler occupancy synchronously,
-   coalesces duplicate bootstrap and fails closed through exclusion/provider errors.
-3. **Complete — regression evidence:** focused 67/67, host type/lint/build, classified Linux suite,
-   Linux deploy tools 19/19, fresh PostgreSQL 16 ingestion gate 8/8, and byte-identical compact
-   materializer PostgreSQL evidence all pass.
+2. **Complete — source repairs:** R41 reserves scheduler occupancy synchronously; R42 also caps
+   persisted public-RPC repair sessions at the active 500-signature policy instead of resuming
+   unbounded historical scans.
+3. **Complete — regression evidence:** the affected provider/supervisor/trade gate is 93/93;
+   typecheck and ESLint pass. The byte-identical R39 materializer passed 47/47 PostgreSQL 16 storage
+   gates plus populated first/no-op canaries with exact parity and bounded WAL/temp/runtime.
 4. **Complete — recovery/artifact:** the current 27-August dump is server-verified and independently
-   off-site verified; immutable R41 image/artifact/local recovery copy have exact recorded identities.
-5. **Ready — ingestion-only production canary:** atomically select R41 for only
-   `solana-ingestion`, recreate no dependency, then hold at least five minutes across scheduler
-   rotations. Pass requires stable active/configured/ACK equality, fresh wallet trades, no growing
-   inbox/dead-letter and zero unresolved coverage incidents. Any hard-gate failure rolls only this
-   service back to exact R30.
-6. **Pending — compact catch-up and bounded cleanup:** only after phase five passes, select R41 for
-   only the stopped materializer, run an oldest-first bounded canary/catch-up, then remove only exact
+   off-site verified; immutable R42 image/artifact/local recovery copy have exact recorded identities.
+5. **Complete — ingestion-only production canary:** exact R42 runs only `solana-ingestion` with one
+   trade-observation slot. The five-minute canary and subsequent two-hour observation have fresh
+   pool/trade flow, zero open incidents/dead letters/restart/OOM and bounded current queues. Historical
+   restart gaps are explicitly alpha-excluded rather than falsely reconciled.
+6. **Preflight passed — compact catch-up and bounded cleanup:** select R42 for only the stopped
+   materializer, run an oldest-first bounded canary/catch-up, then remove only exact
    Walletscaner release artifacts/images whose recovery copies and hashes are already proven. No
    canonical wallet evidence or B2 object may be retired in this phase.
 
 Fresh production pre-state: only Compose project `walletscaner` is listed; disk free is
-14,314,131,456 bytes; PostgreSQL is 18,464,439,319 bytes; inbox unresolved/dead-letter is 12/0;
-archive dead-letter is zero; open discovery incidents are zero; newest pool/wallet trade ages are
-18/97 seconds. Ingestion is exact R30 container `ee10d1074016...`; materializer is exact R37 stopped
-with exit 143; `ENABLE_LIVE_EXECUTION=false`. R41 resolves to image
-`sha256:229148f8616c...`, source `5902ac0c3cdb...`. Rollout ledger revision 32 is completed and its
-next action is the R41 ingestion activation. An accidental read-only Cartesian preflight query was
-found as PostgreSQL PID 284274, explicitly terminated, and independently verified absent; it made
-no data change. The next exact mutation is ledger revision 33 plus the guarded one-key R30-to-R41
-ingestion selector update.
+13,295,349,760 bytes and PostgreSQL is 19,016,645,655 bytes. Exact R42 ingestion container
+`b8d01f1c0d29...` is running with restart 0/OOM false; exact R37 materializer container
+`28e6a9099e69...` is stopped with exit 143/restart 0/OOM false. `ENABLE_LIVE_EXECUTION=false`,
+ingestion capacity is one and environment SHA-256 is `d2fa49d7db72...`. The current dump
+`memecoin_alpha_20260827T173517Z.dump` is 2,030,534,774 bytes; server sidecar/off-site marker match,
+PostgreSQL 16 archive-list passes and the same-size local generation is present. Migrations reach
+051 with zero invalid indexes. Thirty-three wallet archive days are verified; six compact receipts
+are verified, three old R37 timeout receipts are eligible retries and 27 verified days remain.
+There is no materializer backend. Inbox samples drained `27/15s -> 20/15s -> 20/15s`, dead letters
+and open discovery incidents are zero, wallet trades remained 340-359 per five minutes and current
+trade queue is zero. Rollout ledger revision 42 is completed. The next exact mutation is ledger
+revision 43 followed by a guarded one-key operations selector update from exact R37 to exact R42;
+only `wallet-evidence-materializer-scheduler` may then be recreated.
 
 ## Objective and acceptance criteria
 
@@ -2603,3 +2606,32 @@ ingestion selector update.
   archive coverage, statement/host headroom, current flow and R37 stopped identity. If safe, open a
   new ledger phase, change only operations selector R37 to exact R42, recreate/start only the
   materializer and observe its oldest-first bounded progress before any release-artifact cleanup.
+
+## R42 materializer preflight passed at 2026-08-27 23:15 UTC
+
+- Resume reconciliation matched source HEAD `f914d82`, the four preserved local transfer remnants,
+  server ledger revision 42/SHA-256 `324c90ebd677...`, environment SHA-256 `d2fa49d7db72...`, exact
+  R42 ingestion container `b8d01f1c0d29...` and exact stopped R37 materializer container
+  `28e6a9099e69...`. No interrupted selector, container or database mutation was found.
+- Only Compose project `walletscaner` is listed. Host free space is 13,295,349,760 bytes, available
+  memory about 1.12 GB and free swap 1.99 GB. No dump, restore, image transfer or materializer job is
+  active. The running backup scheduler is sleeping, not producing a dump.
+- Current recovery generation `memecoin_alpha_20260827T173517Z.dump` is 2,030,534,774 bytes. Its
+  server SHA sidecar and off-site acknowledgement match, PostgreSQL 16 `pg_restore --list` passes,
+  and a same-size independently pulled local dump plus marker/sidecar are present.
+- PostgreSQL is 19,016,645,655 bytes, migration 051 is latest and invalid-index count is zero.
+  Wallet archive state is 33 verified/zero pending/dead-letter. Compact state is six verified,
+  three old R37 timeout retries and 27 verified days not yet compacted; oldest work is the eligible
+  2026-07-12 retry. No materializer backend is active.
+- Exact R42 ingestion remains live-false/restart-zero/OOM-false with discovery/trade observation
+  `ok`, one active/configured/subscribed lane, zero current trade queue/drop and zero open incident.
+  Its cumulative queue-pressure count is one from a completed rotation burst; no event was dropped.
+  Canonical inbox samples over one minute drained and held at `27/15s -> 20/15s -> 20/15s`, with
+  per-minute processing meeting ingress. Wallet trade flow stayed fresh at 340-359 rows/five minutes.
+- This checkpoint authorizes no canonical retirement or B2 deletion. Next exact mutation is create
+  ledger revision 43 `r42-materializer-catch-up=in_progress`, dry-run/apply only
+  `WALLETSCANER_OPERATIONS_IMAGE` from `walletscaner-worker:storage-r37-20260826` to
+  `walletscaner-worker:storage-r42-20260827`, render the named service and recreate only that stopped
+  scheduler with `--no-deps --no-build --force-recreate`. Roll back the selector and stop/recreate
+  exact R37 if the first oldest-day pass exceeds the existing limits, records retry/mismatch, grows
+  canonical backlog, restarts/OOMs or disturbs any non-target identity.
