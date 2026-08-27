@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T18:08:30Z
+updated_at_utc: 2026-08-27T18:10:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2178,3 +2178,12 @@ blindly repeat the last mutation.
   the fully PG16-tested R40/R39 implementation at `a64b479b...`.
 - This is only a candidate. No immutable final tag, export, selector, service, database or cleanup
   changed. Daily `pg_dump` still gates final tests and activation.
+
+## R41 full Linux gate resource decision at 2026-08-27 18:10 UTC
+
+- The active dump produced only 618,157,933 bytes after about 33 minutes, so waiting for it before
+  every CPU-only test would likely consume more than another hour of the short disk runway.
+- Candidate probing confirmed both `/bin/nice` and `/bin/ionice`. It is therefore safe to run only
+  the non-database full Linux suite concurrently with a single Vitest worker, 0.05 CPU, idle I/O,
+  lowest process priority, network disabled, 512 MiB memory and 64 PIDs. PostgreSQL integration,
+  image export, service activation and cleanup remain blocked on dump completion.
