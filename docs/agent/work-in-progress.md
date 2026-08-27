@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T17:43:08Z
+updated_at_utc: 2026-08-27T17:52:42Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2075,3 +2075,28 @@ blindly repeat the last mutation.
   is 67/67; root typecheck and lint pass; `git diff --check` passes. No production operation or
   schema change occurred. Next exact action is commit this coherent local fix, then run the full
   application and disposable PostgreSQL 16 gates before creating an immutable R41 artifact.
+
+## R41 host gates and server preflight at 2026-08-27 17:52 UTC
+
+- Source fix is committed as `5902ac0`. Host full tests produced 409 pass / 47 intentional DB
+  skips and only the known three Windows `spawn zstd ENOENT` failures; the production workspace
+  build passed. Focused Linux-independent tests, typecheck and lint remain green.
+- Local Docker Desktop 4.85.0 cannot currently start because its own inference/secrets Unix-socket
+  listeners fail on Windows. Model Runner was disabled using its documented setting and two stale
+  zero-byte runtime sockets were reversibly renamed, not deleted; the defect recreates a fresh
+  inaccessible socket. No Docker image, volume or populated PostgreSQL clone was reset/deleted.
+- Read-only production preflight shows only the Walletscaner Compose project. Eleven intended
+  services are running; operations/materializer remains stopped. Ingestion container
+  `ee10d1074016...` is exact R30, restart 0/OOM false/live false. The complete sorted Walletscaner
+  container inventory hashes to `1658ee2f574cf005d5b200344f418b11121f88ec98f8a8f0150af5b9b1feb574`.
+- PostgreSQL is about 18.16 GB and disk free is 13,760,401,408 bytes. Current operational evidence
+  reports about +0.80 GB/day database growth, +1.25 GB/day recent disk consumption and only 2.15
+  days of conservative runway above the 8-GiB reserve. Dead letters are zero, discovery is live,
+  wallet evidence archive is caught up through 24 August, but the stopped compact materializer has
+  27 pending days and three mismatch rows. The latest server dump remains the verified/off-site
+  acknowledged `memecoin_alpha_20260826T173517Z.dump`, 1,936,729,703 bytes, SHA-256 `5bb6961e...`.
+- Because local Docker is unavailable and storage runway is now short, the next exact step is an
+  isolated server test staging phase, not a production-service change. Record ledger revision 29,
+  stage only a hash-verified `git archive` of commit `5902ac0`, and use the already verified R40
+  Linux image as a read-only base with 0.1 CPU/bounded memory/network disabled. Do not recreate any
+  Compose service or build a final image until those tests pass and load remains safe.
