@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:55:00Z
+updated_at_utc: 2026-08-27T21:00:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: ledger revision 41 is open and env renders exact R42 with one observation slot, but running ingestion is still exact R30 container 71a03044; R37 materializer remains stopped
+last_safe_checkpoint: single-slot R42 ingestion canary passed and ledger revision 42 is completed; exact R42 container b8d01f1c runs live-false while R37 materializer remains stopped
 ---
 
 # Walletscaner Work In Progress
@@ -2583,3 +2583,23 @@ ingestion selector update.
   recreated a service. Next exact mutation is ingestion-only no-dependency/no-build recreate, then
   a fresh five-minute canary. Rollback restores selector R30 and capacity three with both guarded
   inverse updates if the single-slot throughput gate still fails.
+
+## R42 single-slot ingestion canary passed at 2026-08-27 21:00 UTC
+
+- Only ingestion was recreated as container `b8d01f1c0d29...` on exact R42 image
+  `sha256:4d9cbf85ada0...`, capacity one, live false, restart 0/OOM false. Non-target hash remained
+  exact `7391a3c65cd8...`.
+- The three new R30 restart repairs became terminal cap-500 and closed only as alpha-excluded.
+  Across the 336-second hold, discovery/observation became and stayed `ok`; active/configured/
+  subscribed stayed bounded and exact at `1/1/1`; trade queue ended zero; no new incident opened.
+- The startup inbox burst peaked at 204 with 39-second oldest age, then drained through 150/56,
+  53/21 and finally 42/15. Dead-letter and parser error counts stayed zero. Pool/trade ages ended
+  20/17 seconds and 676 wallet trades were written in the final five-minute window. Target resource
+  sample was about 11.5% CPU and 68 MiB against its 20%/160-MiB limits.
+- Ledger revision 42 closes `r42-single-slot-ingestion-activation=completed`, SHA-256
+  `324c90ebd677...`. This is an operational observe-only collector with explicit excluded restart
+  intervals, not validated full alpha coverage. Paper/live delivery remains unauthorized.
+- Next exact phase is read-only materializer preflight: refresh compact statuses, verified wallet
+  archive coverage, statement/host headroom, current flow and R37 stopped identity. If safe, open a
+  new ledger phase, change only operations selector R37 to exact R42, recreate/start only the
+  materializer and observe its oldest-first bounded progress before any release-artifact cleanup.
