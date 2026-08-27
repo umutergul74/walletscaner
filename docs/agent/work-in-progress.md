@@ -2252,3 +2252,20 @@ blindly repeat the last mutation.
 - Next exact action is wait for load1 below 1.0, then run the seven Python-backed deploy-tool files
   in an ephemeral network-detached R41 harness. PostgreSQL tests and activation remain separate,
   serial gates.
+
+## R41 Linux deploy-tool gate completed at 2026-08-27 19:37 UTC
+
+- An ephemeral R41 candidate container installed Python 3.14.7 under a 0.10-CPU/384-MiB/64-PID
+  boundary. Before tests its Docker bridge was disconnected and the inspected network map was
+  exactly empty. No package or layer was added to the candidate/release image.
+- At 0.10 CPU, 18/19 Python-backed deploy-tool tests passed; the only failure was the first release
+  checkpoint case exceeding Vitest's fixed five-second timeout after 8.4 seconds. The same file
+  passed 3/3 at 0.20 CPU in the still-networkless container. Combined Linux result is 19/19.
+- The exact ephemeral container was removed and its absence verified. No production service,
+  selector, database or B2 state changed. This closes every non-PostgreSQL failure from the
+  throttled full Linux suite: real application tests, Compose/backup assertions and deploy tools
+  all pass in their required runtime harnesses.
+- Next exact action is allow host load to recover, create one internal-only disposable PostgreSQL
+  16 network/database, run `ingestion-coverage.integration.test.ts` against the R41 candidate,
+  then remove both exact test resources. R40's storage/materializer bytes and prior 45/45 PG16
+  evidence remain unchanged; this direct R41 gate targets the affected coverage boundary.
