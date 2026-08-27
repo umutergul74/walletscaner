@@ -2644,3 +2644,16 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
 - No environment selector, Compose service, database row, B2 object or release artifact changed in
   this checkpoint. Next exact mutation remains the guarded dry-run/apply of only the operations
   selector, followed by secret-free materializer render and a named-service-only recreate.
+
+## R42 operations selector checkpoint at 2026-08-27 23:19 UTC
+
+- The hash-locked updater dry-run and apply changed only `WALLETSCANER_OPERATIONS_IMAGE` from exact
+  R37 to exact R42. Environment SHA-256 moved from `d2fa49d7db72...` to `4ad5b9bcc543...`;
+  ingestion remains R42, observation capacity remains one and live execution remains false.
+- Secret-free rendered materializer state is exact R42, one day per run, 1,800-second run,
+  600,000-ms statement timeout, 0.05 CPU, 80 MiB and 64 PIDs. The existing container is still the
+  stopped exact R37 ID `28e6a9099e69...`, proving the selector update did not implicitly start or
+  recreate anything.
+- Next exact mutation is only the named materializer no-dependency/no-build force recreate under
+  profile `archive-scheduled`; immediately verify image, limits, restart/OOM/live state and
+  non-target identity before waiting through its default 600-second initial delay.
