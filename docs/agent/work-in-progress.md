@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:07:00Z
+updated_at_utc: 2026-08-27T20:09:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R41 is fully tested and recoverable but not selected; production is exact R30 ingestion, R37 materializer stopped, live execution false, with a current verified/off-site dump and no open coverage incident
+last_safe_checkpoint: rollout ledger revision 33 has opened R41 ingestion activation; R41 is still not selected and production remains exact R30 ingestion with R37 materializer stopped and live execution false
 ---
 
 # Walletscaner Work In Progress
@@ -2342,3 +2342,21 @@ ingestion selector update.
 - Next exact action is close ledger revision 31 as completed, refresh the complete production
   preflight and only then open an ingestion-only R41 activation phase. Rollback remains the exact
   R30 tag/image/container path; operations R37 and the materializer remain unchanged/stopped.
+
+## R41 ingestion activation opened at 2026-08-27 20:09 UTC
+
+- The resume dashboard and fresh read-only preflight were committed as `bc68bb6`. The stale
+  accidental read-only Cartesian query was terminated by exact PID and verified absent before this
+  phase; no data changed.
+- Local/server SHA-256 values match for both guarded release tools. The image updater dry-run proves
+  a one-key transition from exact R30 to exact R41, with `.env.server` expected before/after SHA-256
+  `b1e6ce998c...` / `b43baee037...`.
+- Rollout ledger revision 33 is now `r41-ingestion-activation=in_progress`, read-back SHA-256
+  `e8c871960944...`. Its rollback ref is exact R30 image/container plus stopped R37 materializer.
+  A trailing CRLF in the remote here-document caused only the final human-readable Python print to
+  exit nonzero after the ledger read-back had already printed revision 33; the atomic ledger apply
+  and SHA verification completed successfully and must not be repeated.
+- No selector or service has changed yet. Next exact mutation is guarded updater dry-run/apply for
+  only `WALLETSCANER_INGEST_IMAGE`, followed by a secret-free Compose render. Only after the render
+  proves R41, live false and unchanged resource limits may `solana-ingestion` be recreated with
+  `--no-deps --no-build`.
