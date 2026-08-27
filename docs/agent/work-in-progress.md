@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T17:52:42Z
+updated_at_utc: 2026-08-27T17:54:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2100,3 +2100,16 @@ blindly repeat the last mutation.
   stage only a hash-verified `git archive` of commit `5902ac0`, and use the already verified R40
   Linux image as a read-only base with 0.1 CPU/bounded memory/network disabled. Do not recreate any
   Compose service or build a final image until those tests pass and load remains safe.
+
+## R41 isolated server test staging opened at 2026-08-27 17:54 UTC
+
+- A tracked-only `git archive` of exact source commit `5902ac0` was created outside the repository:
+  855,531 bytes, SHA-256 `2019e3bc5c7081825503bba29f3f74bd49916dc7e4e09a3f53b3990e1a74e207`.
+  It contains no untracked remnants, local credentials or production environment files.
+- The production rollout ledger was dry-run checked from revision 28 and atomically advanced to
+  revision 29, phase `r41-server-test-staging=in_progress`; read-back file SHA-256 is
+  `643a0ea6c59836267c107291fd47dda0fb2a1ec3f4f09e0e82ea2526e8c6426c`. Rollback remains no Compose
+  change: exact R30 ingestion, R37 materializer stopped.
+- No artifact has been uploaded and no container has been started in this phase yet. Next exact
+  action is upload to a new `.partial`, verify bytes/SHA, rename to the final staging name, extract
+  under a new isolated directory, then run the networkless R40-base Linux test with 0.1 CPU.
