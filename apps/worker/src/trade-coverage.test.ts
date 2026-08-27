@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activateTradeSubscription,
+  bootstrapTradeSubscription,
   excludeTradeCoverage,
   TradeCoverageReleaseCoordinator,
   type MutableTradeCoverageState
@@ -17,6 +18,97 @@ function pool(): MutableTradeCoverageState {
 }
 
 describe("trade coverage state", () => {
+  it("occupies the slot before awaited provider bootstrap and coalesces duplicate admission", async () => {
+    const state = pool();
+    state.subscribedToBuys = false;
+    state.everSubscribedToBuys = false;
+    let finishBootstrap!: () => void;
+    const providerBootstrap = new Promise<void>((resolve) => {
+      finishBootstrap = resolve;
+    });
+    let subscribeCount = 0;
+    const first = bootstrapTradeSubscription(state, 1_777_500_000_000, {
+      subscribe: () => {
+        subscribeCount += 1;
+        return providerBootstrap;
+      },
+      failClosed: async () => undefined
+    });
+
+    expect(state).toMatchObject({
+      subscribedToBuys: true,
+      everSubscribedToBuys: true,
+      observationSubscribedAtMs: 1_777_500_000_000
+    });
+    await expect(
+      bootstrapTradeSubscription(state, 1_777_500_000_001, {
+        subscribe: async () => {
+          subscribeCount += 1;
+        },
+        failClosed: async () => undefined
+      })
+    ).resolves.toBe("already-active");
+    expect(subscribeCount).toBe(1);
+
+    finishBootstrap();
+    await expect(first).resolves.toBe("activated");
+  });
+
+  it("does not reactivate coverage excluded by the awaited provider backfill", async () => {
+    const state = pool();
+    state.subscribedToBuys = false;
+    state.everSubscribedToBuys = false;
+
+    await expect(
+      bootstrapTradeSubscription(state, 1_777_500_000_000, {
+        subscribe: async () => {
+          excludeTradeCoverage(
+            state,
+            "rpc-trade-backfill-cursorless-initial-limit",
+            "2026-08-27T17:40:00.000Z"
+          );
+        },
+        failClosed: async () => undefined
+      })
+    ).resolves.toBe("excluded-during-bootstrap");
+    expect(state).toMatchObject({
+      subscribedToBuys: false,
+      tradeCoverageComplete: false,
+      tradeCoverageGapReason: "rpc-trade-backfill-cursorless-initial-limit"
+    });
+  });
+
+  it("runs durable fail-closed handling while a failed bootstrap still occupies the slot", async () => {
+    const state = pool();
+    state.subscribedToBuys = false;
+    state.everSubscribedToBuys = false;
+    const order: string[] = [];
+
+    await expect(
+      bootstrapTradeSubscription(state, 1_777_500_000_000, {
+        subscribe: async () => {
+          order.push("provider-failed");
+          throw new Error("provider unavailable");
+        },
+        failClosed: async () => {
+          order.push("fail-closed");
+          expect(state.subscribedToBuys).toBe(true);
+          excludeTradeCoverage(
+            state,
+            "rpc-trade-subscription-bootstrap-failed",
+            "2026-08-27T17:40:00.000Z"
+          );
+        }
+      })
+    ).rejects.toThrow("provider unavailable");
+    expect(order).toEqual(["provider-failed", "fail-closed"]);
+    expect(state).toMatchObject({
+      subscribedToBuys: false,
+      tradeCoverageComplete: false,
+      tradeCoverageGapReason: "rpc-trade-subscription-bootstrap-failed"
+    });
+  });
+
   it("fails a subscribed pool closed and preserves the first gap evidence", () => {
     const state = pool();
 

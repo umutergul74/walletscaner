@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-26T23:53:00Z
+updated_at_utc: 2026-08-27T17:43:08Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R36 is operational and the discovery gap is closed; compact catch-up exposed timeout rows mislabeled as parity mismatches; no canonical retirement is enabled
+last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
 ---
 
 # Walletscaner Work In Progress
@@ -2045,3 +2045,33 @@ blindly repeat the last mutation.
   still persists before unsubscribe, and failure restores or excludes deterministically. Run
   focused concurrency/backfill tests, type/lint, exact Linux and PostgreSQL gates, then build a new
   immutable R41; never reactivate R40.
+
+## R41 local bootstrap-atomicity implementation opened at 2026-08-27 17:39 UTC
+
+- Resume reconciliation confirmed commit `67b4c8e`, a clean tracked worktree and only the four
+  preserved historical partial artifact remnants. The R40 rollback facts above remain current;
+  production has not been mutated in this resumed phase.
+- The exact failure path is now source-confirmed. `StandardSolanaEventSource.subscribeAddress`
+  configures/sends the provider subscription before awaiting its bounded per-address backfill,
+  whereas `watch-solana.subscribePool` marked `subscribedToBuys` only after that await. Provider
+  configured/ACK counts could therefore be three while scheduler occupancy was two; the repeated
+  `2/3/3 -> 3/3/3` rotations observed in R40 were real state races, not an alert threshold defect.
+- The smallest intended fix is local only: reserve the scheduler slot synchronously before the
+  awaited provider bootstrap, directly test that in-flight state, and retain the existing durable
+  fail-closed truncation order. Provider bootstrap errors must also close/exclude the slot
+  deterministically rather than leave a phantom subscription. No thresholds, alpha gates,
+  migrations, production selectors or retention policy will change in this step.
+
+## R41 bootstrap-atomicity implementation checkpoint at 2026-08-27 17:43 UTC
+
+- `bootstrapTradeSubscription` now marks the bounded slot occupied before invoking the provider's
+  async subscribe/backfill operation. Duplicate admission coalesces on that visible state. A
+  truncation that durably excludes coverage during the await is not reactivated afterward.
+- RPC provider bootstrap failure enters `releaseRpcTradeObservation` while the slot is still
+  occupied. That preserves the existing `persist gap -> unsubscribe` ordering; if both provider
+  bootstrap and durable release fail, both failures are retained in an `AggregateError` and the
+  release coordinator keeps/restores the subscription instead of silently losing coverage.
+- New concurrency/exclusion/failure tests pass. Focused provider/transport/scheduler/coverage gate
+  is 67/67; root typecheck and lint pass; `git diff --check` passes. No production operation or
+  schema change occurred. Next exact action is commit this coherent local fix, then run the full
+  application and disposable PostgreSQL 16 gates before creating an immutable R41 artifact.

@@ -61,7 +61,7 @@ import {
   fetchSolanaSignatureStatus
 } from "./discovery-supervisor.js";
 import {
-  activateTradeSubscription,
+  bootstrapTradeSubscription,
   TradeCoverageReleaseCoordinator
 } from "./trade-coverage.js";
 import {
@@ -2434,6 +2434,22 @@ async function subscribePool(pool: TrackedPool, backfill = false): Promise<boole
   ) {
     return false;
   }
+  if (tradeIngestMode === "rpc") {
+    const result = await bootstrapTradeSubscription(pool, Date.now(), {
+      subscribe: async () => {
+        if (!liveTradeSource) return;
+        await liveTradeSource.subscribeAddress(pool.poolAddress, [], backfill);
+      },
+      failClosed: async () => {
+        await releaseRpcTradeObservation(
+          pool,
+          "rpc-trade-subscription-bootstrap-failed",
+          new Date()
+        );
+      }
+    });
+    return result === "activated";
+  }
   if (liveTradeSource) {
     await liveTradeSource.subscribeAddress(
       pool.poolAddress,
@@ -2441,10 +2457,12 @@ async function subscribePool(pool: TrackedPool, backfill = false): Promise<boole
       tradeIngestMode === "transaction-subscribe" || backfill
     );
   }
-  if (!activateTradeSubscription(pool)) {
+  if (!pool.tradeCoverageComplete) {
     liveTradeSource?.unsubscribeAddress(pool.poolAddress);
     return false;
   }
+  pool.subscribedToBuys = true;
+  pool.everSubscribedToBuys = true;
   pool.observationSubscribedAtMs ??= Date.now();
   return true;
 }
