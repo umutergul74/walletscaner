@@ -2715,3 +2715,19 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
 - After deletion, verify all five server paths absent, R42/R30/running image IDs present, every
   container identity/state/restart/OOM value unchanged, materializer still sleeping, current flow
   healthy and filesystem gain consistent with the exact artifact bytes plus project-scoped layers.
+
+## R42 bounded cleanup applied; trailing assertion pending at 2026-08-27 23:38 UTC
+
+- All five exact, locally recoverable server artifacts were removed and independently verified
+  absent. The reviewed project-scoped script removed only its report-listed unreferenced
+  `walletscaner-worker` tags/layers; current/running/local images and the explicit R30 rollback tag
+  were reported kept. No global prune, BuildKit, volume, container, database or B2 command ran.
+- Free filesystem bytes moved 13,157,826,560 to 20,497,866,752, a 7,340,040,192-byte gain. The
+  complete Walletscaner container identity/state/restart/OOM hash remained exactly
+  `d0b867d8d378...` before and after.
+- The compound command then exited 1 at its first read-only image assertion because the checkpoint
+  recorded only R30 prefix `afd180aed4fb...` and the command used an unverified guessed suffix for
+  the full digest. This occurred after cleanup completed and after the unchanged container hash and
+  filesystem gain were printed. Do not rerun cleanup. Next exact action is read-only inspection of
+  the retained R42 and R30 image IDs, artifact absence, Compose/container state, materializer sleep
+  and canonical flow; only that trailing verification remains incomplete.
