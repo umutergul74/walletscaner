@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T17:54:00Z
+updated_at_utc: 2026-08-27T17:57:32Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2113,3 +2113,21 @@ blindly repeat the last mutation.
 - No artifact has been uploaded and no container has been started in this phase yet. Next exact
   action is upload to a new `.partial`, verify bytes/SHA, rename to the final staging name, extract
   under a new isolated directory, then run the networkless R40-base Linux test with 0.1 CPU.
+
+## R41 focused Linux server gate at 2026-08-27 17:57 UTC
+
+- The `.partial` upload was verified at exactly 855,531 bytes and SHA-256 `2019e3bc...` before an
+  atomic rename. `git get-tar-commit-id` independently read exact commit
+  `5902ac0c3cdbca48b01a2b0d26fe3c757cfef0a0` from the transferred archive. It was extracted only
+  under `/opt/walletscaner/deploy/r41-source-5902ac0`; production source was not overlaid.
+- An initial file-hash assertion incorrectly compared Windows CRLF worktree hashes to exported Git
+  content and lacked fail-fast chaining; its apparent success is explicitly rejected. The exact
+  archive SHA and embedded commit marker are the authoritative transfer checks. No service/image
+  changed as a result.
+- A networkless one-shot R40-base container with read-only mounts for the three changed R41 files,
+  0.10 CPU, 256 MiB RAM and 128 PIDs passed provider/transport/scheduler/coverage 67/67. `--rm`
+  removed it. Load1 rose transiently to 4.20 from throttled runnable work, so the full Linux gate
+  must wait for load recovery rather than stack more work onto the one-CPU host.
+- Next exact action is read-only load recovery sampling. Only after load1 is below 1.0, run the full
+  networkless non-DB Linux suite under the same hard resource boundary, then open fresh isolated
+  PostgreSQL gates one at a time; do not overlap tests or production maintenance.
