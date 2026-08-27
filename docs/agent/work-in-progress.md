@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T18:10:00Z
+updated_at_utc: 2026-08-27T20:07:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
+last_safe_checkpoint: R41 is fully tested and recoverable but not selected; production is exact R30 ingestion, R37 materializer stopped, live execution false, with a current verified/off-site dump and no open coverage incident
 ---
 
 # Walletscaner Work In Progress
@@ -11,6 +11,42 @@ last_safe_checkpoint: R40 ingestion canary failed its subscription-state consist
 This is the durable resume point for an interrupted multi-step task. It contains no credentials and
 does not grant production authority. On resume, verify every recorded fact before continuing; never
 blindly repeat the last mutation.
+
+## Resume dashboard — 2026-08-27 20:07 UTC
+
+This task has six bounded phases. Four are complete, phase five is ready to start and phase six has
+not started:
+
+1. **Complete — root cause:** R40 proved the trade-observation lane can collect wallet trades, but
+   also exposed a real async bootstrap race: three provider subscriptions could be configured/ACKed
+   while the scheduler reported only two occupied slots.
+2. **Complete — source repair:** commit `5902ac0` reserves scheduler occupancy synchronously,
+   coalesces duplicate bootstrap and fails closed through exclusion/provider errors.
+3. **Complete — regression evidence:** focused 67/67, host type/lint/build, classified Linux suite,
+   Linux deploy tools 19/19, fresh PostgreSQL 16 ingestion gate 8/8, and byte-identical compact
+   materializer PostgreSQL evidence all pass.
+4. **Complete — recovery/artifact:** the current 27-August dump is server-verified and independently
+   off-site verified; immutable R41 image/artifact/local recovery copy have exact recorded identities.
+5. **Ready — ingestion-only production canary:** atomically select R41 for only
+   `solana-ingestion`, recreate no dependency, then hold at least five minutes across scheduler
+   rotations. Pass requires stable active/configured/ACK equality, fresh wallet trades, no growing
+   inbox/dead-letter and zero unresolved coverage incidents. Any hard-gate failure rolls only this
+   service back to exact R30.
+6. **Pending — compact catch-up and bounded cleanup:** only after phase five passes, select R41 for
+   only the stopped materializer, run an oldest-first bounded canary/catch-up, then remove only exact
+   Walletscaner release artifacts/images whose recovery copies and hashes are already proven. No
+   canonical wallet evidence or B2 object may be retired in this phase.
+
+Fresh production pre-state: only Compose project `walletscaner` is listed; disk free is
+14,314,131,456 bytes; PostgreSQL is 18,464,439,319 bytes; inbox unresolved/dead-letter is 12/0;
+archive dead-letter is zero; open discovery incidents are zero; newest pool/wallet trade ages are
+18/97 seconds. Ingestion is exact R30 container `ee10d1074016...`; materializer is exact R37 stopped
+with exit 143; `ENABLE_LIVE_EXECUTION=false`. R41 resolves to image
+`sha256:229148f8616c...`, source `5902ac0c3cdb...`. Rollout ledger revision 32 is completed and its
+next action is the R41 ingestion activation. An accidental read-only Cartesian preflight query was
+found as PostgreSQL PID 284274, explicitly terminated, and independently verified absent; it made
+no data change. The next exact mutation is ledger revision 33 plus the guarded one-key R30-to-R41
+ingestion selector update.
 
 ## Objective and acceptance criteria
 
