@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:11:00Z
+updated_at_utc: 2026-08-27T20:13:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: rollout ledger revision 33 is open and the guarded selector now renders exact R41 for ingestion, but the running ingestion container is still exact R30; R37 materializer remains stopped and live execution is false
+last_safe_checkpoint: rollout revision 33 is open and only ingestion runs exact R41 container 696e4a4f with target-external container identities unchanged; canary is not yet passed and rollback remains exact R30
 ---
 
 # Walletscaner Work In Progress
@@ -2374,3 +2374,21 @@ ingestion selector update.
   `solana-ingestion` with exact project/file/env plus `--no-deps --no-build --force-recreate`, then
   verify its R41 identity/resources/live flag and every non-target container ID before canary time
   starts. Rollback is the guarded inverse selector update and R30-only recreate.
+
+## R41 ingestion service checkpoint at 2026-08-27 20:13 UTC
+
+- Exact Compose project/file/env plus `--no-deps --no-build --force-recreate` replaced only
+  `solana-ingestion`. New container `696e4a4f6c61...` runs exact R41 image ID
+  `sha256:229148f8616c...`, restart 0/OOM false, 0.20 CPU, 160 MiB, 128 PIDs and live false.
+  The sorted non-target name/ID/image hash is exactly unchanged at `7391a3c65cd8...`.
+- A final `docker compose ls --format json` observation received a CRLF-tainted format argument and
+  exited nonzero after all target verification had completed; it made no state change and is not
+  a failed recreate. The already captured project inventory remains the pre-state comparator.
+- First health sample reports trade observation `ok/active` with
+  active/configured/subscribed `1/1/1`, two admissions, zero queue and no replacement. The database
+  recorded 203 wallet trades in the preceding five minutes, inbox unresolved/dead-letter is 28/0.
+- Restart bootstrap opened three `backfill_truncated` discovery incidents about 46 seconds before
+  the sample. Canary has not passed: all must close through the durable repair path inside the
+  existing recovery gate, trade state must remain internally equal across later rotations and the
+  minimum five-minute hold must complete. Any unresolved/recurrent hard-gate failure triggers the
+  exact R30 rollback rather than being called degraded success.
