@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:40:00Z
+updated_at_utc: 2026-08-27T20:41:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
-last_safe_checkpoint: immutable R42 image and server/off-host recovery artifact are exact and ledger revision 38 is completed; production remains R30 container d4e2eb0 with R37 materializer stopped
+last_safe_checkpoint: immutable R42 recovery is complete and ledger revision 39 opened observe-only ingestion activation; production is still exact R30 container d4e2eb0 and R37 materializer remains stopped
 ---
 
 # Walletscaner Work In Progress
@@ -2500,3 +2500,20 @@ ingestion selector update.
   then a separately ledgered observe-only ingestion activation. Its pass condition permits only
   durably explicit `alpha_excluded_unreconciled` historical gaps; it does not validate full alpha
   coverage or authorize paper/live delivery.
+
+## R42 observe-only ingestion activation opened at 2026-08-27 20:41 UTC
+
+- Fresh preflight found 13,795,016,704 bytes free, about 1.13 GB available memory, 1.99 GB free swap,
+  no heavy operation, exact R30/live-false ingestion and unchanged non-target hash
+  `7391a3c65cd8...`. PostgreSQL is 18,557,418,519 bytes; inbox unresolved/dead-letter is 11/0;
+  newest pool/trade ages are 14/150 seconds.
+- The current policy defect is actively consuming capacity: the two high-volume public-program
+  repairs grew from 5,000 to 18,000 staged signatures and the CPMM repair is only 1,450/3,668
+  replayed. All three remain open despite fresh live transport. This confirms R42 is a bounded-load
+  correction, not a cosmetic status change.
+- Ledger revision 39 is `r42-observe-only-ingestion-activation=in_progress`, SHA-256
+  `6451d424f871...`. No selector/service changed yet. Next exact mutation is guarded dry-run/apply of
+  only `WALLETSCANER_INGEST_IMAGE` R30 to exact R42, secret-free render, and ingestion-only
+  no-dependency/no-build recreate. Pass requires the three oversized repairs to become terminal and
+  their incidents close only as alpha-excluded, no new open-incident churn, exact trade subscription
+  equality, fresh flow, zero dead-letter/restart/OOM and unchanged non-target identities.
