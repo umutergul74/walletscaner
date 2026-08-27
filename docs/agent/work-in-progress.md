@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:27:00Z
+updated_at_utc: 2026-08-27T20:34:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R41 canary failed the five-minute gap-repair gate and was rolled back exactly; ingestion runs R30 container d4e2eb0, R37 materializer is stopped, live execution is false, and rollout revision 34 is failed
@@ -2440,3 +2440,21 @@ ingestion selector update.
   the default/example/operations contract from 20,000 to 500, run focused and repository gates,
   then build a minimal immutable R42 overlay on exact R41. No production selector, environment,
   service, database or B2 state changes in the implementation phase.
+
+## R42 local implementation checkpoint at 2026-08-27 20:34 UTC
+
+- Source commit `4235591` adds the persisted-over-cap guard, sets the production worker default and
+  example to 500, and updates provider/operations contracts. No migration or retention deletion is
+  included.
+- The new regression constructs a durable `replaying` repair above a lowered cap and proves the
+  source returns `blocked`, persists terminal cap state, increments the correct replay attempt and
+  makes zero RPC calls. Provider test is 48/48; the combined provider/supervisor/backfill/trade gate
+  is 93/93; root typecheck and full ESLint pass; `git diff --check` passes.
+- An initial targeted-test command included Jest's unsupported `--runInBand`; Vitest rejected the
+  option before collecting tests. It changed nothing and is not counted as evidence. The corrected
+  runs above are the accepted results.
+- Production remains exact R30 with the three prior incidents still honestly open/repairing;
+  operations selector is R37 and materializer is stopped. Next exact action is build a minimal R42
+  overlay on the exact tested/recoverable R41 image, copying only the changed runtime provider and
+  worker files; verify embedded hashes and run the affected Linux tests before any new rollout
+  ledger phase or service mutation.
