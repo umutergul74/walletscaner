@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:48:00Z
+updated_at_utc: 2026-08-27T20:52:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R42 repaired incident churn but failed the growing-inbox gate and was rolled back exactly; ingestion runs R30 container 71a03044, R37 materializer is stopped, and ledger revision 40 is failed
@@ -2552,3 +2552,17 @@ ingestion selector update.
   the existing parser drain the bounded backlog, add/test a guarded one-key updater for
   `RPC_TRADE_MAX_ACTIVE_POOLS`, change only 3 to 1, and then retry the exact R42 image. Do not raise
   CPU, parser concurrency, queues or memory to hide the measured capacity mismatch.
+
+## Single-slot guarded control checkpoint at 2026-08-27 20:52 UTC
+
+- Commit `0199867` adds a narrowly scoped atomic updater for only
+  `RPC_TRADE_MAX_ACTIVE_POOLS`. It requires the exact whole-file SHA and exact current value,
+  preserves every other byte/mode, dry-runs by default and rejects duplicates, stale state and
+  capacities outside 0–20.
+- Updater tests pass 3/3, root typecheck and full ESLint pass, and `git diff --check` passes. This
+  phase changes no ingestion/parser implementation and reuses the exact immutable R42 image; only
+  reviewed observation admission will move from three pools to one.
+- Production remains exact R30/live false with ledger revision 40 failed. Next exact read-only gate
+  is backlog count/oldest age plus selector/environment/image/non-target identity. Do not transfer
+  or apply the updater, open a new rollout phase or restart R42 until the R30 parser has drained the
+  canary backlog to a non-growing bounded baseline.
