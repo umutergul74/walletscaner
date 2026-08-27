@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T20:18:00Z
+updated_at_utc: 2026-08-27T20:27:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R41 canary failed the five-minute gap-repair gate and was rolled back exactly; ingestion runs R30 container d4e2eb0, R37 materializer is stopped, live execution is false, and rollout revision 34 is failed
@@ -2413,3 +2413,30 @@ ingestion selector update.
   work is source/config diagnosis of durable repair throughput and restart admission. Do not
   reactivate R41 or the materializer until a change-proportional fix proves every supported-program
   restart gap closes inside five minutes under the shared-host resource ceiling.
+
+## R42 bounded public-RPC repair decision at 2026-08-27 20:27 UTC
+
+- Live R30 evidence separates transport from historical repair. Exact discovery subscriptions are
+  ACKed, live queues are 0–3, unresolved transaction counts are zero and current cursors for the two
+  busiest programs are 2–25 seconds old. Their raw WebSocket streams prefiltered about 149,000 and
+  325,000 non-matching messages while admitting only 185 and 10 exact live events in the sample.
+- `getSignaturesForAddress` cannot apply that instruction-log predicate. The durable repair must
+  therefore inspect all program signatures. Current policy collects 500 per 30-second cycle up to
+  20,000, then replays only 50 per cycle. The observed 3,668-signature CPMM repair alone needs over
+  36 minutes at the configured replay schedule; 20,000 could take hours. This is mathematically
+  incompatible with the five-minute recovery SLO and consumes PostgreSQL/RPC budget without a
+  credible chance of restoring high-volume public-RPC coverage.
+- R42 will make the existing conservative lower bound the public-RPC default: 500 total repair
+  signatures. More importantly, a persisted collecting **or replaying** repair already above the
+  active cap must become terminal immediately on resume instead of bypassing a lowered bound. The
+  supervisor already requires two independent healthy current-transport samples before closing
+  such an incident as `alpha_excluded_unreconciled`; it must not create reconciliation proof.
+- Acceptance is deliberately split. Observe-only collection may be operational when the current
+  transport is fresh, trade subscription counts are internally equal, no incident remains open and
+  every unrepairable interval is durably alpha-excluded. Full alpha validation still fails until an
+  instruction-filtered historical/archive source proves those intervals; R42 must not relabel this
+  as 99% coverage or enable paper/live delivery.
+- Next exact local action: add the persisted-over-cap fail-closed guard and regression test, change
+  the default/example/operations contract from 20,000 to 500, run focused and repository gates,
+  then build a minimal immutable R42 overlay on exact R41. No production selector, environment,
+  service, database or B2 state changes in the implementation phase.
