@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-27T18:02:00Z
+updated_at_utc: 2026-08-27T18:03:00Z
 owner: codex
 task: repair archive integrity/dead-letter and discovery coverage, then establish a bounded Walletscaner storage equilibrium on the fixed disk
 last_safe_checkpoint: R40 ingestion canary failed its subscription-state consistency gate and was rolled back exactly to R30; no canonical evidence was retired and operations/materializer remain unchanged
@@ -2141,3 +2141,12 @@ blindly repeat the last mutation.
   processes stopped. This is not uninstall/factory-reset and must preserve all images, volumes and
   the populated PostgreSQL clone. Afterward verify engine version plus the previously known image
   and clone identities before using it; if any data identity is absent, stop rather than recreate.
+
+## Local Docker update did not apply at 2026-08-27 18:03 UTC
+
+- The signed updater invoked the documented in-place update and exited `-5`; its own log confirms
+  the inner installer did not apply. This Codex process is not elevated and the installed version
+  remains exactly 4.85.0.235549. No uninstall, factory reset, WSL unregister, volume, image or clone
+  mutation occurred. Docker Desktop processes are stopped.
+- Do not retry blindly or request elevation inside this rollout. Resume the already ledgered server
+  test path only after the daily production dump and host load finish/recover.
