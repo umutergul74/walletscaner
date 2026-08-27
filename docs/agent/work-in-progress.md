@@ -2696,3 +2696,22 @@ only `wallet-evidence-materializer-scheduler` may then be recreated.
   concurrency or start a second worker. Next exact phase is report-only Walletscaner release image
   cleanup plus exact artifact recovery-copy proof. No canonical or B2 evidence retirement is part
   of that cleanup.
+
+## R42 bounded cleanup ready at 2026-08-27 23:35 UTC
+
+- Exact server and independently retained local recovery artifacts match in both bytes and SHA-256,
+  and every server frame passes `zstd -t`: R37 462,694,845 / `f28c2ffbbfa0...`; R38 462,868,480 /
+  `1976fce09466...`; R40 462,733,489 / `71ecf11c435d...`; R41 463,110,427 /
+  `80feee488b21...`; R42 463,001,919 / `435504b983c3...`.
+- The project-scoped prune script ran report-only with current R42 and exact R30 as explicit keep
+  tags. It protects every container-referenced image, the `local` tag, current R42 and R30 rollback;
+  only unreferenced Walletscaner worker release tags are candidates. Docker estimates 2.123 GB of
+  image layers recoverable after tag removal.
+- The cleanup will remove only the five exact server transfer artifacts above and then apply the
+  already reviewed `walletscaner-worker`-only script with the same keep tags. Local artifact copies,
+  current/rollback/running images, canonical data, B2 objects, volumes, containers, BuildKit and
+  host-global Docker state are outside the operation. The reported 7.768-GB BuildKit and 520-MB
+  volume candidates are intentionally untouched.
+- After deletion, verify all five server paths absent, R42/R30/running image IDs present, every
+  container identity/state/restart/OOM value unchanged, materializer still sleeping, current flow
+  healthy and filesystem gain consistent with the exact artifact bytes plus project-scoped layers.
