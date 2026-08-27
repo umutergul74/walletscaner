@@ -2233,3 +2233,22 @@ blindly repeat the last mutation.
   match its SHA-256, validate the byte-identical archive, atomically write the remote acknowledgement
   and then let the path-pinned reconciliation script retain the newest server generation while
   removing only the older already-verified server copy. On any failure, preserve both generations.
+
+## 27 August off-site recovery gate completed at 2026-08-27 19:31 UTC
+
+- The reviewed off-site wrapper completed successfully. Its first 20-Mbps SFTP connection closed
+  after 1,778,227,200 bytes (87.6%); the bounded retry resumed the same `.partial` rather than
+  restarting. The final local dump is exactly 2,030,534,774 bytes with SHA-256
+  `ae4ecfe40cc11318809032df35205a2b0194c456a56ed150eb1b94509ad7a587` and PostgreSQL 16 archive-list
+  verification `offsite-docker-postgres16`.
+- Only after those checks, the script wrote the matching server `.offsite-verified` marker and the
+  reviewed reconciliation retained the new generation while removing the superseded 26-August
+  server dump. Older off-host generations remain local; no canonical database or B2 object changed.
+- Server free space recovered to 14,855,958,528 bytes. No pg_dump/hash/SFTP/pg_restore process is
+  active; the output that matches the backup scheduler shell is its sleeping container entrypoint,
+  not a running dump. The schedule race remains a real automation defect and will be corrected
+  after R41 activation/cleanup so future tasks do not routinely miss a dump that finishes after
+  22:00 local time.
+- Next exact action is wait for load1 below 1.0, then run the seven Python-backed deploy-tool files
+  in an ephemeral network-detached R41 harness. PostgreSQL tests and activation remain separate,
+  serial gates.
