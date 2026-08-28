@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:25:00Z
+updated_at_utc: 2026-08-28T23:26:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress on container 1b7df492ccf; the ready regression wallet is starved by 547 older promoted P1 rows, so the next guarded canary action is an expected-state scheduling-only not_before update for that one row before read-only verification or R34 rollback
+last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress on container 1b7df492ccf; the exact regression row passed its one-row scheduling guard and is now first-ready without evidence/revision changes, so the next action is read-only R43 claim/completion verification or exact R34 rollback
 ---
 
 # Walletscaner Work In Progress
@@ -334,6 +334,10 @@ repeating any step.
   current unique-constraint error and no active lease. It must not change revision, evidence,
   priority, ledger rows, scores or the expected evidence-limit quarantine. The worker will then
   claim it through the normal R43 code path after its current bounded batch.
+- The guarded transaction changed exactly one row and committed. Its revision/completed revision,
+  priority, attempt count, error, evidence and lease state remained `51/27`, one, 294, the expected
+  natural-key error, unchanged and unlocked; only `not_before` became 1970-01-01 UTC. The next step
+  is read-only observation until R43 either completes it or records a new bounded failure.
 
 ## Rollback and next exact action
 
