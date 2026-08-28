@@ -1,9 +1,9 @@
 ---
-status: waiting
-updated_at_utc: 2026-08-28T21:53:00Z
+status: active
+updated_at_utc: 2026-08-28T22:14:00Z
 owner: codex
-task: close the current off-site backup gap, preserve the 48-hour raw-payload safety window, and determine the smallest safe capacity fix before storage reserve is threatened
-last_safe_checkpoint: ledger revision 49 completed the off-site backup reconciliation; the newest dump is independently verified, the old acknowledged server generation was removed by the reviewed guard, all 12 services remain running, and the next destructive-eligibility boundary is 2026-08-29 00:00 UTC
+task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
+last_safe_checkpoint: live read-only triage proved current canonical flow with no drops/dead letters/open coverage incident, but found a 53-reconnect Pump.fun storm over six hours and one deterministic wallet-ledger natural-key conflict; no code or production service has changed yet
 ---
 
 # Walletscaner Work In Progress
@@ -102,11 +102,58 @@ repeating any step.
    ground, reproduce it in populated PostgreSQL 16 and deploy a bounded fix as a new immutable
    artifact. Do not tune a stale pre-catch-up growth slope or spend shared-host CPU pre-emptively.
 
+## Active ingestion/queue incident — 2026-08-28 22:14 UTC
+
+- Baseline commit is `00aaaca`; preserve the same four pre-existing untracked deploy remnants.
+- The host has about 17.91 GB free, about 1.02 GB available RAM and 1.97 GB free swap. Only the
+  `walletscaner` Compose project is listed. All 12 services are running with restart/OOM `0/false`;
+  PostgreSQL and Redis are healthy. The current 28-August dump is sidecar/off-site acknowledged and
+  independently present locally. Live execution remains false.
+- Canonical flow is current: the 22:06 UTC report had inbox backlog 39/oldest 15.3 seconds,
+  dead-letter 0, pool age 4.4 seconds, wallet-trade age 104.4 seconds and archive dead-letter 0.
+  Direct transport telemetry has no dropped signatures, queue pressure, subscription-ACK timeout,
+  heartbeat timeout or handler-admission rejection. All four discovery programs are currently
+  `ok`; open coverage incidents are zero.
+- Pump.fun (`6EF8...wF6P`) is not stable enough: over the six-hour log window its standard-source
+  reconnect count rose by 53. It moved `5 -> 11 -> 57` around 21:52-21:53 UTC while the other three
+  programs remained at four reconnects. The external socket close/error did not increment heartbeat
+  or ACK timeout counters. The fixed one-second reconnect loop repeatedly reran the 500-signature
+  bounded scan. Two recent incidents closed as
+  `transport_recovered_gap_unreconciled`; both intervals correctly remain alpha-excluded.
+- The transport is presently fresh (`slotLag=0`, raw silence about 0.25 seconds) and recovered for
+  more than 30 samples. This is current liveness, not proof that the excluded intervals are complete.
+- Telegram itself is healthy. In the last 24 hours it delivered 26 status/transition messages with
+  maximum one attempt and no observed notification dead-letter. The intermittent messages are
+  symptoms of the real coverage transitions, not Telegram API failures.
+- Alpha work is separate from ingestion correctness. At the snapshot it had 6,545 background and
+  159 elevated pending revisions, no priority-2 signal work, and three rows carrying an error.
+  Across six hours the worker processed 7,854 wallets, but a new low-priority materialization burst
+  raised total pending from 416 to about 6,700. One wallet repeatedly fails because a regenerated
+  episode has a new id but the same natural episode key; repository code inserts before deleting
+  the stale projection. A separate wallet had one bounded trade-probe timeout.
+
+### Exact implementation/rollout sequence
+
+1. Add bounded exponential reconnect backoff to the standard Solana source, reset it only after a
+   stable socket window, expose attempt/next-delay telemetry, and test rapid close, stable reset,
+   stale generation fencing and stop behavior. Do not change the provider route or repair cap.
+2. Reorder incremental PostgreSQL ledger replacement so stale natural-key rows are deleted under the
+   existing advisory transaction lock before incoming episode upsert. Add a real PostgreSQL 16
+   regression where an episode id changes while its natural key stays constant.
+3. Run targeted tests, typecheck/lint and the applicable database integration gate. Before any
+   production mutation, build an immutable Linux artifact, verify the current backup/headroom and
+   open a revision-checked ledger phase with exact R42/R34 rollback identities.
+4. Recreate only `solana-ingestion` and `wallet-alpha`; abort on restart/OOM, growing canonical
+   backlog, open incident, co-tenant appearance, resource breach or failed ledger retry. Verify a
+   bounded canary, then record exact post-state.
+5. Preserve the independent storage task: after 2026-08-29 00:00 UTC verify the existing guarded
+   retirement of the 26-August payload partition and begin the clean post-catch-up 24-hour slope.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action is read-only: after the first normal maintenance cycle following
-  2026-08-29 00:00 UTC, verify the 26-August partition retirement, disk gain, held/unresolved counts,
-  service identities, queues and archive parity. Then measure a clean 24-hour post-catch-up storage
-  slope. Do not manually drop the partition or rerun the backup reconciliation.
+- Next exact action: implement and test the two isolated fixes above. Do not deploy until the
+  immutable-artifact, backup/headroom and production-ledger gates pass. Independently, after the
+  first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
+  retirement and disk gain; do not manually drop it or rerun backup reconciliation.
