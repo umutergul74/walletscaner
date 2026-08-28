@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:06:00Z
+updated_at_utc: 2026-08-28T23:09:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: exact R43 artifact upload completed as a server .partial and independently passed byte/SHA/zstd verification; services, environment, loaded images and production ledger remain unchanged, with ledger-planned artifact finalization next
+last_safe_checkpoint: ledger revisions 50-52 completed exact R43 artifact finalization and image load; running R42/R34 services and environment remain unchanged, live backlog recovered to 125/37.6s with no dead letters or open incident, and predeploy canary planning is next
 ---
 
 # Walletscaner Work In Progress
@@ -234,13 +234,32 @@ repeating any step.
   phase `current-offsite-backup-reconciliation`. No image was loaded and no service, environment,
   database row, Compose state or provider route changed.
 
+## Loaded-image checkpoint — 2026-08-28 23:09 UTC
+
+- Ledger revisions 50/51 opened `r43-artifact-stage` as planned/in-progress before mutation;
+  revision 52 completed it with ledger SHA-256
+  `83b5852d40dcab145dd03c042925d3a40142b2fe9e817b5b98e0b40f669ca230`.
+- The verified `.partial` was atomically renamed, streamed directly through `zstd -dc` into
+  `docker load` without an uncompressed server tar, and loaded as exact image id
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`. Release/source labels
+  match the off-host evidence. Final compressed artifact SHA remains `d99fcec70c02...`.
+- Services and environment are unchanged: ingestion still runs R42 and wallet-alpha still runs R34,
+  both restart/OOM `0/false`. Only the Walletscaner Compose project is listed. Server free space is
+  17,251,893,248 bytes after image load plus retained compressed transfer evidence.
+- A post-stage database sample recovered from the earlier burst to inbox backlog 125, oldest 37.6
+  seconds, dead-letter zero, pool age 3.3 seconds, wallet-trade age 64.3 seconds, open incidents zero,
+  finality pending 67/unresolved-24h zero and durable signature pending zero.
+- The active R34 alpha worker completed 94 wallets in 124 seconds with zero processing failures;
+  total pending was 7,749 (7,083 background, 666 elevated, zero signal). The known natural-key row
+  remains one of two delayed errors until the R43 wallet-alpha service is actually recreated.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: create revision-checked ledger `planned`/`in_progress` records for R43 artifact
-  finalization, atomically rename and load the verified object while keeping services unchanged;
-  then refresh the live backlog trend
+- Next exact action: inspect only the reviewed image keys/rendered service limits, dry-run the atomic
+  image-key update, refresh backup/resource/topology gates, then open revision-checked R43 canary
+  planning. Recreate only ingestion and wallet-alpha after those gates pass.
   and only then open a revision-checked R43 rollout phase. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
