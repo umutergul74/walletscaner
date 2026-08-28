@@ -3,7 +3,7 @@ status: active
 updated_at_utc: 2026-08-28T23:32:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 62 planned a read-only r43-transfer-retirement-verification correction; the artifact remains absent and the next actions are required planned-to-in-progress revision 63 then completed revision 64 with direct observed values, without another deletion
+last_safe_checkpoint: ledger revision 64 completed the transparent R43 transfer-retirement verification with actual observed values; both R43 services are accepted and the next action is read-only observation of the normal guarded maintenance cycle after the 2026-08-29 00:00 UTC partition boundary
 ---
 
 # Walletscaner Work In Progress
@@ -382,6 +382,10 @@ repeating any step.
   planned-to-completed transition was correctly rejected by the ledger state machine and changed
   nothing else. Resume with revision 63 `in_progress`, then revision 64 `completed`; do not rerun
   file removal.
+- Ledger revisions 63/64 then completed the read-only correction. Revision 64 canonical SHA-256 is
+  `05dc21dc7e7c9c2767889df9a8a3d7ce8da7a8bf4400f0fd0c4e6a936c3684be`; it explicitly records the
+  17,663,750,144-byte removal-time observation and 458,547,200-byte allocation gain. The transfer
+  artifact remains absent and no second removal or service/data mutation occurred.
 
 ## Rollback and next exact action
 
