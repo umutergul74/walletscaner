@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T22:34:00Z
+updated_at_utc: 2026-08-28T22:38:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: source fix commit 13783e8 passes local gates; live preflight confirms current flow, protected topology, backup and headroom while Pump remains at 57 reconnects and one natural-key retry remains pending; R43 immutable artifact recipe is staged but not built or deployed
+last_safe_checkpoint: immutable R43 Linux image e87020e7 and 462791225-byte zstd artifact d99fcec7 pass 418 unit plus 33 PostgreSQL tests; production is unchanged and artifact upload/ledger/deploy remain next
 ---
 
 # Walletscaner Work In Progress
@@ -202,12 +202,33 @@ repeating any step.
 - Database is 21,346,065,431 bytes. The 26-August raw partition is still exactly 1,270,988,800 bytes;
   its guarded retirement boundary remains 2026-08-29 00:00 UTC and has not been bypassed.
 
+## Immutable artifact checkpoint — 2026-08-28 22:38 UTC
+
+- Built off-host tag `walletscaner-worker:pipeline-reliability-r43-20260829` from the committed R43
+  recipe. Image id is `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`;
+  labels are release `pipeline-reliability-r43-20260829` and source
+  `13783e8915569ac348f059b44767b7b0890989bb`.
+- Exact Linux artifact targeted tests passed 63/63 and image typecheck passed. A validation-only
+  ephemeral derivative supplied current host Compose plus Python without adding them to the runtime
+  image; the complete Linux/zstd unit suite then passed 418/418 with 48 intentional
+  environment-gated skips. A disposable PostgreSQL 16 network then passed the full evidence
+  integration suite 33/33. Its container and network were removed.
+- Exported object is outside the repository at
+  `C:\Users\Umut\AppData\Local\Temp\walletscaner-r43-artifact\walletscaner-worker-pipeline-reliability-r43-20260829.tar.zst`:
+  462,791,225 bytes, compressed SHA-256
+  `d99fcec70c02f5c636373fce085b0258cc0dcbee1ab36b99bde30c2d7de6b7fe`; zstd frame test passed
+  and the 463,561,728-byte intermediate tar was removed after verification.
+- Server updater/checkpoint scripts exactly match local SHA-256 values
+  `5cc745684799...` and `a907032e824f...`; server `zstd` exists. The intended server artifact paths
+  do not exist and free space is 17,837,133,824 bytes. No upload, image load, ledger transition or
+  service mutation has occurred yet.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: commit the immutable R43 recipe, build it from retained R40, run the zstd and
-  PostgreSQL 16 artifact gates, export/hash it and refresh the live backlog trend. Do not deploy
-  until those gates plus a revision-checked production-ledger phase pass. Independently, after the
+- Next exact action: upload the exact zstd object to a server `.partial`, verify its SHA/frame,
+  atomically rename and load it, while keeping services unchanged; refresh the live backlog trend
+  and only then open a revision-checked R43 rollout phase. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
