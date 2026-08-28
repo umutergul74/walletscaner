@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T22:38:00Z
+updated_at_utc: 2026-08-28T23:06:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: immutable R43 Linux image e87020e7 and 462791225-byte zstd artifact d99fcec7 pass 418 unit plus 33 PostgreSQL tests; production is unchanged and artifact upload/ledger/deploy remain next
+last_safe_checkpoint: exact R43 artifact upload completed as a server .partial and independently passed byte/SHA/zstd verification; services, environment, loaded images and production ledger remain unchanged, with ledger-planned artifact finalization next
 ---
 
 # Walletscaner Work In Progress
@@ -223,12 +223,24 @@ repeating any step.
   do not exist and free space is 17,837,133,824 bytes. No upload, image load, ledger transition or
   service mutation has occurred yet.
 
+## Resumed upload checkpoint — 2026-08-28 23:06 UTC
+
+- The interrupted SFTP/SCP session completed normally. Server staging file
+  `deploy/walletscaner-worker-pipeline-reliability-r43-20260829.tar.zst.partial` is exactly
+  462,791,225 bytes, matches SHA-256
+  `d99fcec70c02f5c636373fce085b0258cc0dcbee1ab36b99bde30c2d7de6b7fe`, and passes server
+  `zstd -t` with restored size 463,561,728 bytes. The final artifact path does not exist.
+- Server free space after staging is 17,259,290,624 bytes. Ledger revision remains 49 with completed
+  phase `current-offsite-backup-reconciliation`. No image was loaded and no service, environment,
+  database row, Compose state or provider route changed.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: upload the exact zstd object to a server `.partial`, verify its SHA/frame,
-  atomically rename and load it, while keeping services unchanged; refresh the live backlog trend
+- Next exact action: create revision-checked ledger `planned`/`in_progress` records for R43 artifact
+  finalization, atomically rename and load the verified object while keeping services unchanged;
+  then refresh the live backlog trend
   and only then open a revision-checked R43 rollout phase. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
