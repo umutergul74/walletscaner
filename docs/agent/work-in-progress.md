@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:28:00Z
+updated_at_utc: 2026-08-28T23:29:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 58 completed both R43 canaries; exact R43 ingestion and wallet-alpha are restart/OOM-free, the natural-key retry completed with valid scoped ledger state, and the next actions are read-only post-rollout verification plus the guarded 00:00 UTC storage-retirement observation
+last_safe_checkpoint: ledger revision 59 planned exact R43 transfer-artifact retirement after local/server SHA and loaded-image proof; services remain accepted on R43 and the next action is revision 60 in-progress before removing only the named server transfer file
 ---
 
 # Walletscaner Work In Progress
@@ -355,6 +355,17 @@ repeating any step.
   pool/swap/trade evidence and zero open coverage incidents. The scheduling intervention exposed a
   separate priority-one fairness/capacity risk; it is not evidence corruption and does not block
   this repository-fix canary, but queue equilibrium still needs a measured future window.
+
+## R43 transfer artifact retirement planned — 2026-08-28 23:29 UTC
+
+- The loaded R43 image still has exact id `e87020e75036`. The retained server transfer file and the
+  independent local file are both exactly 462,791,225 bytes with SHA-256
+  `d99fcec70c02f5c636373fce085b0258cc0dcbee1ab36b99bde30c2d7de6b7fe`.
+- Ledger revision 59 opened `r43-transfer-artifact-retirement=planned`; free space before removal is
+  17,205,202,944 bytes. The next mutation may remove only
+  `deploy/walletscaner-worker-pipeline-reliability-r43-20260829.tar.zst` after revision 60 is
+  in-progress. It must preserve the loaded R43 image, R42/R34 rollback images, the local artifact,
+  all database/B2 data and every service.
 
 ## Rollback and next exact action
 
