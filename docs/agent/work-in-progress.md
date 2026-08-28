@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T21:35:00Z
+updated_at_utc: 2026-08-28T21:36:00Z
 owner: codex
 task: close the current off-site backup gap, preserve the 48-hour raw-payload safety window, and determine the smallest safe capacity fix before storage reserve is threatened
-last_safe_checkpoint: read-only preflight complete; no production mutation has occurred in this task
+last_safe_checkpoint: ledger revision 47 safely opened the planned off-site backup reconciliation; data and services remain unchanged
 ---
 
 # Walletscaner Work In Progress
@@ -53,8 +53,9 @@ repeating any step.
   acknowledgement. The prior 27-August 2,030,534,774-byte generation is sidecar/off-site verified
   and independently present locally. The 28-August scheduled local pull completed before the new
   dump existed, explaining the gap.
-- Production ledger revision 45 remains `r42-storage-shadow-observation=in_progress`; no current
-  phase has yet been opened for this task.
+- Ledger revision 46 closed the old R42 shadow observation as failed because current storage runway
+  is only 2.61 days above reserve. Revision 47/SHA-256 `666e27249fb9...` opened
+  `current-offsite-backup-reconciliation=planned`; no data or service changed in either checkpoint.
 
 ## Phases and acceptance gates
 
@@ -77,7 +78,7 @@ repeating any step.
 
 - No production mutation has occurred, so the current rollback is the unchanged R42/R36 topology
   plus both server dump generations.
-- Next exact action: create ledger revision 46 as planned for the off-site backup reconciliation,
-  then invoke `scripts/backup/run-offsite-backup.ps1`. If checksum/archive-list/acknowledgement or
-  reconciliation fails, stop; keep both server generations and record the failure rather than
-  deleting anything manually.
+- Next exact action: transition ledger revision 47 to the same phase `in_progress`, then invoke
+  `scripts/backup/run-offsite-backup.ps1`. If checksum/archive-list/acknowledgement or reconciliation
+  fails, stop; keep both server generations and record the failure rather than deleting anything
+  manually.
