@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:30:00Z
+updated_at_utc: 2026-08-28T23:32:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 61 completed exact R43 server transfer-file removal; actual observed free space is 17663750144 bytes, but revision 61 contains an incorrect precomputed free-after value and must be followed by a transparent read-only verification phase before the 00:00 UTC partition gate
+last_safe_checkpoint: ledger revision 62 planned a read-only r43-transfer-retirement-verification correction; the artifact remains absent and the next actions are required planned-to-in-progress revision 63 then completed revision 64 with direct observed values, without another deletion
 ---
 
 # Walletscaner Work In Progress
@@ -378,6 +378,10 @@ repeating any step.
   `free-after=17667973120` and `bytes-recovered=462770176`, which do not match the direct `df` output.
   Do not hide or reuse those two values. Open a new read-only verification ledger phase that records
   the actual figures; no file, service, environment, image or database mutation is needed.
+- Ledger revision 62 successfully opened `r43-transfer-retirement-verification=planned`. A direct
+  planned-to-completed transition was correctly rejected by the ledger state machine and changed
+  nothing else. Resume with revision 63 `in_progress`, then revision 64 `completed`; do not rerun
+  file removal.
 
 ## Rollback and next exact action
 
