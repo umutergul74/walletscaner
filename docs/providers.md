@@ -82,6 +82,14 @@ must arrive within `SOLANA_DISCOVERY_HEARTBEAT_TIMEOUT_MS` (10 seconds); otherwi
 generation is fenced and reconnected. Ping, pong and timeout counters are operational transport
 evidence and do not by themselves prove historical coverage.
 
+Reconnect scheduling uses bounded exponential backoff with jitter rather than a fixed retry loop.
+The default discovery profile starts at one second, caps at five seconds and resets its attempt only
+after the socket has remained open for 60 seconds. Diagnostics expose connection state, attempt,
+next delay and last-connect time. Automatic startup/reconnect backfills are coalesced per address:
+one scan may run and at most one follow-up scan may be requested while it runs. This bounds provider
+and database amplification during a rapid close storm without weakening the 500-signature repair
+cap or converting a truncated interval into complete coverage.
+
 Some public RPC providers acknowledge several independent `logsSubscribe` sockets from one host
 but silently deliver notifications only on a subset of them. Discovery can therefore split the
 configured programs across two standard WebSocket providers with

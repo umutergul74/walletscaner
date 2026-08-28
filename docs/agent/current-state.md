@@ -3,6 +3,34 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-29 R43 discovery/ledger reliability rollout
+
+- **Operational — exact R43 ingestion:** `solana-ingestion` runs immutable
+  `pipeline-reliability-r43-20260829`, image `sha256:e87020e75036...`, source `13783e891556...`,
+  live execution false and restart/OOM `0/false`. Exponential reconnect backoff stabilized an
+  opening endpoint-close burst after 37 aggregate reconnects; per-address coalescing produced only
+  three capped backfills. Their gaps closed unreconciled and remain alpha-excluded. All four
+  programs then reached at least 13 healthy samples with attempt zero and no drop, pressure, ACK,
+  heartbeat, handler, parser or finality error.
+- **Operational — exact R43 wallet alpha:** only wallet-alpha was subsequently recreated on the
+  same image and retained its 0.10 CPU/160 MiB limits. Production wallet `48yt...GZ6SB`, which had
+  failed 294 times on the episode natural-key constraint, completed revision 51 with attempts/error
+  cleared. Its scoped state has seven episodes, fourteen lots and zero duplicate natural keys. The
+  sole remaining failed work row is the intentional 10,000-trade `evidence_limit` quarantine.
+- **Operational post-state:** only Compose project `walletscaner` is listed; ingestion, wallet-alpha
+  and PostgreSQL are restart/OOM-free and PostgreSQL identity did not change. Canonical flow
+  recovered to inbox `3/11.3s`, dead-letter/open incident `0/0` with fresh pool/swap/trade evidence.
+  Ledger revision 58 completed both canaries; no live execution or alpha threshold changed.
+- **Operational cleanup:** after a byte-identical local copy and loaded-image proof, only the exact
+  462,791,225-byte R43 server transfer archive was removed. The removal-time filesystem observation
+  was 17,663,750,144 bytes free; revision 64 transparently corrects two precomputed revision-61 disk
+  figures. R43 plus R42/R34 rollback images and the local artifact remain.
+- **Waiting — not validated:** priority-one work can still be delayed when promoted old background
+  rows retain earlier scheduling times; signal priority two is empty, but lane equilibrium needs a
+  future measured window. The verified 26-August raw-payload partition remains intact until its
+  2026-08-29 00:00 UTC hot-window boundary and the first normal guarded maintenance cycle. Storage
+  sustainability still requires a clean post-catch-up 24-hour slope above the 8-GiB reserve.
+
 ## 2026-08-27 R42 bounded ingestion/materializer rollout
 
 - **Operational — exact R42 ingestion:** `solana-ingestion` runs immutable R42

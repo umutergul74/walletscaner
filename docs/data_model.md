@@ -188,7 +188,12 @@ original and remaining raw amount, cost, fee/slippage allocation, timestamps and
 wallet trades and is retained in the independently restored wallet-evidence archive; its compact
 result remains on the scalar episode.
 
-The research scorer deterministically rebuilds the ledger from wallet trade evidence. Episode/lot materialization is a derived view and must be replay-idempotent: replacing the same strategy snapshot must produce the same row set and score hash.
+The research scorer deterministically rebuilds the ledger from wallet trade evidence. Episode/lot
+materialization is a derived view and must be replay-idempotent: replacing the same strategy
+snapshot must produce the same row set and score hash. Wallet-scoped replacement holds the existing
+advisory lock and database transaction, removes stale scoped lots/episodes first, and only then
+inserts the incoming deterministic projection. This ordering permits an episode id to change while
+its natural wallet/token/strategy/index key remains constant without exposing a partial state.
 
 ## Wallet-alpha
 
