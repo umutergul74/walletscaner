@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:26:00Z
+updated_at_utc: 2026-08-28T23:28:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress on container 1b7df492ccf; the exact regression row passed its one-row scheduling guard and is now first-ready without evidence/revision changes, so the next action is read-only R43 claim/completion verification or exact R34 rollback
+last_safe_checkpoint: ledger revision 58 completed both R43 canaries; exact R43 ingestion and wallet-alpha are restart/OOM-free, the natural-key retry completed with valid scoped ledger state, and the next actions are read-only post-rollout verification plus the guarded 00:00 UTC storage-retirement observation
 ---
 
 # Walletscaner Work In Progress
@@ -338,6 +338,23 @@ repeating any step.
   priority, attempt count, error, evidence and lease state remained `51/27`, one, 294, the expected
   natural-key error, unchanged and unlocked; only `not_before` became 1970-01-01 UTC. The next step
   is read-only observation until R43 either completes it or records a new bounded failure.
+
+## Alpha canary completed — 2026-08-28 23:28 UTC
+
+- R43 claimed the exact regression row through its normal worker path. It advanced completed
+  revision from 27 to 51, reset attempts from 294 to zero, cleared the unique-constraint error and
+  released its lease. The scoped materialization contains seven episodes and fourteen lots with
+  zero duplicate natural keys; its latest score was persisted at 23:22:14 UTC.
+- The only remaining failed work row is the deliberate 10,000-trade `evidence_limit` quarantine;
+  it remains fail-closed and was not modified. No new wallet-alpha failure was observed.
+- Ledger revision 58 completed `r43-alpha-canary`; canonical SHA-256 is
+  `5e13279ca964f813409d1fcc7ad2bfced2238cd88739035d9cc45bf013e0f62d`.
+  Wallet-alpha container `1b7df492ccf` and ingestion container `de09c79caabd` both run exact R43
+  with restart zero/OOM false; PostgreSQL identity stayed unchanged and only Walletscaner is listed.
+- Post-canary canonical flow recovered to backlog 3/oldest 11.3 seconds, dead-letter zero, fresh
+  pool/swap/trade evidence and zero open coverage incidents. The scheduling intervention exposed a
+  separate priority-one fairness/capacity risk; it is not evidence corruption and does not block
+  this repository-fix canary, but queue equilibrium still needs a measured future window.
 
 ## Rollback and next exact action
 
