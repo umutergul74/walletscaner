@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:20:00Z
+updated_at_utc: 2026-08-28T23:21:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 55 completed the exact R43 ingestion canary; solana-ingestion is stable with no restart/OOM/drop/open incident and wallet-alpha remains R34, so the next separately checkpointed action is the R43 alpha canary
+last_safe_checkpoint: ledger revision 56 has r43-alpha-canary planned after exact R34/R43, backup, headroom and rendered-limit preflight; research env and wallet-alpha are still unchanged on R34 and the next action is revision 57 in-progress before the guarded update
 ---
 
 # Walletscaner Work In Progress
@@ -290,6 +290,21 @@ repeating any step.
   project was listed; wallet-alpha still runs R34.
 - Next mutation is a distinct `r43-alpha-canary` phase. Record it as planned/in-progress before
   changing only `WALLETSCANER_RESEARCH_IMAGE`; do not repeat the completed ingestion recreation.
+
+## Alpha canary planned — 2026-08-28 23:21 UTC
+
+- Ledger revision 56 opened `r43-alpha-canary=planned`. The preflight proved the current research
+  image is exact R34, target is exact R43, the latest 2,455,550,148-byte dump has both sidecar and
+  off-site acknowledgement, free disk is 17,232,982,016 bytes and about 1.03 GB RAM is available.
+- Guarded research-key dry-run changes exactly one key and predicts final `.env.server` SHA-256
+  `f6896892bd831feab384f6ef3136c186a78b2d1a69cfd86dc31459946a890f03`. Target Compose rendering
+  keeps wallet-alpha at 0.10 CPU, 160 MiB, `unless-stopped` and live execution false.
+- The regression target is wallet `48yt...GZ6SB`, revision/completed `51/27`, priority one, already
+  ready, attempt count 294 and natural-key unique-constraint error. The other error is the expected
+  10,000-trade evidence-limit quarantine and must not be treated as a canary failure.
+- No environment or service changed in this checkpoint. Next exact action is ledger revision 57
+  in-progress, then apply only the research image key and recreate only wallet-alpha with
+  `--no-build --no-deps`.
 
 ## Rollback and next exact action
 
