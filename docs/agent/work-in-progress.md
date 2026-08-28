@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T22:14:00Z
+updated_at_utc: 2026-08-28T22:29:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: live read-only triage proved current canonical flow with no drops/dead letters/open coverage incident, but found a 53-reconnect Pump.fun storm over six hours and one deterministic wallet-ledger natural-key conflict; no code or production service has changed yet
+last_safe_checkpoint: local reconnect/backfill-coalescing and ledger natural-key fixes pass targeted, PostgreSQL 16, typecheck, lint and build gates; production has not changed and the immutable Linux artifact/preflight/ledger gates remain next
 ---
 
 # Walletscaner Work In Progress
@@ -149,11 +149,39 @@ repeating any step.
 5. Preserve the independent storage task: after 2026-08-29 00:00 UTC verify the existing guarded
    retirement of the 26-August payload partition and begin the clean post-catch-up 24-hour slope.
 
+## Local implementation checkpoint — 2026-08-28 22:25 UTC
+
+- `StandardSolanaEventSource` now uses bounded exponential reconnect backoff with jitter, resets the
+  attempt only after a configurable stable-open interval, reports connection state/attempt/next
+  delay/last-connect telemetry and fences timers by socket generation. Discovery defaults are one
+  second initial, five seconds maximum, 60 seconds stable-open and 20% jitter. This reduces retry
+  storms without changing provider routes, gap-repair caps or fail-closed coverage disposition.
+- Automatic startup/reconnect backfills are coalesced per address to one running scan plus at most
+  one requested rerun. Direct/manual backfill semantics are unchanged. This prevents dozens of
+  short-lived sockets from queuing dozens of identical 500-signature scans.
+- Incremental PostgreSQL ledger replacement now deletes stale scoped lots/episodes before inserting
+  an incoming episode with the same natural key and a new deterministic id. The existing advisory
+  transaction lock and database transaction still make replacement atomic.
+- Provider gate: `packages/providers/src/solana-event-source.test.ts`, 50/50 passed, including rapid
+  failure backoff/stable reset/stale-generation/stop and reconnect-backfill coalescing.
+- PostgreSQL 16 gate: disposable `postgres:16-alpine` container, full
+  `packages/db/src/postgres-evidence.integration.test.ts`, 33/33 passed. The regression replaced an
+  old episode/lot id with a new id under the same natural key and proved only the new pair remained.
+  The disposable container was stopped and removed. Formatting and `git diff --check` passed.
+- Repository gates: `npm run typecheck`, `npm run lint` and
+  `npm run build --workspaces --if-present` passed. The full Vitest run passed 415 tests, skipped 48
+  environment-gated tests, and failed only three archive-artifact cases because this Windows host
+  has no `zstd` executable (`spawn zstd ENOENT`). The affected archive code is unchanged; rerun the
+  applicable archive cases in the zstd-equipped Linux artifact environment before deployment.
+- No production file, database, service, provider route or resource limit has changed. The four
+  pre-existing untracked deploy remnants remain untouched.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: implement and test the two isolated fixes above. Do not deploy until the
-  immutable-artifact, backup/headroom and production-ledger gates pass. Independently, after the
+- Next exact action: run typecheck, lint and the full applicable unit gate; then checkpoint and
+  build an immutable Linux artifact. Do not deploy until the backup/headroom and revision-checked
+  production-ledger gates pass. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.

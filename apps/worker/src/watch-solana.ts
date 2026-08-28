@@ -60,10 +60,7 @@ import {
   fetchLatestSolanaAddressActivity,
   fetchSolanaSignatureStatus
 } from "./discovery-supervisor.js";
-import {
-  bootstrapTradeSubscription,
-  TradeCoverageReleaseCoordinator
-} from "./trade-coverage.js";
+import { bootstrapTradeSubscription, TradeCoverageReleaseCoordinator } from "./trade-coverage.js";
 import {
   evaluateTradeObservationHealth,
   planTradeObservationAdmission
@@ -495,6 +492,24 @@ const discoveryHeartbeatTimeoutMs = boundedInteger(
   1_000,
   30_000
 );
+const discoveryReconnectInitialDelayMs = boundedInteger(
+  process.env.SOLANA_DISCOVERY_RECONNECT_INITIAL_MS,
+  1_000,
+  250,
+  10_000
+);
+const discoveryReconnectMaxDelayMs = boundedInteger(
+  process.env.SOLANA_DISCOVERY_RECONNECT_MAX_MS,
+  5_000,
+  discoveryReconnectInitialDelayMs,
+  30_000
+);
+const discoveryReconnectStableAfterMs = boundedInteger(
+  process.env.SOLANA_DISCOVERY_RECONNECT_STABLE_AFTER_MS,
+  60_000,
+  10_000,
+  300_000
+);
 const discoveryGapRepairReplayLimit = boundedInteger(
   process.env.SOLANA_DISCOVERY_GAP_REPAIR_REPLAY_LIMIT,
   50,
@@ -541,6 +556,10 @@ const discoveryProgramSources = programs.map((program) => ({
     backfillPageLimit: discoveryBackfill.pageLimit,
     maxBackfillPages: discoveryBackfill.maxPages,
     gapRepairStore: repository,
+    reconnectDelayMs: discoveryReconnectInitialDelayMs,
+    reconnectMaxDelayMs: discoveryReconnectMaxDelayMs,
+    reconnectStableAfterMs: discoveryReconnectStableAfterMs,
+    reconnectJitterRatio: Number(process.env.SOLANA_DISCOVERY_RECONNECT_JITTER_RATIO ?? 0.2),
     heartbeatIntervalMs: discoveryHeartbeatIntervalMs,
     heartbeatTimeoutMs: discoveryHeartbeatTimeoutMs,
     gapRepairReplayLimit: discoveryGapRepairReplayLimit,
@@ -2493,11 +2512,7 @@ async function reconcileRpcTradeObservation(
       tradeObservationDiagnostics.lastDeferredReason = "replacement-state-changed";
       return;
     }
-    await releaseRpcTradeObservation(
-      evicted,
-      "rpc-trade-observation-capacity-rotation",
-      now
-    );
+    await releaseRpcTradeObservation(evicted, "rpc-trade-observation-capacity-rotation", now);
     tradeObservationDiagnostics.replacementCount += 1;
     tradeObservationDiagnostics.lastReplacementAt = now.toISOString();
   }
@@ -2550,11 +2565,9 @@ function handleTradeQueuePressure(pressure: {
     return;
   }
   poolSamplingDiagnostics.tradeQueuePressureCount += 1;
-  void releaseRpcTradeObservation(
-    pool,
-    `rpc-trade-queue-${pressure.reason}`,
-    new Date()
-  ).catch((error) => recordTradeCoverageReleaseError(pool, error, pressure));
+  void releaseRpcTradeObservation(pool, `rpc-trade-queue-${pressure.reason}`, new Date()).catch(
+    (error) => recordTradeCoverageReleaseError(pool, error, pressure)
+  );
 }
 
 async function handleTradeBackfillTruncation(truncation: SolanaBackfillTruncation): Promise<void> {

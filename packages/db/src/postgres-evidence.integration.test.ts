@@ -75,6 +75,79 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(second).toBe(first);
   });
 
+  it("atomically replaces an episode whose deterministic id changed but natural key did not", async () => {
+    const strategyVersion = "ledger-natural-key-regression-v1";
+    const walletAddress = "LedgerNaturalKeyWallet111";
+    const tokenAddress = "LedgerNaturalKeyMint111";
+    const openedAt = "2026-08-28T20:00:00.000Z";
+    const baseEpisode = {
+      chain: "solana" as const,
+      walletAddress,
+      tokenAddress,
+      strategyVersion,
+      episodeIndex: 0,
+      status: "open" as const,
+      openedAt,
+      costBasisUsd: 10,
+      proceedsUsd: 0,
+      realizedPnlUsd: 0,
+      remainingRawAmount: "1000",
+      tokenDecimals: 6,
+      realizedLotCount: 0,
+      highQualityPriceCoverage: 1,
+      metadata: {}
+    };
+    const snapshot = (episodeId: string, lotId: string) => ({
+      chain: "solana" as const,
+      strategyVersion,
+      generatedAt: "2026-08-28T20:01:00.000Z",
+      walletAddresses: [walletAddress],
+      episodes: [{ ...baseEpisode, id: episodeId }],
+      lots: [
+        {
+          id: lotId,
+          episodeId,
+          sourceEventIdempotencyKey: `${lotId}-source`,
+          lotSequence: 0,
+          rawAmount: "1000",
+          remainingRawAmount: "1000",
+          tokenDecimals: 6,
+          quoteCostUsd: 10,
+          feesUsd: 0,
+          slippageUsd: 0,
+          openedAt,
+          status: "open" as const,
+          metadata: {}
+        }
+      ]
+    });
+
+    await expect(
+      repository.replaceWalletPositionLedger(snapshot("episode-old", "lot-old"))
+    ).resolves.toEqual({ episodeCount: 1, lotCount: 1 });
+    await expect(
+      repository.replaceWalletPositionLedger(snapshot("episode-new", "lot-new"))
+    ).resolves.toEqual({ episodeCount: 1, lotCount: 1 });
+
+    expect(
+      await testPool.query<{ id: string }>(
+        `SELECT id
+         FROM wallet_position_episodes
+         WHERE chain = 'solana'
+           AND wallet_address = $1
+           AND strategy_version = $2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ id: "episode-new" }] });
+    expect(
+      await testPool.query<{ id: string; episode_id: string }>(
+        `SELECT id, episode_id
+         FROM wallet_position_lots
+         WHERE episode_id IN ('episode-old', 'episode-new')`
+      )
+    ).toMatchObject({ rows: [{ id: "lot-new", episode_id: "episode-new" }] });
+  });
+
   it("creates a missing payload partition without inverting the canonical inbox lock order", async () => {
     const event = {
       idempotencyKey: "partition-lock-order-event",

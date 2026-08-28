@@ -1035,28 +1035,56 @@ export class PostgresRepository
     // nothing to the next FIFO continuation. Persist only the compact open
     // inventory working set; realized-lot audit detail belongs in the verified
     // wallet-evidence archive and the episode scalar.
-    const lotRows = snapshot.lots.filter((lot) => lot.status !== "realized").map((lot) => ({
-      id: lot.id,
-      episode_id: lot.episodeId,
-      source_event_idempotency_key: lot.sourceEventIdempotencyKey,
-      lot_sequence: lot.lotSequence,
-      raw_amount: lot.rawAmount,
-      remaining_raw_amount: lot.remainingRawAmount,
-      token_decimals: lot.tokenDecimals,
-      quote_cost_usd: lot.quoteCostUsd,
-      fees_usd: lot.feesUsd,
-      slippage_usd: lot.slippageUsd,
-      opened_at: lot.openedAt,
-      closed_at: lot.closedAt ?? null,
-      status: lot.status,
-      metadata: lot.metadata
-    }));
+    const lotRows = snapshot.lots
+      .filter((lot) => lot.status !== "realized")
+      .map((lot) => ({
+        id: lot.id,
+        episode_id: lot.episodeId,
+        source_event_idempotency_key: lot.sourceEventIdempotencyKey,
+        lot_sequence: lot.lotSequence,
+        raw_amount: lot.rawAmount,
+        remaining_raw_amount: lot.remainingRawAmount,
+        token_decimals: lot.tokenDecimals,
+        quote_cost_usd: lot.quoteCostUsd,
+        fees_usd: lot.feesUsd,
+        slippage_usd: lot.slippageUsd,
+        opened_at: lot.openedAt,
+        closed_at: lot.closedAt ?? null,
+        status: lot.status,
+        metadata: lot.metadata
+      }));
 
     return this.withTransaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
         snapshot.chain,
         snapshot.strategyVersion
       ]);
+
+      // A deterministic rebuild can assign a new episode id while retaining the
+      // natural episode key. Remove the stale projection before inserting its
+      // replacement; doing this after the insert violates the natural-key
+      // constraint even though the entire replacement is transaction-locked.
+      const incomingLotIds = lotRows.map((lot) => lot.id);
+      await client.query(
+        `DELETE FROM wallet_position_lots AS lot
+         USING wallet_position_episodes AS episode
+         WHERE lot.episode_id = episode.id
+           AND episode.chain = $1
+           AND episode.strategy_version = $2
+           AND ($4::text[] IS NULL OR episode.wallet_address = ANY($4::text[]))
+           AND NOT (lot.id = ANY($3::text[]))`,
+        [snapshot.chain, snapshot.strategyVersion, incomingLotIds, walletScope]
+      );
+
+      const incomingEpisodeIds = snapshot.episodes.map((episode) => episode.id);
+      await client.query(
+        `DELETE FROM wallet_position_episodes
+         WHERE chain = $1 AND strategy_version = $2
+           AND ($4::text[] IS NULL OR wallet_address = ANY($4::text[]))
+           AND NOT (id = ANY($3::text[]))`,
+        [snapshot.chain, snapshot.strategyVersion, incomingEpisodeIds, walletScope]
+      );
+
       if (episodeRows.length > 0) {
         await client.query(
           `INSERT INTO wallet_position_episodes (
@@ -1124,27 +1152,6 @@ export class PostgresRepository
           [JSON.stringify(episodeRows)]
         );
       }
-
-      const incomingLotIds = lotRows.map((lot) => lot.id);
-      await client.query(
-        `DELETE FROM wallet_position_lots AS lot
-         USING wallet_position_episodes AS episode
-         WHERE lot.episode_id = episode.id
-           AND episode.chain = $1
-           AND episode.strategy_version = $2
-           AND ($4::text[] IS NULL OR episode.wallet_address = ANY($4::text[]))
-           AND NOT (lot.id = ANY($3::text[]))`,
-        [snapshot.chain, snapshot.strategyVersion, incomingLotIds, walletScope]
-      );
-
-      const incomingEpisodeIds = snapshot.episodes.map((episode) => episode.id);
-      await client.query(
-        `DELETE FROM wallet_position_episodes
-         WHERE chain = $1 AND strategy_version = $2
-           AND ($4::text[] IS NULL OR wallet_address = ANY($4::text[]))
-           AND NOT (id = ANY($3::text[]))`,
-        [snapshot.chain, snapshot.strategyVersion, incomingEpisodeIds, walletScope]
-      );
 
       if (lotRows.length > 0) {
         await client.query(

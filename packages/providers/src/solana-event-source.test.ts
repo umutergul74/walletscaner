@@ -1003,6 +1003,143 @@ describe("StandardSolanaEventSource", () => {
     await source.stop();
   });
 
+  it("backs off rapid standard websocket failures and resets only after a stable socket", async () => {
+    const sockets: FakeSocket[] = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: [],
+      cursorStore: new MemoryCursorStore(),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }),
+      webSocketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 5,
+      reconnectMaxDelayMs: 20,
+      reconnectStableAfterMs: 30,
+      reconnectJitterRatio: 0
+    });
+
+    await source.start(() => undefined);
+    sockets[0]!.open();
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "open",
+      reconnectAttempt: 0,
+      nextReconnectDelayMs: null
+    });
+
+    sockets[0]!.disconnect();
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "backoff",
+      reconnectAttempt: 1,
+      nextReconnectDelayMs: 5
+    });
+    await waitUntil(() => sockets.length === 2);
+    sockets[1]!.open();
+    sockets[1]!.disconnect();
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "backoff",
+      reconnectAttempt: 2,
+      nextReconnectDelayMs: 10
+    });
+
+    await waitUntil(() => sockets.length === 3);
+    sockets[2]!.open();
+    await waitUntil(() => source.getDiagnostics().reconnectAttempt === 0);
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "open",
+      reconnectAttempt: 0,
+      nextReconnectDelayMs: null
+    });
+
+    const reconnectCount = source.getDiagnostics().reconnectCount;
+    sockets[0]!.disconnect();
+    expect(source.getDiagnostics().reconnectCount).toBe(reconnectCount);
+
+    sockets[2]!.disconnect();
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "backoff",
+      reconnectAttempt: 1,
+      nextReconnectDelayMs: 5
+    });
+    await source.stop();
+    await wait(10);
+    expect(sockets).toHaveLength(3);
+    expect(source.getDiagnostics()).toMatchObject({
+      connectionState: "stopped",
+      reconnectAttempt: 0,
+      nextReconnectDelayMs: null
+    });
+  });
+
+  it("coalesces repeated automatic backfills during reconnect churn", async () => {
+    const sockets: FakeSocket[] = [];
+    const signatureRequestResolvers: Array<(response: Response) => void> = [];
+    let signatureRequestCount = 0;
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["Program111"],
+      cursorStore: new MemoryCursorStore(),
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { method: string };
+        if (request.method !== "getSignaturesForAddress") {
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        signatureRequestCount += 1;
+        return new Promise<Response>((resolve) => signatureRequestResolvers.push(resolve));
+      },
+      webSocketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 1,
+      reconnectMaxDelayMs: 1,
+      reconnectStableAfterMs: 100,
+      reconnectJitterRatio: 0
+    });
+
+    await source.start(() => undefined);
+    sockets[0]!.open();
+    await waitUntil(() => signatureRequestCount === 1);
+
+    sockets[0]!.disconnect();
+    await waitUntil(() => sockets.length === 2);
+    sockets[1]!.open();
+    sockets[1]!.disconnect();
+    await waitUntil(() => sockets.length === 3);
+    sockets[2]!.open();
+    expect(signatureRequestCount).toBe(1);
+
+    signatureRequestResolvers[0]!(
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    await waitUntil(() => signatureRequestCount === 2);
+    signatureRequestResolvers[1]!(
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    await wait(0);
+
+    expect(signatureRequestCount).toBe(2);
+    await source.stop();
+  });
+
   it("bounds the standard RPC signature dedupe memory", async () => {
     const cursorStore = new MemoryCursorStore();
     const signatures = ["sig-1", "sig-2", "sig-3", "sig-3", "sig-1"];

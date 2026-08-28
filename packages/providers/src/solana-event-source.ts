@@ -186,6 +186,10 @@ export interface SolanaProviderTimingMetadata {
 export interface SolanaEventSourceDiagnostics {
   provider: string;
   status: "ok" | "degraded" | "down";
+  connectionState?: "idle" | "connecting" | "open" | "backoff" | "reconnecting" | "stopped";
+  reconnectAttempt?: number;
+  nextReconnectDelayMs?: number | null;
+  lastConnectedAt?: string | null;
   reconnectCount: number;
   duplicateSignatureCount: number;
   backfillEventCount: number;
@@ -319,7 +323,14 @@ export interface StandardSolanaEventSourceOptions {
   commitment?: "processed" | "confirmed" | "finalized";
   fetchImpl?: typeof fetch;
   webSocketFactory?: WebSocketFactory;
+  /** Initial reconnect delay. Rapid failures back off exponentially from this value. */
   reconnectDelayMs?: number;
+  reconnectMaxDelayMs?: number;
+  /** A socket must stay open this long before the reconnect attempt counter resets. */
+  reconnectStableAfterMs?: number;
+  reconnectJitterRatio?: number;
+  /** Test seam for reconnect jitter. */
+  random?: () => number;
   initialBackfillLimit?: number;
   backfillPageLimit?: number;
   maxBackfillPages?: number;
@@ -414,6 +425,10 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly provider: string;
   private readonly commitment: "processed" | "confirmed" | "finalized";
   private readonly reconnectDelayMs: number;
+  private readonly reconnectMaxDelayMs: number;
+  private readonly reconnectStableAfterMs: number;
+  private readonly reconnectJitterRatio: number;
+  private readonly random: () => number;
   private readonly initialBackfillLimit: number;
   private readonly backfillPageLimit: number;
   private readonly maxBackfillPages: number;
@@ -450,6 +465,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly subscriptionByAddress = new Map<string, number>();
   private readonly addressLogIncludes = new Map<string, string[]>();
   private readonly backfillAddresses = new Set<string>();
+  private readonly automaticBackfillAddresses = new Set<string>();
+  private readonly automaticBackfillRerunAddresses = new Set<string>();
   private readonly truncatedBackfillAddresses = new Set<string>();
   private readonly queuePressureByAddress = new Map<string, "high-water" | "full">();
   private readonly addressTaskTails = new Map<string, Promise<void>>();
@@ -464,6 +481,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private socket: WebSocketLike | null = null;
   private socketOpen = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectStabilityTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatRequestId: number | null = null;
@@ -478,7 +497,27 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   constructor(private readonly options: StandardSolanaEventSourceOptions) {
     this.provider = options.provider ?? "solana-rpc";
     this.commitment = options.commitment ?? "confirmed";
-    this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000;
+    this.reconnectDelayMs = positiveInteger(options.reconnectDelayMs ?? 1_000, "reconnectDelayMs");
+    this.reconnectMaxDelayMs = positiveInteger(
+      options.reconnectMaxDelayMs ?? 30_000,
+      "reconnectMaxDelayMs"
+    );
+    if (this.reconnectMaxDelayMs < this.reconnectDelayMs) {
+      throw new Error("reconnectMaxDelayMs must be greater than or equal to reconnectDelayMs.");
+    }
+    this.reconnectStableAfterMs = positiveInteger(
+      options.reconnectStableAfterMs ?? 60_000,
+      "reconnectStableAfterMs"
+    );
+    this.reconnectJitterRatio = options.reconnectJitterRatio ?? 0.2;
+    if (
+      !Number.isFinite(this.reconnectJitterRatio) ||
+      this.reconnectJitterRatio < 0 ||
+      this.reconnectJitterRatio > 0.5
+    ) {
+      throw new Error("reconnectJitterRatio must be between 0 and 0.5.");
+    }
+    this.random = options.random ?? Math.random;
     this.initialBackfillLimit = options.initialBackfillLimit ?? 100;
     this.backfillPageLimit = options.backfillPageLimit ?? 1_000;
     this.maxBackfillPages = options.maxBackfillPages ?? 10;
@@ -580,6 +619,10 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.diagnostics = {
       provider: this.provider,
       status: isPublicSolanaEndpoint(options.rpcUrl) ? "degraded" : "ok",
+      connectionState: "stopped",
+      reconnectAttempt: 0,
+      nextReconnectDelayMs: null,
+      lastConnectedAt: null,
       reconnectCount: 0,
       duplicateSignatureCount: 0,
       backfillEventCount: 0,
@@ -664,6 +707,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   async start(onEvent: (event: SolanaChainEvent) => Promise<void> | void): Promise<void> {
     if (!this.stopped) return;
     this.stopped = false;
+    this.diagnostics.connectionState = "connecting";
     this.handler = onEvent;
     if (this.options.liveSignatureStore) {
       await Promise.all(
@@ -680,6 +724,11 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.wakeRetryWaiters();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.clearReconnectStabilityTimer();
+    this.reconnectAttempt = 0;
+    this.diagnostics.connectionState = "stopped";
+    this.diagnostics.reconnectAttempt = 0;
+    this.diagnostics.nextReconnectDelayMs = null;
     this.clearHeartbeat();
     this.clearSubscriptionState();
     this.liveSignatureQueue.length = 0;
@@ -1169,6 +1218,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
 
   private connect() {
     if (this.stopped) return;
+    this.diagnostics.connectionState = "connecting";
+    this.diagnostics.nextReconnectDelayMs = null;
     let socket: WebSocketLike;
     try {
       socket = this.socketFactory(this.options.wsUrl);
@@ -1184,6 +1235,9 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       if (socket !== this.socket || generation !== this.socketGeneration || this.stopped) return;
       this.socketOpen = true;
       this.diagnostics.status = "ok";
+      this.diagnostics.connectionState = "open";
+      this.diagnostics.lastConnectedAt = this.now().toISOString();
+      this.scheduleReconnectStabilityReset(socket, generation);
       this.clearSubscriptionState();
       this.nextRequestId = 1;
       for (const address of this.addressLogIncludes.keys()) {
@@ -1191,9 +1245,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       }
       if (this.handler) {
         for (const address of this.backfillAddresses) {
-          void this.backfill(address, this.handler).catch(() => {
-            this.diagnostics.status = "degraded";
-          });
+          this.requestAutomaticBackfill(address, this.handler);
         }
       }
       this.startHeartbeat(socket, generation);
@@ -1225,6 +1277,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     if (socket !== this.socket || generation !== this.socketGeneration) return;
     this.socket = null;
     this.socketOpen = false;
+    this.clearReconnectStabilityTimer();
     this.clearHeartbeat();
     this.clearSubscriptionState();
     if (this.stopped) return;
@@ -1235,10 +1288,64 @@ export class StandardSolanaEventSource implements SolanaEventSource {
 
   private scheduleReconnect() {
     if (this.stopped || this.reconnectTimer) return;
+    const exponentialDelay = Math.min(
+      this.reconnectMaxDelayMs,
+      this.reconnectDelayMs * 2 ** Math.min(this.reconnectAttempt, 30)
+    );
+    const jitterMultiplier = 1 + (this.random() * 2 - 1) * this.reconnectJitterRatio;
+    const delayMs = Math.max(1, Math.round(exponentialDelay * jitterMultiplier));
+    this.reconnectAttempt += 1;
+    this.diagnostics.connectionState = "backoff";
+    this.diagnostics.reconnectAttempt = this.reconnectAttempt;
+    this.diagnostics.nextReconnectDelayMs = delayMs;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, this.reconnectDelayMs);
+    }, delayMs);
+  }
+
+  private scheduleReconnectStabilityReset(socket: WebSocketLike, generation: number): void {
+    this.clearReconnectStabilityTimer();
+    this.reconnectStabilityTimer = setTimeout(() => {
+      this.reconnectStabilityTimer = null;
+      if (this.stopped || socket !== this.socket || generation !== this.socketGeneration) return;
+      this.reconnectAttempt = 0;
+      this.diagnostics.reconnectAttempt = 0;
+      this.diagnostics.nextReconnectDelayMs = null;
+    }, this.reconnectStableAfterMs);
+  }
+
+  private clearReconnectStabilityTimer(): void {
+    if (this.reconnectStabilityTimer) clearTimeout(this.reconnectStabilityTimer);
+    this.reconnectStabilityTimer = null;
+  }
+
+  private requestAutomaticBackfill(
+    address: string,
+    onEvent: (event: SolanaChainEvent) => Promise<void> | void
+  ): void {
+    if (this.automaticBackfillAddresses.has(address)) {
+      this.automaticBackfillRerunAddresses.add(address);
+      return;
+    }
+    this.automaticBackfillAddresses.add(address);
+    void (async () => {
+      try {
+        do {
+          this.automaticBackfillRerunAddresses.delete(address);
+          await this.backfill(address, onEvent);
+        } while (
+          !this.stopped &&
+          this.backfillAddresses.has(address) &&
+          this.automaticBackfillRerunAddresses.delete(address)
+        );
+      } catch {
+        this.diagnostics.status = "degraded";
+      } finally {
+        this.automaticBackfillAddresses.delete(address);
+        this.automaticBackfillRerunAddresses.delete(address);
+      }
+    })();
   }
 
   private async handleSocketMessage(
