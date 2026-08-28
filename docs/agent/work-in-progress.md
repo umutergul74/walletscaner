@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:09:00Z
+updated_at_utc: 2026-08-28T23:12:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revisions 50-52 completed exact R43 artifact finalization and image load; running R42/R34 services and environment remain unchanged, live backlog recovered to 125/37.6s with no dead letters or open incident, and predeploy canary planning is next
+last_safe_checkpoint: ledger revision 54 has r43-ingestion-canary in progress; only solana-ingestion was recreated on exact R43 as container de09c79caabd, wallet-alpha remains R34, and the next action is bounded ingestion verification or exact R42 rollback
 ---
 
 # Walletscaner Work In Progress
@@ -253,13 +253,30 @@ repeating any step.
   total pending was 7,749 (7,083 background, 666 elevated, zero signal). The known natural-key row
   remains one of two delayed errors until the R43 wallet-alpha service is actually recreated.
 
+## Ingestion canary started — 2026-08-28 23:11 UTC
+
+- Ledger revisions 53/54 moved `r43-ingestion-canary` through `planned` to `in_progress`; revision
+  54 canonical SHA-256 is
+  `b019e6218e03c639090c8bec4754847dc6d134a5e9589540e1ea404755564d17`.
+- The guarded updater changed only `WALLETSCANER_INGEST_IMAGE` from R42 to exact R43. The resulting
+  `.env.server` SHA-256 is
+  `daf91b5f2386e9677f358866eb20d1a366775b11f1d74324102395d70cec0d82`; the rendered service keeps
+  `ENABLE_LIVE_EXECUTION=false`, 0.20 CPU and 160 MiB memory.
+- Only `solana-ingestion` was recreated with `--no-build --no-deps`. Container
+  `de09c79caabde22f67c6e81f902525b59bfb21a63fb3765bcdc08d081b55016e` runs exact image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`, restart zero and OOM false.
+  `wallet-alpha` remains on R34 and no other service was intentionally changed.
+- The interruption occurred immediately after recreation. Do not rerun the updater or recreate the
+  service blindly. First verify live connection/backoff telemetry, coverage state, canonical queue
+  trend, freshness, resources and co-tenant absence. Complete ledger revision 55 only if those
+  gates pass; otherwise atomically restore the R42 ingest key and recreate only ingestion.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: inspect only the reviewed image keys/rendered service limits, dry-run the atomic
-  image-key update, refresh backup/resource/topology gates, then open revision-checked R43 canary
-  planning. Recreate only ingestion and wallet-alpha after those gates pass.
-  and only then open a revision-checked R43 rollout phase. Independently, after the
+- Next exact action: verify the already running R43 ingestion canary and complete or roll back ledger
+  phase `r43-ingestion-canary`. Only after a successful bounded canary may the separate R43
+  wallet-alpha phase be opened. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
