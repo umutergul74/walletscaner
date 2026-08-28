@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:12:00Z
+updated_at_utc: 2026-08-28T23:20:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 54 has r43-ingestion-canary in progress; only solana-ingestion was recreated on exact R43 as container de09c79caabd, wallet-alpha remains R34, and the next action is bounded ingestion verification or exact R42 rollback
+last_safe_checkpoint: ledger revision 55 completed the exact R43 ingestion canary; solana-ingestion is stable with no restart/OOM/drop/open incident and wallet-alpha remains R34, so the next separately checkpointed action is the R43 alpha canary
 ---
 
 # Walletscaner Work In Progress
@@ -271,12 +271,32 @@ repeating any step.
   trend, freshness, resources and co-tenant absence. Complete ledger revision 55 only if those
   gates pass; otherwise atomically restore the R42 ingest key and recreate only ingestion.
 
+## Ingestion canary completed — 2026-08-28 23:20 UTC
+
+- Ledger revision 55 completed `r43-ingestion-canary`; canonical ledger SHA-256 is
+  `ebc7c63a7627d3bc347fcccbe66a303020873b7bb9360c4a65d9e9492d68606d`.
+- After the official WebSocket endpoint initially rejected/closed the four sockets, exponential
+  backoff reached 37 aggregate reconnects and then stabilized. Automatic backfills were coalesced:
+  only three 500-signature truncations were created rather than one scan per reconnect. Their
+  incidents closed fail-closed and remain alpha-excluded; no interval was claimed complete.
+- Four programs reached at least 13 consecutive healthy samples with open connections, reconnect
+  attempt zero and no new reconnect after stabilization. Aggregate dropped signatures, queue
+  pressure, subscription-ACK timeouts, heartbeat timeouts, handler rejection, parser failures,
+  parser claim errors and finality errors were zero. Open coverage incidents, inbox dead letters,
+  durable signature backlog, restart and OOM were zero.
+- Startup load briefly raised canonical backlog to 322/70.5 seconds, then it drained to 75/74.8
+  seconds while the oldest event watermark advanced from 23:17:45 to 23:18:04 UTC. Pools/swaps
+  remained fresh and the exact R43 container stayed within 160 MiB. Only the Walletscaner Compose
+  project was listed; wallet-alpha still runs R34.
+- Next mutation is a distinct `r43-alpha-canary` phase. Record it as planned/in-progress before
+  changing only `WALLETSCANER_RESEARCH_IMAGE`; do not repeat the completed ingestion recreation.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: verify the already running R43 ingestion canary and complete or roll back ledger
-  phase `r43-ingestion-canary`. Only after a successful bounded canary may the separate R43
-  wallet-alpha phase be opened. Independently, after the
+- Next exact action: open a revision-checked `r43-alpha-canary`, atomically update only the research
+  image key, recreate only wallet-alpha and prove the known natural-key retry succeeds or roll back
+  to exact R34. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
