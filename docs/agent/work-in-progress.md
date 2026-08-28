@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T22:29:00Z
+updated_at_utc: 2026-08-28T22:34:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: local reconnect/backfill-coalescing and ledger natural-key fixes pass targeted, PostgreSQL 16, typecheck, lint and build gates; production has not changed and the immutable Linux artifact/preflight/ledger gates remain next
+last_safe_checkpoint: source fix commit 13783e8 passes local gates; live preflight confirms current flow, protected topology, backup and headroom while Pump remains at 57 reconnects and one natural-key retry remains pending; R43 immutable artifact recipe is staged but not built or deployed
 ---
 
 # Walletscaner Work In Progress
@@ -176,12 +176,38 @@ repeating any step.
 - No production file, database, service, provider route or resource limit has changed. The four
   pre-existing untracked deploy remnants remain untouched.
 
+## Pre-artifact production checkpoint — 2026-08-28 22:34 UTC
+
+- Source fix is committed as `13783e8915569ac348f059b44767b7b0890989bb`. The new immutable
+  recipe `deploy/r43-pipeline-reliability-20260829.Dockerfile` reconstructs the reviewed R41/R42
+  overlays from locally retained R40 before applying only the R43 provider and PostgreSQL files.
+- Only the `walletscaner` Compose project is listed and all 12 services run. Ingestion R42,
+  wallet-alpha R34 and PostgreSQL have restart/OOM `0/false`; PostgreSQL is healthy. Live execution
+  is false. R42 and R34 image ids remain the exact rollback pair.
+- Host free space is 17,856,360,448 bytes, available RAM about 1.03 GB and free swap about 1.98 GB.
+  The newest 2,455,550,148-byte dump still has sidecar and off-site acknowledgement. Ledger revision
+  49 remains completed; no production-ledger phase for R43 has opened yet.
+- Latest transport health is currently `ok`: four subscribed programs, zero dropped signatures,
+  queue pressure, ACK timeout, heartbeat timeout, handler rejection or open incident. Pump.fun
+  remains at 57 reconnects versus four for each other program; its last two six-hour coverage gaps
+  closed unreconciled and remain excluded. No new reconnect occurred after the 21:53 UTC storm.
+- Canonical flow is active but bursty. The 22:23 monitor saw backlog 216/oldest 64 seconds, pool age
+  0.03 seconds, wallet-trade age 70 seconds and no dead letter. A later direct sample saw 851 eligible
+  inbox rows/oldest 199 seconds, pool age 5 seconds, wallet-trade age 253 seconds and no dead letter
+  or open incident. This requires a second trend sample before rollout; current service liveness is
+  not enough to call the backlog stable.
+- Alpha queue has 7,012 ready priority-0 revisions and two delayed priority-1 errors. One is the
+  expected 10,000-event safety quarantine; the other is the repeatedly observed episode natural-key
+  conflict that R43 fixes. No priority-2 signal work is pending.
+- Database is 21,346,065,431 bytes. The 26-August raw partition is still exactly 1,270,988,800 bytes;
+  its guarded retirement boundary remains 2026-08-29 00:00 UTC and has not been bypassed.
+
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
   acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: run typecheck, lint and the full applicable unit gate; then checkpoint and
-  build an immutable Linux artifact. Do not deploy until the backup/headroom and revision-checked
-  production-ledger gates pass. Independently, after the
+- Next exact action: commit the immutable R43 recipe, build it from retained R40, run the zstd and
+  PostgreSQL 16 artifact gates, export/hash it and refresh the live backlog trend. Do not deploy
+  until those gates plus a revision-checked production-ledger phase pass. Independently, after the
   first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
   retirement and disk gain; do not manually drop it or rerun backup reconciliation.
