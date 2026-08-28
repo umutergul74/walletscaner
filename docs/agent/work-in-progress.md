@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:22:00Z
+updated_at_utc: 2026-08-28T23:25:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress; only wallet-alpha was recreated as container 1b7df492ccf on exact R43, ingestion remains its accepted R43 container, and the next action is bounded natural-key retry and queue verification or exact R34 rollback
+last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress on container 1b7df492ccf; the ready regression wallet is starved by 547 older promoted P1 rows, so the next guarded canary action is an expected-state scheduling-only not_before update for that one row before read-only verification or R34 rollback
 ---
 
 # Walletscaner Work In Progress
@@ -321,6 +321,19 @@ repeating any step.
   wallet `48yt...GZ6SB`. Complete revision 58 only if its natural-key error clears without a new
   failure, the expected evidence-limit quarantine remains fail-closed, and service/resource/queue
   gates pass. Otherwise restore only the research image key to exact R34 and recreate wallet-alpha.
+
+### Bounded regression scheduling decision — 2026-08-28 23:25 UTC
+
+- The R43 worker started normally, stayed restart/OOM-free and began a 100-wallet cycle. The exact
+  regression row remained ready and unlocked at attempt 294, but its count of ready priority-one
+  predecessors increased from 459 to 547 as older background rows were promoted while retaining
+  their earlier `not_before` values. Waiting is therefore not a bounded canary and would not test
+  the repository fix promptly.
+- The next mutation may update only this one queue row's `not_before` scheduling field to an old
+  timestamp, guarded by exact wallet/strategy, revision 51, completed revision 27, attempt 294,
+  current unique-constraint error and no active lease. It must not change revision, evidence,
+  priority, ledger rows, scores or the expected evidence-limit quarantine. The worker will then
+  claim it through the normal R43 code path after its current bounded batch.
 
 ## Rollback and next exact action
 
