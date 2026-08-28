@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:21:00Z
+updated_at_utc: 2026-08-28T23:22:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 56 has r43-alpha-canary planned after exact R34/R43, backup, headroom and rendered-limit preflight; research env and wallet-alpha are still unchanged on R34 and the next action is revision 57 in-progress before the guarded update
+last_safe_checkpoint: ledger revision 57 has r43-alpha-canary in progress; only wallet-alpha was recreated as container 1b7df492ccf on exact R43, ingestion remains its accepted R43 container, and the next action is bounded natural-key retry and queue verification or exact R34 rollback
 ---
 
 # Walletscaner Work In Progress
@@ -305,6 +305,22 @@ repeating any step.
 - No environment or service changed in this checkpoint. Next exact action is ledger revision 57
   in-progress, then apply only the research image key and recreate only wallet-alpha with
   `--no-build --no-deps`.
+
+## Alpha canary started — 2026-08-28 23:22 UTC
+
+- Ledger revision 57 set `r43-alpha-canary=in_progress`. The atomic updater changed only
+  `WALLETSCANER_RESEARCH_IMAGE`; `.env.server` now has the predicted SHA-256
+  `f6896892bd831feab384f6ef3136c186a78b2d1a69cfd86dc31459946a890f03` and rendering still proves
+  0.10 CPU, 160 MiB and live execution false.
+- Only wallet-alpha was recreated with `--no-build --no-deps`. New container
+  `1b7df492ccf07f15c72a512e7fb21582ee96332dc1d98d115bfb1a03f11f76c6` runs exact R43 image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`, restart zero and OOM false.
+  Accepted R43 ingestion container `de09c79caabd` and PostgreSQL identity did not change; only the
+  Walletscaner Compose project is listed.
+- The interruption-safe next action is read-only: observe the first R43 alpha claims and query
+  wallet `48yt...GZ6SB`. Complete revision 58 only if its natural-key error clears without a new
+  failure, the expected evidence-limit quarantine remains fail-closed, and service/resource/queue
+  gates pass. Otherwise restore only the research image key to exact R34 and recreate wallet-alpha.
 
 ## Rollback and next exact action
 
