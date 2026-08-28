@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:29:00Z
+updated_at_utc: 2026-08-28T23:30:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 59 planned exact R43 transfer-artifact retirement after local/server SHA and loaded-image proof; services remain accepted on R43 and the next action is revision 60 in-progress before removing only the named server transfer file
+last_safe_checkpoint: ledger revision 61 completed exact R43 server transfer-file removal; actual observed free space is 17663750144 bytes, but revision 61 contains an incorrect precomputed free-after value and must be followed by a transparent read-only verification phase before the 00:00 UTC partition gate
 ---
 
 # Walletscaner Work In Progress
@@ -366,6 +366,18 @@ repeating any step.
   `deploy/walletscaner-worker-pipeline-reliability-r43-20260829.tar.zst` after revision 60 is
   in-progress. It must preserve the loaded R43 image, R42/R34 rollback images, the local artifact,
   all database/B2 data and every service.
+
+## R43 transfer artifact retired — 2026-08-28 23:30 UTC
+
+- Ledger revisions 60/61 moved the exact retirement through in-progress to completed. The named
+  462,791,225-byte server file was rechecked for exact size/SHA, removed and proven absent. The
+  local byte-identical file remains; loaded R43, both R43 services, PostgreSQL and rollback images
+  remain present and restart/OOM-free.
+- Filesystem free space changed from 17,205,202,944 to the directly observed 17,663,750,144 bytes;
+  allocation-level gain is 458,547,200 bytes. Revision 61 mistakenly recorded a precomputed
+  `free-after=17667973120` and `bytes-recovered=462770176`, which do not match the direct `df` output.
+  Do not hide or reuse those two values. Open a new read-only verification ledger phase that records
+  the actual figures; no file, service, environment, image or database mutation is needed.
 
 ## Rollback and next exact action
 
