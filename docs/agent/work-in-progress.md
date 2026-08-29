@@ -509,3 +509,16 @@ anything; never infer deployment from the presence of the local image.
 - Independent `zstd -t` passed and reported a 463,629,312-byte decoded stream. The temporary
   uncompressed tar was removed only after that verification; the verified compressed artifact and
   loaded local image remain. Production is still unchanged at ledger revision 67 and R43.
+
+## R44 staged production artifact — 2026-08-29 06:19 UTC
+
+- Ledger revision 68 opened `r44-trade-latency-ingestion-canary=planned`; its canonical SHA-256 is
+  `d1fd312a5610653cd0e203007bf5d2c3af132ec41056094f311b85f24b8926ed`. The earlier dry-run rejected
+  a JSON evidence argument before any mutation; the applied checkpoint uses supported key/value
+  evidence and is the authoritative state.
+- SCP wrote only the exact `.partial` target. Server size and SHA matched 462,877,766 bytes and
+  `54d9f8a4a1a4aaef7cd4df281fd385d56ad7bf9c816bb61c3bce43851bff35cf`; server-side `zstd -t`
+  independently passed. Only then was it atomically renamed to the final exact artifact name.
+- Running R43, `.env.server`, PostgreSQL and all containers remain unchanged. Next action is a
+  low-priority `docker load`, exact R44 image/label verification, then revision 69 `in_progress`
+  before the image environment or ingestion container is changed.
