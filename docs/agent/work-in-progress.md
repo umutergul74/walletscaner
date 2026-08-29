@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:25:00Z
+updated_at_utc: 2026-08-29T17:31:00Z
 owner: codex
-task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: R45 is operational and its exact server transfer artifact retirement is complete at ledger revision 79 SHA a0d6bf7c; post-removal health has backlog/dead/unresolved/signature 0/0/0/0, no new ingestion error, 16352473088 free bytes, exact R45 running/R44 loaded and restart/OOM 0/false; next action is read-only alpha revision-churn and late-callback diagnosis, not another deploy or deletion
+task: stop inadmissible trade and price evidence from generating unbounded wallet-alpha background work while preserving every canonical evidence row, revision safety, signal priority, configured admission semantics and shared-host limits
+last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; live alpha diagnosis found 8108 pending jobs, 7814 after the latest cycles, 4401 processed over 64 recent cycles but net +930, dominated by 7477 price-enrichment wallets; oldest/newest 500 samples have 96%/98% zero entries and only 3.8%/0.6% meet 6-trade-or-3-entry admission; next action is local R46 code/tests that persist all evidence but condition queue creation on the exact configured admission thresholds, not a production mutation
 ---
 
 # Walletscaner Work In Progress
@@ -12,6 +12,36 @@ This is the durable resume point for the current storage incident. It contains n
 does not grant authority beyond the user's current request. On resume, compare this record with Git,
 the production ledger, backup files, archive manifests, containers and database state before
 repeating any step.
+
+## Active objective — R46 wallet-alpha producer admission
+
+- Preserve every wallet trade, exact price enrichment and later entry/outcome. Change only whether
+  trade/price producers increment the derived score-work revision before a wallet meets the same
+  configured admission boundary used by the worker (`trade_count >= minimumTradeEvents OR
+  recent_entry_count >= minimumEntries`).
+- The thresholds must be passed explicitly from ingestion configuration, remain bounded, and be
+  optional for repository callers/tests that need legacy unconditional queue semantics. A new
+  wallet-entry write already enqueues atomically; therefore a wallet that matures later cannot be
+  lost when its earlier trade-only updates did not create work.
+- Acceptance: memory and PostgreSQL tests prove sub-threshold trade/price evidence is persisted but
+  not queued, the crossing trade or entry creates work, revisions arriving during a lease remain
+  pending, priority lanes remain unchanged, and target/type/lint/build plus populated PostgreSQL 16
+  gates pass. Do not alter scoring/risk thresholds, current queue rows, CPU/RAM, providers or live
+  execution. Production remains exact R45 until a separate immutable R46 canary is fully proven.
+
+## R46 measured baseline — 2026-08-29 17:31 UTC
+
+- At 17:26 UTC the active `evidence-v1` queue had about 7.8k pending; priority 2 was zero. Price
+  enrichment dominated with 7,477 pending wallets and 15,998 uncompleted revisions. Over the latest
+  64 cycle logs, alpha processed 4,401 wallets with zero cycle failures but queue size moved
+  6,884 -> 7,814 (`+930`), so this is producer imbalance rather than a crashed consumer.
+- In bounded oldest/newest 500-wallet samples, price-enrichment work had 480/490 wallets with zero
+  entries; only 19/3 met the existing `6 trades OR 3 entries` admission boundary. Of then-current
+  buy/sell work, 15/21 and 108/146 respectively had zero entries. Evidence persistence is useful;
+  scoring those sub-threshold revisions is not.
+- Existing indexes cover bounded probes by strategy/wallet/time. Do not add an index or migration
+  before the exact SQL and PostgreSQL 16 plans show one is required. Next action is the smallest
+  repository/caller/test change locally; no server mutation is open.
 
 ## Objective and exclusions
 
