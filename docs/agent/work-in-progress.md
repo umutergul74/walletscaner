@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:53:00Z
+updated_at_utc: 2026-08-29T17:57:00Z
 owner: codex
 task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
-last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; R46 source commit 53b5949 and immutable runtime image e376cfd are proven; exact validation image ed7691a passed Node24/Linux typecheck plus 418/418 tests with 49 intentional no-DB skips and then 34/34 PostgreSQL16 integration tests with its temporary role removed; production remains exact R45 and the next action is a fresh read-only production preflight before opening any R46 rollout phase
+last_safe_checkpoint: R46 source commit 53b5949 and immutable runtime/validation images e376cfd/ed7691a are fully proven; the 17:54-17:56 UTC production preflight found exact restart-free R45, live=false, current fail-closed flow and 15.85 GB free, but the daily pg_dump generation is actively running and host CPU/I/O pressure is elevated; no rollout ledger phase or production mutation was opened, next action is local-only immutable R46 transfer artifact creation while waiting for the backup and its off-site acknowledgement
 ---
 
 # Walletscaner Work In Progress
@@ -81,6 +81,27 @@ repeating any step.
   backup acknowledgement, disk/WAL/temp/RAM headroom, protected-project inventory, flow, alpha
   queue baseline and exact container/image identity; open the revision-checked rollout ledger only
   if every hard gate passes.
+
+## R46 production preflight — 2026-08-29 17:54–17:56 UTC
+
+- Only the `walletscaner` Compose project is listed and its 12 intended services run. Ingestion is
+  exact R45 image `sha256:bc17668d...33722`, restart/OOM `0/false`, and
+  `ENABLE_LIVE_EXECUTION=false`; wallet-alpha, PostgreSQL and Redis are also restart/OOM-free.
+  Ledger revision 79 SHA remains exact and completed. No production or ledger mutation was made.
+- Host `/` has 15,851,438,080 bytes available at 79% use; available RAM is about 1.04 GB and free
+  swap about 1.98 GB. PostgreSQL is 22,761,643,031 bytes and `pg_wal` is about 621 MB. The fresh
+  monitor sample has inbox/dead/open-finality/signature `1/0/0/0`, last pool/trade ages about
+  3/164 seconds, archive pending/verify/dead `0/0/0`, wallet archive/compact pending/dead/mismatch
+  zero, and the latest completed dump is available, checksum-valid and off-site acknowledged.
+- The alpha imbalance is still active: 8,515 pending/8,514 ready, P0/P1/P2
+  `8,041/474/0`, with 7,924 price-enrichment rows carrying 17,201 uncompleted revisions. Recent
+  cycles have no process crash, but producers continue to exceed useful consumption and two new
+  per-wallet processing failures raised the failed count to three; this confirms R46 is needed.
+- A new daily `pg_dump` generation started at `2026-08-29T17:35:17Z` and was still running at the
+  preflight. One-minute load briefly measured 3.01 on the single CPU and host I/O pressure was
+  elevated. Therefore transfer, `docker load` and ingestion recreate are deliberately not started
+  concurrently with the backup. The safe next action is local-only artifact creation; re-run the
+  resource, backup/off-site acknowledgement, disk and flow gates before opening rollout revision 80.
 
 ## Objective and exclusions
 
