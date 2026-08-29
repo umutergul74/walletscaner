@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T06:06:00Z
+updated_at_utc: 2026-08-29T17:14:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: R44 source 1252b2b and immutable Linux image 44e6beae implement a trade-only 15000ms queue-age breaker; targeted 51/51, typecheck/lint/build and validation-Linux 416/416 passed, with database integration unchanged from R43; next action is production preflight and a revision-ledgered ingestion-only canary, not an unrecorded deploy
+last_safe_checkpoint: R45 source f17d8216 and exact image bc17668d are live only on solana-ingestion; 10.4 hours of natural traffic produced 185 durable fail-closed watchdog releases at p50 15001ms, p95 15056ms, p99 15998ms and max 18374ms with zero restart/OOM/open incident; ledger revision 75 remains in_progress and the next action is a fresh read-only gate followed by revision-checked canary completion, not a blind redeploy
 ---
 
 # Walletscaner Work In Progress
@@ -690,3 +690,40 @@ anything; never infer deployment from the presence of the local image.
 - Render proves exact R45, CPU 0.20, memory 167,772,160 bytes and live false. The R44 container is
   still running at this checkpoint. Next exact mutation is an ingestion-only no-dependency recreate,
   then immediate identity/startup/backlog/coverage verification.
+
+## R45 natural-traffic audit — 2026-08-29 17:14 UTC
+
+- The interrupted recreate did complete. Production ingestion is exact R45 image
+  `sha256:bc17668d2eea1c28692ff819a23419e42548dfa30a0b9be12cc7fdc2e6033722`, container
+  `501f8cc817154ae2a2e839375f415ba0128a2435d04140d261d1e7a58f2537d7`, at 0.20 CPU/160 MiB with
+  live execution false. PostgreSQL and wallet-alpha identities are unchanged; all three have
+  restart/OOM `0/false`. Ledger revision 75 is still `in_progress`, so do not recreate or redeploy.
+- Across 568 health samples from 06:51 through 17:14 UTC, the trade source remained current/OK.
+  The wall-clock watchdog fired 185 `rpc-trade-queue-stale` durable releases: p50 15,001ms, p95
+  15,056ms, p99 15,998ms, maximum 18,374ms, with only one event above 16 seconds and none above
+  20 seconds. This is the required real-traffic evidence that R45 closes R44's 35-41 second and the
+  earlier 127-second blocked-head gap without increasing CPU/RAM or silently admitting stale work.
+- Current canonical flow is healthy: inbox/dead-letter/open incidents/unresolved-24h/signature queue
+  are all zero; latest pool and wallet trade were about four and 107 seconds old. Three startup
+  `backfill_truncated` incidents closed within 60 seconds. One late callback after a separately
+  durable bootstrap rejection logged `Trade backfill truncated for unknown active pool`; it did not
+  reopen coverage, create backlog or lose the fail-closed record, but its idempotent race handling
+  should be corrected in a separate bounded source phase rather than hidden in this canary.
+- Host free space is 15,909,076,992 bytes (79% used), available RAM about 1.04 GB and free swap about
+  1.99 GB. PostgreSQL is 22,676,782,103 bytes and WAL 654,311,424 bytes. Payload compaction has
+  recovered below its one-hour target (about 23 minutes beyond the 48-hour hot window), with 63
+  verified payload archive segments and 35 verified wallet compact segments and no pending/dead
+  segment. The 27-August payload partition becomes normally retirement-eligible at 30-August 00:00
+  UTC and is about 1.47 GB including indexes; no early retirement is authorized.
+- The exact 462,948,255-byte R45 transfer artifact remains on the server. Retire it only after
+  revision 76 completes the canary and a separate planned/in-progress ledger phase proves exact
+  path/size/SHA, the byte-identical local rollback artifact, running/loaded image identities and
+  current backup/headroom.
+- Alpha research is a separate operational bottleneck: 8,109 pending jobs, 8,106 ready, oldest ready
+  about 5.65 hours, P0/P1/P2 `8108/1/0`, no non-quarantine failures and no signals. Recent cycles
+  process 66-100 wallets without cycle errors, but producer revisions exceed background drain. Do
+  not spend shared-host CPU blindly; measure revision churn/coalescing and producer ownership first.
+- Latest daily dump remains independently sidecar/off-site acknowledged (28 August, 2,455,550,148
+  bytes, SHA-256 `c2e6f938...17bad`, about 21 hours old). A scheduled backup is approaching; do not
+  create an extra manual dump. The next exact action is a fresh bounded live gate, then either mark
+  R45 revision 76 complete or roll back on a newly observed hard failure.
