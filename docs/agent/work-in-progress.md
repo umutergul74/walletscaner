@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-29T20:58:48Z
+status: complete
+updated_at_utc: 2026-08-29T20:59:30Z
 owner: codex
 task: build and falsify a causal contextual-wallet survival strategy on the restored PostgreSQL clone, then implement only a future-only shadow path if the fixed chronological gates pass; do not deploy, enable paper, send Telegram alpha, or enable live execution in this task
-last_safe_checkpoint: the corrected immutable audit completed over 1370 exact-pool markets with verdict reject and decision hash e674a3a854411b59d52d5fc9cf4225d6608fdb9fb12c51e5d7bfb5c5b4d37fde; 49 contextual selections had -1.87% average, -2.94% average excluding best, 0.87 profit factor and 10.20% catastrophic loss; eight targeted tests, typecheck, lint, workspace build and the complete Linux/zstd 426-test gate pass, the temporary role is removed, and the next exact action is commit this coherent local research checkpoint without any deploy or production mutation
+last_safe_checkpoint: source/report/documentation commit cab33ad freezes contextual-wallet-survival-v1 as rejected with decision hash e674a3a854411b59d52d5fc9cf4225d6608fdb9fb12c51e5d7bfb5c5b4d37fde; eight targeted tests, typecheck, lint, workspace build and the complete Linux/zstd 426-test gate pass, the temporary role is removed, production remains unchanged, and any next task must start a fresh active checkpoint for the bounded future decision tape rather than deploy or tune this rejected selector
 ---
 
 # Walletscaner Work In Progress
