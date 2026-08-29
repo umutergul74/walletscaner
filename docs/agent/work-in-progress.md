@@ -499,3 +499,13 @@ anything; never infer deployment from the presence of the local image.
   `9915ecd12af45e5d828786c015ae2e0237691083b7e0952250ae5d43775e1494`. The next safe action is to
   export and hash the already tested R44 image locally, stage it on the server, verify/load it and
   then open a revision-checked ingestion-only canary before changing `.env.server` or a container.
+
+## R44 immutable transfer artifact — 2026-08-29 06:11 UTC
+
+- The tested local image was exported to the non-repository artifact
+  `walletscaner-worker-trade-latency-r44-20260829.tar.zst`. Its exact compressed size is
+  462,877,766 bytes and SHA-256 is
+  `54d9f8a4a1a4aaef7cd4df281fd385d56ad7bf9c816bb61c3bce43851bff35cf`.
+- Independent `zstd -t` passed and reported a 463,629,312-byte decoded stream. The temporary
+  uncompressed tar was removed only after that verification; the verified compressed artifact and
+  loaded local image remain. Production is still unchanged at ledger revision 67 and R43.
