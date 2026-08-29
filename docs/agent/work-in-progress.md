@@ -575,3 +575,16 @@ anything; never infer deployment from the presence of the local image.
 - The verified 462,877,766-byte transfer artifact still occupies server disk. Before removing only
   that exact file, prove its size/SHA again, prove the byte-identical local artifact, loaded R44 and
   exact R43 rollback image remain, and use a separate revision-checked retirement phase.
+
+## R44 transfer retirement armed — 2026-08-29 06:29 UTC
+
+- The local and server artifacts were rehashed at the exact expected 462,877,766 bytes and
+  SHA-256 `54d9f8a4...35cf`. Loaded R44 remains exact image `44e6beae...`; R43 rollback remains exact
+  image `e87020e7...`; running ingestion is exact R44 with restart/OOM `0/false`.
+- Ledger revisions 71/72 moved `r44-transfer-artifact-retirement` through `planned` to
+  `in_progress`; revision 72 canonical SHA-256 is
+  `bb85994db674df7957a70f24b29a48a66ddc3d696a17d3e0401cfcae934baad2`.
+- Next exact action is one guarded removal of
+  `/opt/walletscaner/deploy/walletscaner-worker-trade-latency-r44-20260829.tar.zst`, only if its
+  resolved path, size and SHA still match. Preserve all images, the local artifact, database, B2 and
+  services; immediately verify absence, disk gain, identities and flow before revision 73.
