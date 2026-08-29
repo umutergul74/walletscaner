@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T18:00:00Z
+updated_at_utc: 2026-08-29T20:58:48Z
 owner: codex
-task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
-last_safe_checkpoint: R46 source commit 53b5949 and immutable runtime/validation images e376cfd/ed7691a are fully proven; local transfer artifact SHA a505591b and 463454623 bytes passed zstd integrity; production remains exact R45 because the 17:35 UTC daily pg_dump is active under elevated single-CPU/I/O pressure, no rollout ledger phase or production mutation was opened, next action is to wait for dump completion plus normal off-site acknowledgement and then repeat resource/disk/flow/identity gates before revision 80
+task: build and falsify a causal contextual-wallet survival strategy on the restored PostgreSQL clone, then implement only a future-only shadow path if the fixed chronological gates pass; do not deploy, enable paper, send Telegram alpha, or enable live execution in this task
+last_safe_checkpoint: the corrected immutable audit completed over 1370 exact-pool markets with verdict reject and decision hash e674a3a854411b59d52d5fc9cf4225d6608fdb9fb12c51e5d7bfb5c5b4d37fde; 49 contextual selections had -1.87% average, -2.94% average excluding best, 0.87 profit factor and 10.20% catastrophic loss; eight targeted tests, typecheck, lint, workspace build and the complete Linux/zstd 426-test gate pass, the temporary role is removed, and the next exact action is commit this coherent local research checkpoint without any deploy or production mutation
 ---
 
 # Walletscaner Work In Progress
@@ -12,6 +12,106 @@ This is the durable resume point for the current storage incident. It contains n
 does not grant authority beyond the user's current request. On resume, compare this record with Git,
 the production ledger, backup files, archive manifests, containers and database state before
 repeating any step.
+
+## Active objective — contextual-wallet survival research v1
+
+- Replace the failed absolute strict-flow/global-wallet thesis with a falsifiable two-head research
+  model: terminal rug/unsellable hazard first, conditional executable return second. Use one
+  immutable record per exact pool and decision time; keep wallet realized PnL, bot followability,
+  pool risk and fill evidence separate.
+- Historical records already inspected through 2026-08-27 are model-development data, never an
+  untouched holdout. The first implementation phase is read-only against the restored PostgreSQL
+  clone and must use chronological expanding history, deterministic partial pooling, winsorized
+  model targets, raw tail evaluation, negative controls and explicit no-signal outcomes.
+- Acceptance before any future-shadow schema/worker: the locked policy must beat both the broad
+  managed-exit and market-only controls in later chronological windows; positive median and
+  average-ex-best, profit factor at least 1.30, best-winner share at most 30%, catastrophic/rug rate
+  at most 3%, no hidden missing-fill exclusion and stable distinct-market/day counts. Failure means
+  reject the policy rather than tune the same windows.
+- Production, migrations, Compose, Telegram delivery, paper portfolios, provider credentials and
+  live execution are excluded from this phase. `ENABLE_LIVE_EXECUTION=false` remains invariant.
+- Preserve the four pre-existing untracked deploy remnants. Do not touch R46 artifacts or repeat
+  its build/test work. If this turn is interrupted, inspect git status and this section before
+  running any research command or changing a source file.
+
+## Contextual-survival local implementation — 2026-08-29 20:40 UTC
+
+- Added immutable strategy version `contextual-wallet-survival-v1-20260829`. It processes one
+  exact-pool decision chronologically, admits an outcome only when its `frozen_at` is earlier than
+  the next decision, models terminal rug/unsellable hazard before conditional non-hazard return,
+  uses partial pooling across market context and prior wallet evidence, and applies a one-sided
+  uncertainty gate before selection.
+- Selection is an online top-decile rule after a 100-mature-market burn-in. Model learning
+  winsorizes return at -100/+100 while evaluation preserves the raw positive tail and terminal rug
+  floor. All policies share the same chronological/embargo boundaries. Controls are broad
+  risk-passed flow, market-only scoring and a deterministic shuffled-wallet-identity negative
+  control; a contextual pass must beat both later controls without lowering fixed tail gates.
+- Six unit tests pass and root typecheck passes. The audit entrypoint is bounded to a 240-second,
+  repeatable-read, read-only transaction over the restored PostgreSQL clone and emits no wallet
+  identifiers. It selects the first source-linked `evidence-v1` exact-pool decision at age >=5m,
+  uses only mature `tp15-sl20-20m` outcomes, and defines supporters as non-creator/non-pool exact
+  pool entries in the prior ten minutes.
+- No query/report has run yet. No source claim is validated and no future shadow, paper strategy,
+  migration, server mutation or deployment is authorized. Next exact action is compile/test the
+  new audit entrypoint, run it once on the disposable local clone, remove the temporary local
+  read-only credential, and record the fixed-gate verdict without tuning the same history.
+
+## Contextual-survival first falsification — 2026-08-29 20:42–20:43 UTC
+
+- The bounded local audit completed in 27 seconds over 1,370 eligible markets from 12 July through
+  27 August. Its temporary role was removed and the clone has zero roles with that name. The fixed
+  policy was rejected: 40 contextual-wallet selections returned -2.03% average, -3.35% average
+  excluding the best winner, 0.86 profit factor and 12.5% catastrophic losses despite a 75% hit
+  rate and +13.62% median. No later holdout selection survived the risk-uncertainty gate.
+- Review showed the five catastrophic selected outcomes were not flagged `rugged`, but all were
+  <=-57%. The model correctly classified them as terminal hazards for the hazard count, yet also
+  left them in the conditional non-rug return head. That violated the declared two-head separation;
+  it was corrected without changing a threshold or using the result to select a new policy. A new
+  test proves a non-rug <=-80% loss raises the next decision's survival risk and is not treated as a
+  normal conditional return. Seven tests and typecheck pass.
+- The first report/hash is diagnostic only and will be atomically overwritten by one rerun on the
+  same restored snapshot. A second rejection must remain a rejection; do not tune the 12% survival
+  UCB, top-decile rule, priors or acceptance gates on this history.
+
+## Contextual-survival corrected final audit — 2026-08-29 20:52–20:58 UTC
+
+- Two implementation-contract corrections were completed before freezing the result: non-rug
+  <=-80% outcomes now enter only the terminal-hazard head, and context evidence no longer inflates
+  wallet reliability by double-counting the same completed market already present in global wallet
+  history. Neither correction changed a prior, threshold, candidate grid or acceptance gate.
+- The final read-only clone audit covers 1,370 exact-pool decisions and has decision SHA-256
+  `e674a3a854411b59d52d5fc9cf4225d6608fdb9fb12c51e5d7bfb5c5b4d37fde`. Verdict is `reject`.
+  Forty-nine contextual selections returned -1.87% average, -2.94% average excluding best, 0.87
+  profit factor and 10.20% catastrophic-loss rate despite +13.63% median and 71.43% hit rate.
+  Validation failed; holdout 1 selected none and holdout 2 only one.
+- All selected decisions occupied the same launch-program/context bucket. Winners and catastrophic
+  outcomes overlapped on persisted liquidity, volume, transaction count, buy share, turnover, pool
+  age and top-10 concentration. This falsifies another static threshold search over those fields.
+  Missing decision evidence is creator/funder/bundle independence, exact-pool two-way executable
+  quotes/sellability, short price/liquidity paths and regime/drift state.
+- The temporary local audit role is absent. No migration, production database row, server artifact,
+  service, Telegram, paper portfolio or live-execution state changed. The dated/latest Markdown and
+  ignored JSON reports contain no supporter wallet identities.
+- Verification passes: eight targeted strategy tests; root typecheck; full ESLint; workspace
+  production build; and the complete current-source Linux/zstd suite with 91 test files/426 tests
+  passed plus 49 intentional database-environment skips. The native Windows suite independently
+  reached the same 426 passing tests but could not run three archive cases because no local `zstd`
+  binary exists; the Linux gate ran and passed those exact archive tests.
+- This history cannot authorize a shadow or paper version. The next alpha phase must implement and
+  cost a bounded future decision tape for the missing evidence described in
+  `docs/research/contextual-wallet-survival-v1.md`; do not deploy this rejected selector.
+
+## Deferred operational checkpoint — R46 producer admission
+
+- R46 remains implemented and validated at source commit `53b5949dce301f6f20dc9f6d0fea0831a23b80d4`,
+  runtime image `sha256:e376cfd6704cd5a0ad799e338b9a3d57ef9c4204eccba81a5efdd439fdf2380b`,
+  validation image `sha256:ed7691a1c3fc86b50850520e1e85e84ea2f651a5b4d33d7bd9b5cd1dcc666a52`
+  and 463,454,623-byte local transfer artifact SHA-256
+  `a505591b7610e68e4b3f34ddfd80caf4b436de91695d2e81d6203e5cf035560c`.
+- Production remains exact R45/revision 79. No R46 rollout ledger phase was opened. A future
+  separately authorized rollout must begin by rechecking backup/off-site acknowledgement,
+  disk/resource/flow identities and the actual production version; it must not assume the
+  interrupted 17:35 UTC dump is still active or blindly resume at revision 80.
 
 ## Active objective — R46 wallet-alpha producer admission
 

@@ -3,6 +3,27 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-29 contextual wallet survival falsification
+
+- **Implemented and locally audited:** immutable research version
+  `contextual-wallet-survival-v1-20260829` uses one exact-pool decision, causal outcome admission,
+  separate terminal-hazard/conditional-return heads, context/wallet partial pooling, an online
+  top-decile rule, a conservative survival UCB and common chronological embargo windows. Eight
+  unit tests, typecheck and targeted lint pass. No production path was changed.
+- **Rejected, not alpha:** the restored PostgreSQL 16 audit covered 1,370 eligible markets. Its 49
+  contextual-wallet selections had -1.87% average, -2.94% average excluding the best winner, 0.87
+  profit factor and 10.20% catastrophic-loss rate despite a +13.63% median and 71.43% hit rate.
+  Validation failed and later windows had insufficient selections. The result does not authorize
+  a future shadow, paper portfolio, Telegram signal or live execution.
+- **Root cause:** all selections occupied the same launch-program/context bucket and winners versus
+  catastrophic losses overlapped on persisted liquidity, volume, transaction count, buy share,
+  turnover, age and top-10 concentration. Address-level wallet history cannot resolve shared
+  funder/bundle/creator clusters, and historical market snapshots are not executable sell evidence.
+- **Next measurable gate:** collect a bounded future decision tape with Token-2022/program controls,
+  exact-pool two-way quote surfaces, creator/funder/bundle identity graph, cluster-adjusted early
+  flow and short price/liquidity paths. Only then freeze a new survival-first hypothesis. See
+  `docs/research/contextual-wallet-survival-v1.md` and the dated audit report.
+
 ## 2026-08-29 R45 exact-pool watchdog and R46 queue-admission work
 
 - **Operational — R45 ingestion:** only `solana-ingestion` runs immutable

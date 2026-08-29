@@ -27,6 +27,7 @@
     "research:evidence-replay": "tsx scripts/research/evidence-replay.ts",
     "research:strategy-search": "tsx scripts/research/evidence-strategy-search.ts",
     "research:token-alpha-v4-audit": "tsx scripts/research/token-alpha-v4-audit.ts",
+    "research:contextual-survival-v1-audit": "tsx scripts/research/contextual-survival-v1-audit.ts",
     "research:backfill-status": "tsx scripts/research/backfill-status.ts",
     "research:historical-data-quality": "tsx scripts/research/historical-data-quality.ts",
     "research:wallet-alpha": "tsx scripts/research/wallet-alpha.ts",
