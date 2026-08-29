@@ -3,6 +3,33 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-29 R44 bounded exact-pool trade latency rollout
+
+- **Operational — R44 ingestion:** only `solana-ingestion` was recreated on immutable
+  `trade-latency-r44-20260829`, image `sha256:44e6beae6b0e...`, source `1252b2b93e98...`.
+  It retains 0.20 CPU, 160 MiB, live execution false and restart/OOM `0/false`; PostgreSQL,
+  wallet-alpha and all other service identities were unchanged. The source-level option is disabled
+  by default and only the exact-pool trade lane sets `maximumLiveQueueDelayMs=15000`.
+- **Correctness behavior:** the former one-address ordered lane reached 127.1 seconds queue delay,
+  high-water 1,620 and 5,676 purged notifications before its existing fail-closed capacity release.
+  R44 invokes the same durable persist-before-unsubscribe coverage path once live queue age reaches
+  15 seconds. It preserves the admitted head, purges only the released pool's queued work and leaves
+  the affected interval incomplete; it does not add same-address concurrency or Helius HTTP spend.
+- **Operational canary:** startup's two capped gaps closed after 60 seconds as unreconciled and
+  alpha-excluded. Four discovery programs then became open/OK/current, canonical backlog drained
+  `236 -> 51 -> 0`, and dead-letter/open incident/unresolved-finality/signature backlog were zero.
+  R44 diagnostics were present; post-deploy trade delay remained below 5.243 seconds with no new
+  pressure/purge, parser error, restart or OOM. Ledger revision 70 completed the canary.
+- **Operational cleanup and recovery:** the 462,877,766-byte R44 transfer artifact was removed only
+  after local/server SHA-256, loaded R44 and exact R43 rollback proof. It recovered 462,884,864
+  allocation bytes; R44, R43, the byte-identical local artifact, database and B2 data remain.
+  Ledger revision 73 completed removal verification.
+- **Waiting — not validated:** a natural post-R44 saturated pool must demonstrate fail-closed release
+  near 15 seconds. Storage is flowing and the verified 26-August payload partition was retired by
+  normal guarded maintenance, but sustainability still requires the clean post-retirement 24-hour
+  disk/database slope. The current `DEGRADED` state is storage-only: database warning threshold,
+  roughly two-hour compaction lag and an immature runway window; it is not a discovery outage.
+
 ## 2026-08-29 R43 discovery/ledger reliability rollout
 
 - **Operational — exact R43 ingestion:** `solana-ingestion` runs immutable

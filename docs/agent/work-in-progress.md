@@ -588,3 +588,23 @@ anything; never infer deployment from the presence of the local image.
   `/opt/walletscaner/deploy/walletscaner-worker-trade-latency-r44-20260829.tar.zst`, only if its
   resolved path, size and SHA still match. Preserve all images, the local artifact, database, B2 and
   services; immediately verify absence, disk gain, identities and flow before revision 73.
+
+## R44 natural saturation finding — 2026-08-29 06:33 UTC
+
+- The exact transfer file was removed and revision 73/SHA-256
+  `8267911fc993bd3b1b675c8ee31c002f5af8937b4f68c0bd1dcce51222c42b92` completed verification.
+  Direct free space moved 17,410,514,944 -> 17,873,399,808 bytes, a 462,884,864-byte allocation
+  gain. R44/R43 images, local artifact, database, B2 and all services remain.
+- Natural traffic then activated `rpc-trade-queue-stale`: pressure count became one and 14 queued
+  notifications were purged through the durable coverage release. Discovery/canonical flow stayed
+  healthy, proving fail-closed behavior, but the triggering health sample reported 35,187ms queue
+  delay against the configured 15,000ms threshold.
+- Root cause is exact: R44 checks queue age only when an item begins processing. If the admitted
+  per-address head is blocked in RPC timeout/retry work, no queued item reaches that check at the
+  threshold. R44 reduced the prior 127,100ms incident but does not enforce a hard 15-second wall
+  bound.
+- Do not call the R44 natural breaker validated. Implement a bounded one-timer-per-address watchdog
+  that examines only queued live work, fires pressure while the admitted head may remain in flight,
+  is cleared on unsubscribe/stop, and records the observed pressure age. Preserve ordered admission,
+  durable-before-unsubscribe release and default-disabled behavior. This is R45; production remains
+  safely on R44 until its tests and immutable artifact pass.
