@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-28T23:32:00Z
+updated_at_utc: 2026-08-29T00:06:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 64 completed the transparent R43 transfer-retirement verification with actual observed values; both R43 services are accepted and the next action is read-only observation of the normal guarded maintenance cycle after the 2026-08-29 00:00 UTC partition boundary
+last_safe_checkpoint: the first normal post-boundary maintenance made chain_event_payloads_20260826 absent at 000553Z and free space rose from 17598472192 to 18864463872 bytes; no manual DROP ran, and the next action is full read-only manifest/hold/log/flow/service verification before recording the autonomous retirement in the ledger
 ---
 
 # Walletscaner Work In Progress
@@ -386,6 +386,18 @@ repeating any step.
   `05dc21dc7e7c9c2767889df9a8a3d7ce8da7a8bf4400f0fd0c4e6a936c3684be`; it explicitly records the
   17,663,750,144-byte removal-time observation and 458,547,200-byte allocation gain. The transfer
   artifact remains absent and no second removal or service/data mutation occurred.
+
+## Autonomous 26-August payload retirement observed — 2026-08-29 00:06 UTC
+
+- The 48-hour hot-window boundary passed at 00:00 UTC. The partition was still present at 00:05:22,
+  then the read-only monitor observed `chain_event_payloads_20260826` absent at 00:05:53 UTC during
+  the first normal maintenance cycle. No manual maintenance command or `DROP` was run.
+- Filesystem free space moved from the last pre-retirement observation of 17,598,472,192 bytes to
+  18,864,463,872 bytes. This point-in-time delta is 1,265,991,680 bytes; concurrent ingestion means
+  it must not be substituted for the relation's exact pre-drop 1,270,988,800-byte catalog size.
+- Next exact action is read-only verification of the completed maintenance record, verified archive
+  manifest/Object Lock evidence, unresolved hold count, database/flow state and unchanged service
+  identities. Only after all gates pass should a new ledger verification phase be recorded.
 
 ## Rollback and next exact action
 
