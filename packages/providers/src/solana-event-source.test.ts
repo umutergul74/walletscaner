@@ -2088,7 +2088,10 @@ describe("StandardSolanaEventSource", () => {
     const transactionGate = new Promise<void>((resolve) => {
       releaseTransactions = resolve;
     });
-    const queuePressure: Array<{ reason: "high-water" | "full"; queuedSignatures: number }> = [];
+    const queuePressure: Array<{
+      reason: "stale" | "high-water" | "full";
+      queuedSignatures: number;
+    }> = [];
     const fetchImpl = async (_input: RequestInfo | URL, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { method: string };
       if (request.method === "getTransaction") await transactionGate;
@@ -2168,6 +2171,83 @@ describe("StandardSolanaEventSource", () => {
     expect(source.getDiagnostics()).toMatchObject({
       inFlightSignatureCount: 0,
       activeTransactionWorkerCount: 0,
+      queuedSignatureCount: 0
+    });
+    await source.stop();
+  });
+
+  it("reports a stale ordered live queue before depth pressure can hide latency", async () => {
+    const cursorStore = new MemoryCursorStore();
+    const socket = new FakeSocket();
+    let nowMs = 1_700_000_000_000;
+    let releaseFirstTransaction: (() => void) | undefined;
+    const firstTransactionGate = new Promise<void>((resolve) => {
+      releaseFirstTransaction = resolve;
+    });
+    let transactionRequestCount = 0;
+    const pressure: Array<{ reason: string; queuedSignatures: number }> = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["PoolStale111"],
+      cursorStore,
+      now: () => new Date(nowMs),
+      maximumLiveQueueDelayMs: 1_000,
+      maxQueuedSignatures: 10,
+      queuePressureRatio: 0.8,
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { method: string };
+        if (request.method === "getTransaction") {
+          transactionRequestCount += 1;
+          if (transactionRequestCount === 1) await firstTransactionGate;
+        }
+        const result =
+          request.method === "getSignaturesForAddress"
+            ? []
+            : {
+                blockTime: 1_700_000_000,
+                transaction: { message: { instructions: [] } },
+                meta: {}
+              };
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      onQueuePressure: (event) => {
+        pressure.push({
+          reason: event.reason,
+          queuedSignatures: event.queuedSignatures
+        });
+      },
+      webSocketFactory: () => socket
+    });
+    const accepted: string[] = [];
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    socket.open();
+    socket.message({ id: 1, result: 99 });
+    socket.message(standardLogNotification(99, "stale-head", 100));
+    socket.message(standardLogNotification(99, "stale-queued", 101));
+    await waitUntil(
+      () =>
+        source.getDiagnostics().activeTransactionWorkerCount === 1 &&
+        source.getDiagnostics().queuedSignatureCount === 1
+    );
+
+    nowMs += 1_001;
+    releaseFirstTransaction?.();
+    await waitUntil(() => source.getDiagnostics().activeTransactionWorkerCount === 0);
+
+    expect(pressure).toEqual([{ reason: "stale", queuedSignatures: 1 }]);
+    expect(accepted).toEqual(["stale-head", "stale-queued"]);
+    expect(source.getDiagnostics()).toMatchObject({
+      maximumLiveQueueDelayMs: 1_000,
+      lastTransactionQueueDelayMs: 1_001,
+      maxTransactionQueueDelayMs: 1_001,
+      queuePressureCount: 1,
+      droppedSignatureCount: 0,
       queuedSignatureCount: 0
     });
     await source.stop();

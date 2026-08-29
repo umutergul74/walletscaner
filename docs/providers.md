@@ -90,6 +90,14 @@ one scan may run and at most one follow-up scan may be requested while it runs. 
 and database amplification during a rapid close storm without weakening the 500-signature repair
 cap or converting a truncated interval into complete coverage.
 
+Exact-pool standard-WebSocket trade observation has a separate optional live queue-age breaker.
+`RPC_TRADE_MAX_QUEUE_DELAY_MS` applies only to that trade source; discovery leaves the provider
+option unset. When an ordered trade head exceeds the bound, source diagnostics record `stale`
+pressure and the worker uses its existing persist-before-unsubscribe coverage release. The already
+admitted head may finish, but queued work for only that address is purged and the interval remains
+explicitly incomplete. This bounds stale CPU/RPC work without same-address concurrent cursor writes
+or unbudgeted Helius HTTP fallback.
+
 Some public RPC providers acknowledge several independent `logsSubscribe` sockets from one host
 but silently deliver notifications only on a subset of them. Discovery can therefore split the
 configured programs across two standard WebSocket providers with

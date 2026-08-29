@@ -230,6 +230,12 @@ const maxVolumeLiquidityRatio = Number(process.env.MAX_VOLUME_LIQUIDITY_RATIO ??
 const rpcTradeMaxActivePools = boundedInteger(process.env.RPC_TRADE_MAX_ACTIVE_POOLS, 3, 0, 20);
 const rpcTradeMinimumObservationHoldMs =
   boundedInteger(process.env.RPC_TRADE_MINIMUM_OBSERVATION_HOLD_SECONDS, 300, 30, 3_600) * 1_000;
+const rpcTradeMaximumQueueDelayMs = boundedInteger(
+  process.env.RPC_TRADE_MAX_QUEUE_DELAY_MS,
+  15_000,
+  1_000,
+  60_000
+);
 const heliusWebhookMaxPoolAddresses = Number(process.env.HELIUS_WEBHOOK_MAX_POOL_ADDRESSES ?? 20);
 const standardSeenSignatureLimit = boundedInteger(
   process.env.SOLANA_SEEN_SIGNATURE_LIMIT,
@@ -692,6 +698,7 @@ const liveTradeSource: SolanaEventSource | null =
             process.env.RPC_TRADE_MAX_CONCURRENT_TRANSACTION_FETCHES ?? 128
           ),
           maxQueuedSignatures: Number(process.env.RPC_TRADE_MAX_QUEUED_SIGNATURES ?? 2_000),
+          maximumLiveQueueDelayMs: rpcTradeMaximumQueueDelayMs,
           seenSignatureLimit: standardSeenSignatureLimit,
           queuePressureRatio: Number(process.env.RPC_TRADE_QUEUE_PRESSURE_RATIO ?? 0.8),
           onQueuePressure: handleTradeQueuePressure,
@@ -2552,7 +2559,7 @@ async function releaseRpcTradeObservation(
 
 function handleTradeQueuePressure(pressure: {
   address: string;
-  reason: "high-water" | "full";
+  reason: "stale" | "high-water" | "full";
   queuedSignatures: number;
   maxQueuedSignatures: number;
 }): void {

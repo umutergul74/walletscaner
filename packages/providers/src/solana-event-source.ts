@@ -243,6 +243,7 @@ export interface SolanaEventSourceDiagnostics {
   activeTransactionWorkerCount?: number;
   maxConcurrentTransactionFetches?: number;
   maxQueuedSignatures?: number;
+  maximumLiveQueueDelayMs?: number | null;
   droppedSignatureCount?: number;
   purgedSignatureCount?: number;
   durableSignatureAdmissionCount?: number;
@@ -350,11 +351,16 @@ export interface StandardSolanaEventSourceOptions {
   handlerRejectionRetryDelayMs?: number;
   maxConcurrentTransactionFetches?: number;
   maxQueuedSignatures?: number;
+  /**
+   * Optional live queue-age circuit breaker. The admitted head is still processed,
+   * while the owner may fail closed and unsubscribe the saturated address.
+   */
+  maximumLiveQueueDelayMs?: number;
   seenSignatureLimit?: number;
   queuePressureRatio?: number;
   onQueuePressure?: (pressure: {
     address: string;
-    reason: "high-water" | "full";
+    reason: "stale" | "high-water" | "full";
     queuedSignatures: number;
     maxQueuedSignatures: number;
   }) => void;
@@ -448,6 +454,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly handlerRejectionRetryDelayMs: number;
   private readonly maxConcurrentTransactionFetches: number;
   private readonly maxQueuedSignatures: number;
+  private readonly maximumLiveQueueDelayMs: number | null;
   private readonly seenSignatureLimit: number;
   private readonly queuePressureThreshold: number;
   private readonly allowConcurrentLiveSignaturesPerAddress: boolean;
@@ -468,7 +475,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly automaticBackfillAddresses = new Set<string>();
   private readonly automaticBackfillRerunAddresses = new Set<string>();
   private readonly truncatedBackfillAddresses = new Set<string>();
-  private readonly queuePressureByAddress = new Map<string, "high-water" | "full">();
+  private readonly queuePressureByAddress = new Map<string, "stale" | "high-water" | "full">();
   private readonly addressTaskTails = new Map<string, Promise<void>>();
   private readonly activeTransactionAddresses = new Set<string>();
   private readonly durableRefillAddresses = new Set<string>();
@@ -579,6 +586,10 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       options.maxQueuedSignatures ?? 2_000,
       "maxQueuedSignatures"
     );
+    this.maximumLiveQueueDelayMs =
+      options.maximumLiveQueueDelayMs === undefined
+        ? null
+        : positiveInteger(options.maximumLiveQueueDelayMs, "maximumLiveQueueDelayMs");
     this.allowConcurrentLiveSignaturesPerAddress =
       options.allowConcurrentLiveSignaturesPerAddress ?? false;
     if (this.allowConcurrentLiveSignaturesPerAddress && !options.liveSignatureStore) {
@@ -1206,6 +1217,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       activeTransactionWorkerCount: this.activeTransactionWorkers,
       maxConcurrentTransactionFetches: this.maxConcurrentTransactionFetches,
       maxQueuedSignatures: this.maxQueuedSignatures,
+      maximumLiveQueueDelayMs: this.maximumLiveQueueDelayMs,
       pendingSubscriptionRequestCount: this.requestAddress.size,
       configuredAddressCount: this.addressLogIncludes.size,
       subscribedAddressCount: this.subscriptionByAddress.size,
@@ -1603,8 +1615,11 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       if (nextIndex < 0) return;
       const [next] = this.liveSignatureQueue.splice(nextIndex, 1);
       if (!next) return;
-      if (this.liveSignatureQueue.length <= Math.floor(this.queuePressureThreshold / 2)) {
-        this.queuePressureByAddress.clear();
+      if (
+        this.liveSignatureQueue.length <= Math.floor(this.queuePressureThreshold / 2) &&
+        this.queuePressureByAddress.get(next.address) !== "stale"
+      ) {
+        this.queuePressureByAddress.delete(next.address);
       }
       this.queuedSignatures.delete(next.signature);
       if (!this.allowConcurrentLiveSignaturesPerAddress) {
@@ -1660,9 +1675,12 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     }
   }
 
-  private notifyQueuePressure(address: string, reason: "high-water" | "full"): void {
+  private notifyQueuePressure(
+    address: string,
+    reason: "stale" | "high-water" | "full"
+  ): void {
     const previous = this.queuePressureByAddress.get(address);
-    if (previous === "full" || previous === reason) return;
+    if (previous === "full" || previous === "stale" || previous === reason) return;
     this.queuePressureByAddress.set(address, reason);
     this.diagnostics.queuePressureCount = (this.diagnostics.queuePressureCount ?? 0) + 1;
     try {
@@ -1699,6 +1717,15 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         this.diagnostics.maxTransactionQueueDelayMs ?? 0,
         queueDelayMs
       );
+      if (
+        this.maximumLiveQueueDelayMs !== null &&
+        queueDelayMs >= this.maximumLiveQueueDelayMs
+      ) {
+        this.diagnostics.status = "degraded";
+        this.notifyQueuePressure(address, "stale");
+      } else if (this.queuePressureByAddress.get(address) === "stale") {
+        this.queuePressureByAddress.delete(address);
+      }
     }
 
     try {

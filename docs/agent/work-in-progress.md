@@ -1,9 +1,9 @@
 ---
-status: waiting
-updated_at_utc: 2026-08-29T00:08:00Z
+status: active
+updated_at_utc: 2026-08-29T06:00:00Z
 owner: codex
-task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: ledger revision 67 verified autonomous guarded retirement of chain_event_payloads_20260826 with manifest 99 retained in Governance, zero holds/blocks, 20355218455-byte DB and 18869415936-byte free disk; R43 flow is operational and the remaining gates are a clean 24h storage slope plus alpha P1 fairness/equilibrium observation
+task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
+last_safe_checkpoint: read-only 0844 TRT review proved R43 discovery current and error-free but the one-address ordered trade lane reached 1050 queued signatures and 113990ms queue delay on a roughly 9-10 notifications-per-second pool before fail-closed release purged 1081 queued items; next action is a tested trade-only maximum queue-delay circuit breaker, not a concurrency or provider-budget increase
 ---
 
 # Walletscaner Work In Progress
@@ -419,3 +419,34 @@ repeating any step.
   reserve runway, compaction cursor progress and archive/compact backlog. In the same future read-only
   review, measure P1 producer/consumer slope and oldest-lane age; P2 signal work must remain current.
   Only a new measured deficit should open another implementation/deployment phase.
+
+## 08:44 TRT read-only flow review — 2026-08-29 06:00 UTC
+
+- R43 discovery is operational: all four program sources are open with reconnect attempt zero,
+  797 consecutive healthy samples, no drops, queue pressure, ACK/heartbeat timeout, handler error
+  or open coverage incident. The only four incidents in the eight-hour window were startup gaps;
+  they closed unreconciled and remain correctly excluded from alpha coverage. Health-sample
+  notification-to-observation latency was approximately 0.98s p50, 1.25s p95 and 1.36s p99.
+- Canonical flow was current at backlog 3/13.6s, dead-letter zero, fresh pool/swap/wallet-trade
+  evidence, signature backlog zero and unresolved 24-hour finality zero. Wallet alpha drained from
+  more than 8,500 pending revisions to hundreds; priority one held one normal ready item plus the
+  intentional `evidence_limit` quarantine, and priority two remained current at zero.
+- The separate exact-pool trade source exposed a real saturation incident. One configured pool,
+  ordered per address and limited by `SOLANA_TRANSACTION_REQUEST_INTERVAL_MS=125`, saw queue depth
+  rise 0 -> 352 -> 618 -> 721 -> 852 -> 1,050 while queue delay rose to 113,990ms. The existing
+  high-water guard then durably marked coverage incomplete and purged 1,081 queued notifications;
+  there was no hidden admission or false completeness, but more than 100 seconds of stale work was
+  spent before the correct fail-closed outcome. Eight-hour logs show 54 capacity rotations, 49
+  cursorless initial backfill truncations and one queue high-water release.
+- Do not enable same-address concurrent cursor writes: the ordered cursor invariant and lack of a
+  trade durable-signature store make that unsafe. Do not route every fetch through Helius: observed
+  request volume would exceed the one-million-credit free allocation. Implement a trade-only,
+  bounded maximum live queue-delay option that invokes the existing durable coverage-release path
+  well before the 2,000-item queue limit. It must be disabled by default for other source users,
+  emit diagnostics, preserve the admitted head and purge only the released address's queued work.
+- Storage remains a parallel waiting gate, not forgotten: DB was 21,200,059,415 bytes and disk free
+  18,026,479,616 bytes. The latest maintenance run completed, compacted 8,250 payloads and advanced
+  oldest uncompacted evidence from 01:59 to 03:46 UTC, but the resulting 7,232-second lag is still
+  above the one-hour target. The 26-August partition remains absent, manifest 99 remains verified,
+  archive/compact dead-letter and mismatch counts are zero, and a clean 24-hour slope is still
+  required before sustainability can be validated.
