@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:31:00Z
+updated_at_utc: 2026-08-29T17:53:00Z
 owner: codex
 task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
-last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; live alpha diagnosis found 8108 pending jobs, 7814 after the latest cycles, 4401 processed over 64 recent cycles but net +930, dominated by 7477 price-enrichment wallets; R46 now gates only redundant price-enrichment revisions and leaves trade/entry producers unconditional after concurrency review; memory 19/19 and PostgreSQL16 evidence 34/34 pass, next action is full exact Linux/zstd validation and immutable image proof before any production mutation
+last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; R46 source commit 53b5949 and immutable runtime image e376cfd are proven; exact validation image ed7691a passed Node24/Linux typecheck plus 418/418 tests with 49 intentional no-DB skips and then 34/34 PostgreSQL16 integration tests with its temporary role removed; production remains exact R45 and the next action is a fresh read-only production preflight before opening any R46 rollout phase
 ---
 
 # Walletscaner Work In Progress
@@ -61,6 +61,26 @@ repeating any step.
   WAL. The 2.7-second outer candidate scan was diagnostic-only and is not part of the write path.
 - Next action is commit the coherent R46 source/tests/docs/recipe, build from exact R45, and run the
   exact Linux/zstd full suite plus targeted PostgreSQL 16 gate. Production remains R45/revision 79.
+
+## R46 exact artifact validation — 2026-08-29 17:53 UTC
+
+- The coherent source/test/documentation change is commit
+  `53b5949dce301f6f20dc9f6d0fea0831a23b80d4`. The immutable runtime image is
+  `sha256:e376cfd6704cd5a0ad799e338b9a3d57ef9c4204eccba81a5efdd439fdf2380b` and
+  carries the same complete source revision plus release
+  `alpha-producer-admission-r46-20260829`.
+- Validation derivative
+  `sha256:ed7691a1c3fc86b50850520e1e85e84ea2f651a5b4d33d7bd9b5cd1dcc666a52`
+  was built from the exact R45 validation base with only the R46 changed files. Node 24/Linux
+  typecheck and the complete zstd/Python/Compose-aware suite pass: 418/418 tests, with 49
+  intentional skips that require a database URL.
+- The exact validation image then passed the complete PostgreSQL 16 evidence integration suite
+  34/34 against the disposable local clone. The temporary superuser and its owned objects were
+  reassigned/removed after the run; no test credential remains.
+- Production is still exact R45 and ledger revision 79. Before any mutation, refresh live execution,
+  backup acknowledgement, disk/WAL/temp/RAM headroom, protected-project inventory, flow, alpha
+  queue baseline and exact container/image identity; open the revision-checked rollout ledger only
+  if every hard gate passes.
 
 ## Objective and exclusions
 
