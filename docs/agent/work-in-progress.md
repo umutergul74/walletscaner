@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:59:00Z
+updated_at_utc: 2026-08-29T18:00:00Z
 owner: codex
 task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
 last_safe_checkpoint: R46 source commit 53b5949 and immutable runtime/validation images e376cfd/ed7691a are fully proven; local transfer artifact SHA a505591b and 463454623 bytes passed zstd integrity; production remains exact R45 because the 17:35 UTC daily pg_dump is active under elevated single-CPU/I/O pressure, no rollout ledger phase or production mutation was opened, next action is to wait for dump completion plus normal off-site acknowledgement and then repeat resource/disk/flow/identity gates before revision 80
@@ -97,6 +97,10 @@ repeating any step.
   `8,041/474/0`, with 7,924 price-enrichment rows carrying 17,201 uncompleted revisions. Recent
   cycles have no process crash, but producers continue to exceed useful consumption and two new
   per-wallet processing failures raised the failed count to three; this confirms R46 is needed.
+- The three error rows are classified, not unexplained data loss: two are transient bounded-probe
+  statement timeouts created at 17:43 UTC while database/backup pressure was high; one is the
+  intentional 10,000-trade safety-limit quarantine already known for a pathological wallet. They
+  remain revision-safe for retry/quarantine, P2 is zero, and R46 does not rewrite or clear them.
 - A new daily `pg_dump` generation started at `2026-08-29T17:35:17Z` and was still running at the
   preflight. One-minute load briefly measured 3.01 on the single CPU and host I/O pressure was
   elevated. Therefore transfer, `docker load` and ingestion recreate are deliberately not started
