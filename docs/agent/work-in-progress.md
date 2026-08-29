@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:14:00Z
+updated_at_utc: 2026-08-29T17:21:18Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: R45 source f17d8216 and exact image bc17668d are live only on solana-ingestion; 10.4 hours of natural traffic produced 185 durable fail-closed watchdog releases at p50 15001ms, p95 15056ms, p99 15998ms and max 18374ms with zero restart/OOM/open incident; ledger revision 75 remains in_progress and the next action is a fresh read-only gate followed by revision-checked canary completion, not a blind redeploy
+last_safe_checkpoint: R45 source f17d8216 and exact image bc17668d are operational only on solana-ingestion; ledger revision 76 SHA 95786f13 completes its 10.48-hour canary with 185 durable watchdog releases at p95 15056ms, p99 15998ms and max 18374ms, restart/OOM 0/false and backlog/dead/open 0/0/0; next action is a separate revision-checked retirement of only the exact 462948255-byte server transfer artifact after hash/rollback proof
 ---
 
 # Walletscaner Work In Progress
@@ -727,3 +727,17 @@ anything; never infer deployment from the presence of the local image.
   bytes, SHA-256 `c2e6f938...17bad`, about 21 hours old). A scheduled backup is approaching; do not
   create an extra manual dump. The next exact action is a fresh bounded live gate, then either mark
   R45 revision 76 complete or roll back on a newly observed hard failure.
+
+## R45 canary completed — 2026-08-29 17:21 UTC
+
+- A fresh 17:19 UTC health gate remained clean: canonical backlog/dead-letter/open coverage incident
+  were `0/0/0`, unresolved 24-hour finality and signature backlog were zero, finality pending was
+  seven fresh items, last pool/wallet trade ages were 5.6/24.6 seconds, and archive pending/verify
+  pending/dead were `0/0/0`. Ingestion, PostgreSQL and wallet-alpha remained restart/OOM-free.
+- Revision-checked ledger revision 76/SHA-256
+  `95786f13ba2685f5f7a4da27a2ed353d669de1297abd3387af7ef74c9b384954` completed
+  `r45-trade-watchdog-ingestion-canary`. This changed only the machine-readable rollout record; no
+  service, configuration, database row, archive object or payload was changed.
+- R45 is operational. Storage equilibrium and alpha queue equilibrium remain separate unvalidated
+  gates. Next, open a new exact transfer-artifact retirement phase; do not remove any file before
+  revision-checked planned/in-progress records and local/server SHA plus rollback-image proof.
