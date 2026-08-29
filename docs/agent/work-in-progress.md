@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-29T22:09:26Z
+status: complete
+updated_at_utc: 2026-08-29T22:12:09Z
 owner: codex
 task: implement a bounded future-only exact-pool alpha decision tape for survival, two-way sellability, early market path and identity-independence evidence; local code, additive migration and PostgreSQL 16 validation only, with no production deploy, Telegram/paper activation or live execution
-last_safe_checkpoint: migration 052, bounded store/collector/worker, terminal-only retention, populated PostgreSQL 16 upgrade, exact constraint/creator/coverage-overlap tests, generated storage/WAL/query-plan benchmark, architecture/operations/research documentation and all current quality gates are complete locally; production is unchanged, and the next exact action is a final intended-files-only diff followed by a local commit
+last_safe_checkpoint: future exact-pool alpha decision tape v1 is complete locally at implementation commit 64df1ab88aae4e75a4094331c3c0923359d6b54d; migration 052 and its disabled alpha-research worker are not deployed, production remains unchanged, and any rollout requires a fresh separately authorized production-ops checkpoint
 ---
 
 # Walletscaner Work In Progress
@@ -103,10 +103,18 @@ repeating any step.
   Compose validation pass; 34 targeted tests pass; the full current-source Linux/zstd suite passes
   441/441 with 53 database tests intentionally skipped there; the separate PostgreSQL 16 run passes
   all 53/53 integration tests. The four protected untracked deploy remnants remain untouched.
-- The exact next action after interruption is read-only `git status`/`git diff --check`, then root
-  typecheck, ESLint, targeted/full tests with disposable PostgreSQL 16, workspace build and quiet
-  Compose validation. Do not deploy. Preserve the four untracked transfer remnants and commit only
-  the explicitly listed decision-tape source/tests/docs when every applicable gate passes.
+
+## Decision-tape completion checkpoint — 2026-08-29 22:12 UTC
+
+- The coherent implementation, migration, tests and aligned documentation are committed locally as
+  `64df1ab88aae4e75a4094331c3c0923359d6b54d`. Migration 052 SHA-256 is
+  `8f359e02333caba69c7eda8f4af75a630372c1d08541ee1dcbe295d4f691e2e1`.
+- Production was not contacted or mutated. No migration, container, provider credential, Telegram,
+  paper portfolio or live-execution state changed. The disposable local PostgreSQL 16 test
+  container can now be removed; the four protected transfer remnants remain outside Git.
+- The next alpha dependency is a separately versioned creator/funder/bundle identity graph followed
+  by a separately authorized, backup-gated worker-only rollout. A rollout collects research
+  evidence only; it cannot enable paper delivery until the frozen future-day/market gates mature.
 
 ## Active objective — contextual-wallet survival research v1
 

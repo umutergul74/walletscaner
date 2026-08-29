@@ -10,6 +10,8 @@ before every operational claim or mutation.
   schedules exact-pool checkpoints at 0/15/30/60/120/300 seconds for fixed $6/$25/$100 read-only
   Jupiter Swap V2 quote-only surfaces. Historical rows are not imported. Telegram, paper and live
   execution are disabled in the persisted policy, and `paper_eligible` is constrained false.
+  The coherent local implementation is commit `64df1ab88aae4e75a4094331c3c0923359d6b54d`;
+  migration SHA-256 is `8f359e02333caba69c7eda8f4af75a630372c1d08541ee1dcbe295d4f691e2e1`.
 - **Fail-closed evidence:** coverage/finality, token/program risk, creator status, address-level
   flow and cluster/funder/bundle independence are separate. Missing identity evidence remains
   `unknown`. Wrong-pool/no-route/stale/provider failures remain non-fill evidence. PostgreSQL
