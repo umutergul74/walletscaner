@@ -641,3 +641,21 @@ anything; never infer deployment from the presence of the local image.
 - R44 production is still unchanged and healthy. Next action is refresh current backup, disk/RAM,
   exact R44/service identities, flow/coverage and ledger revision 73; then export/hash/stage R45.
   Open a new ledger phase before the first server artifact mutation and recreate only ingestion.
+
+## R45 production preflight — 2026-08-29 06:41 UTC
+
+- Only the 12-service Walletscaner project is listed. R44 ingestion, PostgreSQL and wallet-alpha
+  retain exact identities with restart/OOM `0/false`; ingestion is 0.20 CPU/160 MiB/live false.
+  Host has 17,796,046,848 bytes free, about 1.02 GB available RAM and 1.97 GB free swap. PostgreSQL
+  is 21,380,217,879 bytes with 536,870,912 bytes WAL.
+- Backup remains the verified/off-site-acknowledged 28-August 2,455,550,148-byte dump with SHA-256
+  `c2e6f938...17bad`. Ledger is revision 73/SHA-256 `8267911f...42b92` completed. Canonical backlog,
+  dead-letter, open incidents and unresolved finality are zero; signature queue is two fresh items,
+  wallet trade age 15.5 seconds and all four discovery programs are current/OK.
+- R44 natural pressure has now reached two events, maximum dequeue delay 41,406ms and 302 purged
+  notifications, reinforcing the blocked-head watchdog requirement. R45 does not change provider or
+  resource configuration.
+- Alpha work is a separate measured concern: 2,002 pending/2,000 ready, P0/P1/P2 1,906/96/0,
+  non-quarantine failures zero and one intentional quarantine. Recent cycles process 71-100 wallets
+  with zero cycle failure but producer revisions exceed background drain; the signal lane remains
+  current. Do not conflate this with the R45 transport canary or claim alpha equilibrium.
