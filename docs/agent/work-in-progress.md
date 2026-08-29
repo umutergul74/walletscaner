@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:22:00Z
+updated_at_utc: 2026-08-29T17:23:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: R45 canary is complete at ledger revision 76 SHA 95786f13; local and server transfer artifacts are both exactly 462948255 bytes/SHA 9539118b, server zstd test passes, running/loaded R45 is bc17668d and exact R44 rollback is 44e6beae; next action is ledger revision 77 planned for removal of only the exact server transfer file, not an unrecorded delete
+last_safe_checkpoint: ledger revision 77 SHA e7d7c324 has planned retirement of only the exact 462948255-byte/SHA 9539118b server R45 transfer file; local artifact, loaded/running R45 bc17668d and R44 rollback 44e6beae are proven; next action is a fresh exact rehash then revision 78 in_progress before any guarded removal
 ---
 
 # Walletscaner Work In Progress
@@ -754,3 +754,10 @@ anything; never infer deployment from the presence of the local image.
 - The only proposed deletion is the exact staged transfer file under `/opt/walletscaner/deploy/`.
   Keep the byte-identical local artifact, both Docker images, database, archives, B2 and all services.
   Next action is revision 77 `planned`, not file removal.
+
+## R45 transfer-artifact retirement planned — 2026-08-29 17:23 UTC
+
+- Ledger revision 77/SHA-256 `e7d7c3248f240cb484e5d411d00df223a519c09fa8d707a33fc4c5f490dd77da`
+  records the exact artifact bytes/SHA, R45/R44 image identities and pre-removal free bytes.
+- No file or service changed. Next action is a fresh server path/size/SHA guard followed by revision
+  78 `in_progress`; only after that may the one exact server transfer file be removed.
