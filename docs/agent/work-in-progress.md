@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:24:23Z
+updated_at_utc: 2026-08-29T17:25:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: the guarded exact R45 server transfer file is absent and free allocation rose 462729216 bytes to 16353013760; running/loaded R45 bc17668d, R44 rollback 44e6beae, PostgreSQL and wallet-alpha remain running at restart/OOM 0/false; ledger revision 78 remains in_progress and next action is a fresh health/flow proof followed by revision 79 completion, not another removal
+last_safe_checkpoint: R45 is operational and its exact server transfer artifact retirement is complete at ledger revision 79 SHA a0d6bf7c; post-removal health has backlog/dead/unresolved/signature 0/0/0/0, no new ingestion error, 16352473088 free bytes, exact R45 running/R44 loaded and restart/OOM 0/false; next action is read-only alpha revision-churn and late-callback diagnosis, not another deploy or deletion
 ---
 
 # Walletscaner Work In Progress
@@ -778,3 +778,15 @@ anything; never infer deployment from the presence of the local image.
   wallet-alpha remain running at restart/OOM `0/false`; no container was recreated or restarted.
 - Ledger revision 78 remains `in_progress`. Next action is a fresh bounded flow/coverage health read,
   then revision 79 completion if it remains clean. Do not repeat the removal.
+
+## R45 transfer-artifact retirement completed — 2026-08-29 17:25 UTC
+
+- The next monitor sample at 17:24:48 UTC confirmed backlog/dead-letter/unresolved-24h/signature
+  queue `0/0/0/0`, last pool/wallet trade ages 1.0/56.0 seconds, archive pending/verify/dead
+  `0/0/0`, and no post-removal ingestion error. The exact file remains absent.
+- Ledger revision 79/SHA-256 `a0d6bf7ce0d13b1b9495b73fdb602a129faf406226d4e22dfabe1f9db30b6b47`
+  completed the phase. The report's transient one-minute load-per-CPU 1.62 warning and existing
+  database/runway warnings do not represent a flow outage; no resource limit was increased.
+- R45 work is coherently closed. The next phase is read-only diagnosis of the growing background
+  alpha revision queue and the single late backfill callback race; neither justifies blind CPU/RAM
+  expansion or another production mutation.
