@@ -240,6 +240,31 @@ Queue priority can increase while a revision is pending but cannot create a seco
 wallet. Completing revision `N` clears its priority only if the current row is still at revision
 `N`; a concurrent revision `N+1` retains its pending timestamp and priority for the next claim.
 
+## Future exact-pool decision tape
+
+Migration 052 adds four compact research objects without importing or rewriting historical rows:
+
+- `alpha_decision_tape_runs` freezes one strategy version, activation time, feature/quote policy,
+  capacity bounds and promotion gates. The first version disables Telegram, paper and live
+  execution in its database policy.
+- `alpha_decision_tape` stores one decision-time feature snapshot per strategy and exact pool.
+  Finality/coverage, critical program risk, creator evidence and identity independence are separate
+  states. Unknown evidence remains explicit. `paper_eligible` has a database constraint requiring
+  false.
+- `alpha_decision_checkpoints` stores the fixed 0/15/30/60/120/300-second work set and bounded
+  market/flow result. Pending/retry claims are leased, expired claims recover, and attempt six ends
+  in a durable dead letter.
+- `alpha_execution_quote_evidence` stores at most one buy or sell row per checkpoint and fixed
+  notional. Raw token quantities use `NUMERIC(78,0)`, and a `quoted-not-filled` row is valid only
+  when the route resolves to the exact expected pool with all required amounts. Provider payload
+  JSON is not stored.
+
+Eligible decisions retain scalar evidence for 60 days. Operational pruning selects the oldest
+expired decisions in the normal bounded maintenance budget and deletes them only when every child
+checkpoint is `completed` or `dead_letter`; cascades then remove the small child set. A normal
+`DELETE` reuses relation space and is a steady-state control, not a promise of immediate filesystem
+reclamation.
+
 ## Transactional delivery
 
 ### `signal_outbox`
@@ -293,3 +318,7 @@ The old `wallet_positions`, `wallet_scores` and generic `signals` tables belong 
 - Unknown critical token risk is not equivalent to safe.
 - A vault, pool authority, router or program address must not become a wallet-alpha trader.
 - Replaying the same normalized trade set in another delivery order must produce the same ledger.
+- A future decision cannot become research-eligible with unknown/failed critical risk or coverage,
+  and no migration-052 decision can become paper-eligible.
+- A `quoted-not-filled` row must have exact-pool identity and complete raw amount evidence; provider
+  failure, stale data, no route or wrong pool remains an explicit non-fill state.

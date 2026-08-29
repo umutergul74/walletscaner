@@ -1,9 +1,9 @@
 ---
-status: complete
-updated_at_utc: 2026-08-29T20:59:30Z
+status: active
+updated_at_utc: 2026-08-29T22:09:26Z
 owner: codex
-task: build and falsify a causal contextual-wallet survival strategy on the restored PostgreSQL clone, then implement only a future-only shadow path if the fixed chronological gates pass; do not deploy, enable paper, send Telegram alpha, or enable live execution in this task
-last_safe_checkpoint: source/report/documentation commit cab33ad freezes contextual-wallet-survival-v1 as rejected with decision hash e674a3a854411b59d52d5fc9cf4225d6608fdb9fb12c51e5d7bfb5c5b4d37fde; eight targeted tests, typecheck, lint, workspace build and the complete Linux/zstd 426-test gate pass, the temporary role is removed, production remains unchanged, and any next task must start a fresh active checkpoint for the bounded future decision tape rather than deploy or tune this rejected selector
+task: implement a bounded future-only exact-pool alpha decision tape for survival, two-way sellability, early market path and identity-independence evidence; local code, additive migration and PostgreSQL 16 validation only, with no production deploy, Telegram/paper activation or live execution
+last_safe_checkpoint: migration 052, bounded store/collector/worker, terminal-only retention, populated PostgreSQL 16 upgrade, exact constraint/creator/coverage-overlap tests, generated storage/WAL/query-plan benchmark, architecture/operations/research documentation and all current quality gates are complete locally; production is unchanged, and the next exact action is a final intended-files-only diff followed by a local commit
 ---
 
 # Walletscaner Work In Progress
@@ -12,6 +12,101 @@ This is the durable resume point for the current storage incident. It contains n
 does not grant authority beyond the user's current request. On resume, compare this record with Git,
 the production ledger, backup files, archive manifests, containers and database state before
 repeating any step.
+
+## Active objective — future exact-pool alpha decision tape v1
+
+- Implement a new immutable, future-only research evidence contract. It must not tune or deploy the
+  rejected `contextual-wallet-survival-v1-20260829` selector. One decision is keyed by exact pool,
+  version and first decision boundary; later checkpoints never rewrite the original features.
+- Record separately: critical token/program risk; canonical coverage/finality eligibility; exact
+  market state; unique/direct-creator buyer counts; explicit unknown cluster/funder/bundle status;
+  and bounded 0/15/30/60/120/300-second price/liquidity/two-way executable quote evidence for
+  fixed $6/$25/$100 notionals. A missing/mismatched/stale/failed sell quote remains a failure, never
+  an estimated fill. Provider raw payloads are not retained.
+- Every claim/attempt has a lease, bounded batch, retry budget and durable terminal state. The
+  producer is oldest-first and bounded, the checkpoint set is fixed, and retained scalar evidence
+  has an explicit lifecycle. Unknown coverage, risk, program behavior or identity independence is
+  fail-closed for any later paper admission.
+- Freeze the hypothesis, policy, activation boundary and acceptance contract in schema/docs before
+  reading future outcomes. This phase may add code, tests and migration 052 locally, but production
+  migration, worker/Compose activation, credentials, Telegram, paper entry and live execution are
+  excluded. `ENABLE_LIVE_EXECUTION=false` remains invariant.
+- Pre-state: branch `main` at `12a191c888ad17fb14a3bde91c30a7bda0ac4ede`, 230 commits ahead of
+  `origin/main`; only four protected untracked deploy remnants are present. No server state was
+  inspected or changed for this phase.
+- Acceptance: migration clean-install and populated PostgreSQL 16 upgrade; deterministic
+  idempotency; duplicate/out-of-order checkpoint behavior; lease expiry/retry/dead-letter;
+  exact-pool route rejection; missing-evidence fail-closed behavior; bounded retention query plan
+  and byte/day estimate; targeted tests, typecheck, lint, workspace build and applicable full suite.
+- Rollback before deployment is source revert plus dropping only new 052 objects in a disposable
+  database. A future production rollout requires a separately authorized production-ops phase,
+  current backup/headroom proof and an immutable artifact; this checkpoint grants none of those.
+
+## Decision-tape local implementation checkpoint — 2026-08-29 21:30 UTC
+
+- Migration 052 freezes `survival-execution-tape-v1-20260830` with a migration-time activation
+  boundary, zero Telegram/paper/live authority, 100 decisions/UTC day, six exact horizons, three
+  fixed notionals, six attempts and 60-day compact retention eligibility. `paper_eligible` is
+  constrained false. Only future pools at least 120 seconds old and no more than 30 minutes old
+  can enter; oldest-first admission and the daily cap expose `hasMore` instead of hiding overflow.
+- The decision row is one immutable exact-pool snapshot. Risk, finalized/gap-free coverage,
+  creator/direct-creator activity, address-level buyer/seller counts and identity independence are
+  separate. Missing funder/cluster/bundle and landing-fee evidence remains explicit; it is never
+  promoted to pass. Only risk/coverage/market-eligible rows receive the fixed six-checkpoint work.
+- The checkpoint store uses claim leases, `SKIP LOCKED`, expired-lease recovery, bounded retries and
+  durable dead-letter. Atomic completion writes at most six normalized scalar quote rows and the
+  market/flow snapshot under the same live lease. It stores no raw provider response. Entry uses
+  the minimum-output amount from the decision-time buy quote; later checkpoints quote only that
+  frozen amount, preventing future entry-size leakage.
+- The read-only collector requests an exact DexScreener pair and single-route Jupiter quotes. At
+  horizon zero it records $6/$25/$100 buys plus immediate sells; later horizons record three sells.
+  A wrong pool, no route, stale price, provider failure or unavailable entry becomes explicit
+  non-fill evidence. Fixed-point USDC/SOL raw notionals avoid a JS-number token accounting boundary.
+- The standalone worker is disabled by default and refuses to start without an explicit enable flag
+  and read-only Jupiter API key. Its isolated `alpha-research` Compose profile is capped at 0.03 CPU,
+  80 MiB and two PostgreSQL connections; no service has been created or deployed.
+- Verification so far: 20 unit tests pass across config, Jupiter integrity, migration/store and
+  checkpoint collection; root typecheck passes; the full migration clean-install plus decision,
+  idempotency, checkpoint and atomic quote path passes 2/2 on disposable PostgreSQL 16. The
+  temporary test schema was dropped by the test harness. Next: bounded retention owner, populated
+  upgrade/EXPLAIN/bytes-per-day evidence, docs and broad gates.
+
+## Decision-tape retention, capacity and documentation checkpoint — 2026-08-29 21:40 UTC
+
+- Normal operational maintenance now owns 60-day decision-tape expiry. It selects only the oldest
+  bounded cohort, requires every fixed checkpoint to be terminal (`completed` or `dead_letter`),
+  and uses the existing statement/run/batch budgets. Cascades remove only the bounded children;
+  provider payload bodies were never stored. This is steady-state page reuse, not an immediate
+  filesystem-shrink claim.
+- The populated PostgreSQL 16 upgrade test creates 1,000 pre-052 pools, records the pool relation's
+  physical file identity, applies migration 052 and verifies that the identity is unchanged and no
+  historical decision was imported. The end-to-end integration now passes 4/4: future exact-pool
+  admission/idempotency, six-work-item creation, lease/atomic quote completion, and database-level
+  rejection of nullable passed-risk or incomplete exact-pool quote evidence.
+- The generated worst-case daily envelope is 100 decisions, 600 checkpoints and 2,100 normalized
+  quotes. After the current Jupiter Swap V2 fee/provenance fields, its table/index total is
+  1,523,712 bytes, latest insert WAL is 1,798,928 bytes (about 1.72 MiB), and conservative 60-day retained
+  size is 91,422,720 bytes (about 87.2 MiB). Claim and retention plans use their intended indexes,
+  execute below 0.2 ms and write no temp data in the isolated benchmark.
+- Architecture, data-model, provider, backtest, operations, storage lifecycle, README, current-state
+  and compact build context now distinguish implemented/local from operational/deployed. The
+  production state remains migrations through 051; no server, secret, provider, Telegram, paper or
+  live-execution state was inspected or changed.
+- Final pre-commit review fixed two fail-open boundary errors before any deployment: a discovery
+  incident now taints a decision when any part of the pool-creation-to-decision interval overlaps
+  the unresolved gap, and direct-creator buys are checked over that full interval instead of only
+  the trailing five minutes. The trailing-five-minute buyer/seller features remain unchanged.
+  Passed risk now requires directly persisted top-10 concentration evidence at or below 70%; it is
+  no longer reconstructed from a risk sub-score. PostgreSQL tests cover an incident beginning
+  after pool creation and a creator buy older than the trailing-five-minute flow window.
+- Current gates: root typecheck, ESLint, workspace production build and quiet `alpha-research`
+  Compose validation pass; 34 targeted tests pass; the full current-source Linux/zstd suite passes
+  441/441 with 53 database tests intentionally skipped there; the separate PostgreSQL 16 run passes
+  all 53/53 integration tests. The four protected untracked deploy remnants remain untouched.
+- The exact next action after interruption is read-only `git status`/`git diff --check`, then root
+  typecheck, ESLint, targeted/full tests with disposable PostgreSQL 16, workspace build and quiet
+  Compose validation. Do not deploy. Preserve the four untracked transfer remnants and commit only
+  the explicitly listed decision-tape source/tests/docs when every applicable gate passes.
 
 ## Active objective — contextual-wallet survival research v1
 
@@ -118,7 +213,7 @@ repeating any step.
 - Preserve every wallet trade, exact price enrichment and later entry/outcome. Change only whether
   price enrichment increments a redundant score-work revision before a wallet meets the same
   configured admission boundary used by the worker (`trade_count >= minimumTradeEvents OR
-  recent_entry_count >= minimumEntries`).
+recent_entry_count >= minimumEntries`).
 - The thresholds must be passed explicitly from ingestion configuration, remain bounded, and be
   optional for repository callers/tests that need unconditional enrichment semantics. Trade and
   wallet-entry writes stay unconditional atomic queue producers; therefore a threshold crossing,

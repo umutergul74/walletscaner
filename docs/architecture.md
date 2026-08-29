@@ -119,16 +119,16 @@ once per configured cooldown. A JSON-RPC error or malformed result is an error, 
 program was quiet. A newer slot, or a different latest signature in the same slot, is conservative
 evidence that the WebSocket may have missed activity. Recovery requires a successful restart plus
 fresh post-restart WebSocket evidence. Transport-only recovery remains
-  `transport_recovered_gap_unreconciled`. Standard discovery sources additionally stage a durable,
-  bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
-  bind completion to the immutable newest signature captured when repair collection began. A
-  separate `getSignatureStatuses(searchTransactionHistory=true)` call must return that exact slot
-  with `finalized` status; the mutable live cursor and advancing latest program head are never
-  repair proof. Transaction success is not a boundary requirement: a finalized failed transaction
-  is an immutable ordered signature and replay classifies it as producing no discovery event. The
-  proof metadata retains whether that target transaction succeeded. Only exact slot/finality, full
-  replay and post-incident WebSocket evidence set `coverage_reconciled_at`; incomplete, capped or
-  unresolved repair remains fail-closed.
+`transport_recovered_gap_unreconciled`. Standard discovery sources additionally stage a durable,
+bounded signature repair, find the old cursor boundary before replay, replay oldest-first, and
+bind completion to the immutable newest signature captured when repair collection began. A
+separate `getSignatureStatuses(searchTransactionHistory=true)` call must return that exact slot
+with `finalized` status; the mutable live cursor and advancing latest program head are never
+repair proof. Transaction success is not a boundary requirement: a finalized failed transaction
+is an immutable ordered signature and replay classifies it as producing no discovery event. The
+proof metadata retains whether that target transaction succeeded. Only exact slot/finality, full
+replay and post-incident WebSocket evidence set `coverage_reconciled_at`; incomplete, capped or
+unresolved repair remains fail-closed.
 
 The old bounded “top wallets become new subscriptions” loop is not part of the v2 production path. Wallet evidence is derived from transactions involving active pools, avoiding circular discovery based on wallets the scorer already knows.
 
@@ -263,6 +263,30 @@ until fill realism and chronological shadow gates pass. The report processes at 
 evidence batch, excludes entries whose durable buy-to-observation delay is missing or exceeds the
 configured bound, and outcome construction accepts only observations for the entry's exact pool.
 
+## Future exact-pool decision tape
+
+Migration 052 adds an isolated, future-only research lane. It does not alter the canonical ingest,
+wallet-alpha, signal outbox, paper or Telegram paths:
+
+```text
+future eligible exact pool -> immutable decision snapshot -> six leased checkpoints
+  -> exact-pair market state + normalized Jupiter buy/sell quote surface
+  -> retained research evidence only
+```
+
+Admission is oldest-first, at most 25 candidates per seed pass and 100 decisions per UTC day. A
+research-eligible decision receives exactly six checkpoints at 0/15/30/60/120/300 seconds. Claims
+use `SKIP LOCKED`, at most two rows, a lease and six-attempt terminal dead-letter budget. Each
+checkpoint writes its bounded market/flow fields and no more than six quote rows atomically. The
+collector uses at most two PostgreSQL connections and makes quote calls serially; its isolated
+`alpha-research` Compose profile is capped at 0.03 CPU and 80 MiB.
+
+Risk, finalized/gap-free coverage, creator evidence, identity independence and executable route
+quality remain separate. Missing cluster/funder/bundle evidence is recorded as `unknown`; it is not
+inferred from address counts. `paper_eligible` is constrained false, no outbox row is created and
+`ENABLE_LIVE_EXECUTION=false` remains unchanged. The fixed 60-day scalar lifecycle is intentionally
+small and does not create another raw-provider archive.
+
 Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` messages. Consumers use `FOR UPDATE SKIP LOCKED`, leases, retries and dead-letter states. This permits independent paper and notification delivery without double-sending one outbox message.
 
 ## Service ownership
@@ -272,6 +296,8 @@ Saving a new `wallet_alpha_signal` transactionally creates `paper` and `alert` m
 - `scripts/research/wallet-alpha.ts`: on-demand full coverage/report summary; not a scheduled service.
 - `apps/worker/src/process-wallet-alpha-outbox.ts`: qualified-pool paper entry/position decisions
   and durable notification enqueue.
+- `apps/worker/src/collect-alpha-decision-tape.ts`: disabled-by-default future exact-pool research
+  checkpoints; it has no delivery or execution ownership.
 - `apps/api`: PostgreSQL-backed read API plus authenticated Helius webhook receiver.
 - `apps/web`: dashboard for tokens, wallet-alpha rankings/signals and pipeline health.
 - `packages/providers`: external-system adapters and chain decoders.

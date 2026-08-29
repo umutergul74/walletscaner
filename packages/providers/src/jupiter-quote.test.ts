@@ -14,30 +14,40 @@ function response(overrides: Record<string, unknown> = {}) {
     otherAmountThreshold: "1152000000",
     swapMode: "ExactIn",
     slippageBps: 400,
-    priceImpactPct: "0.031",
+    priceImpact: 0.031,
     routePlan: [
       {
-        swapInfo: { ammKey: pool, label: "Meteora DLMM", inputMint, outputMint },
+        swapInfo: {
+          ammKey: pool,
+          label: "Meteora DLMM",
+          inputMint,
+          outputMint
+        },
         percent: 100
       }
     ],
-    contextSlot: 441000000,
-    timeTaken: 0.012,
+    feeBps: 50,
+    feeMint: inputMint,
+    platformFee: { amount: "1250", feeBps: 50, feeMint: inputMint },
+    router: "metis",
+    transaction: null,
+    totalTime: 12,
     ...overrides
   };
 }
 
 describe("Jupiter quote evidence", () => {
   it("captures a direct exact-pool quote without claiming it was filled", async () => {
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify(response()), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      })
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(response()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
     );
     const quote = await new JupiterQuoteClient(
       "test-key",
-      "https://api.jup.ag/swap/v1",
+      "https://api.jup.ag/swap/v2",
       fetchImpl
     ).fetchDirectExactInQuote({
       inputMint,
@@ -51,19 +61,29 @@ describe("Jupiter quote evidence", () => {
       status: "quoted-not-filled",
       rawExpectedOutputAmount: "1200000000",
       rawMinimumOutputAmount: "1152000000",
-      routePoolAddress: pool
+      routePoolAddress: pool,
+      routeRouter: "metis",
+      providerFeeBps: 50,
+      providerFeeMint: inputMint,
+      platformFeeRawAmount: "1250",
+      platformFeeBps: 50,
+      platformFeeMint: inputMint,
+      providerTimeMs: 12,
+      httpLatencyMs: expect.any(Number)
     });
     const url = new URL(String(fetchImpl.mock.calls[0]?.[0]));
-    expect(url.searchParams.get("onlyDirectRoutes")).toBe("true");
+    expect(url.pathname).toBe("/swap/v2/order");
+    expect(url.searchParams.has("taker")).toBe(false);
     expect(url.searchParams.get("amount")).toBe("6000000");
   });
 
   it("fails closed when the quote silently uses another pool", async () => {
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify(response()), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      })
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(response()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
     );
     await expect(
       new JupiterQuoteClient("test-key", undefined, fetchImpl).fetchDirectExactInQuote({
@@ -77,18 +97,19 @@ describe("Jupiter quote evidence", () => {
   });
 
   it("rejects split routes and malformed amounts", async () => {
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(
-        JSON.stringify(
-          response({
-            routePlan: [
-              { swapInfo: { ammKey: pool }, percent: 50 },
-              { swapInfo: { ammKey: "Pool2" }, percent: 50 }
-            ]
-          })
-        ),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      )
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify(
+            response({
+              routePlan: [
+                { swapInfo: { ammKey: pool }, percent: 50 },
+                { swapInfo: { ammKey: "Pool2" }, percent: 50 }
+              ]
+            })
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
     );
     const client = new JupiterQuoteClient("test-key", undefined, fetchImpl);
     await expect(
@@ -107,5 +128,24 @@ describe("Jupiter quote evidence", () => {
         slippageBps: 400
       })
     ).rejects.toThrow("outside uint64");
+  });
+
+  it("rejects a response that unexpectedly contains a transaction", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify(response({ transaction: "base64-transaction" })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+    );
+    await expect(
+      new JupiterQuoteClient("test-key", undefined, fetchImpl).fetchDirectExactInQuote({
+        inputMint,
+        outputMint,
+        rawInputAmount: 6_000_000n,
+        slippageBps: 400,
+        expectedPoolAddress: pool
+      })
+    ).rejects.toThrow("quote-only response unexpectedly contained a transaction");
   });
 });

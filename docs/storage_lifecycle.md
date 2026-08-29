@@ -49,11 +49,11 @@ wallet retirement or prove steady-state capacity.
 
 The settled active UTC days 2026-08-14 and 2026-08-15 averaged approximately:
 
-| Evidence | Rows/day | Current total bytes/row | Projected 95-day bytes |
-| --- | ---: | ---: | ---: |
-| wallet trades | 24,469 | 2,055 | 4.78 GB |
-| wallet entries | 6,992 | 7,302 | 4.85 GB |
-| signal outcomes | 13,983 | 4,505 | 5.99 GB |
+| Evidence        | Rows/day | Current total bytes/row | Projected 95-day bytes |
+| --------------- | -------: | ----------------------: | ---------------------: |
+| wallet trades   |   24,469 |                   2,055 |                4.78 GB |
+| wallet entries  |    6,992 |                   7,302 |                4.85 GB |
+| signal outcomes |   13,983 |                   4,505 |                5.99 GB |
 
 Those three relations alone project to about 15.6 GB at that rate, before FIFO lots/episodes,
 scores, the two-day raw-payload window, WAL and backup headroom. The existing 90%/4-GiB ingestion
@@ -170,14 +170,14 @@ The verified 2026-08-15 production dump was serially restored into an isolated P
 container. `scripts/test/benchmark-hot-evidence-model.sql` built an unlogged size model without
 changing source rows.
 
-| Measurement | Result |
-| --- | ---: |
-| source trade/entry/outcome/episode/lot relations | 5,502,296,064 bytes |
-| compact facts, dimensions, open lots and 3-day trade staging | 406,200,320 bytes |
-| measured reduction | 92.62% |
-| episode rows source/target | 235,707 / 235,707 |
-| non-realized lot rows source/target | 215,769 / 215,769 |
-| mature outcome rows source/target | 300,555 / 300,555 |
+| Measurement                                                  |              Result |
+| ------------------------------------------------------------ | ------------------: |
+| source trade/entry/outcome/episode/lot relations             | 5,502,296,064 bytes |
+| compact facts, dimensions, open lots and 3-day trade staging |   406,200,320 bytes |
+| measured reduction                                           |              92.62% |
+| episode rows source/target                                   |   235,707 / 235,707 |
+| non-realized lot rows source/target                          |   215,769 / 215,769 |
+| mature outcome rows source/target                            |   300,555 / 300,555 |
 
 Deterministic 64-bit aggregate digests over all retained profitability and followability fields
 matched exactly between source and target. The benchmark is evidence for the design, not deletion
@@ -192,6 +192,23 @@ export plus restore took 562,489 ms. The 5%-CPU compact pass took 260,459 ms and
 episodes, 251,460 non-realized lots and 27,498 mature followability facts. Compact fact relations
 for that pass occupied about 188 MiB plus about 3 MiB of dimensions. This is populated-clone proof
 for one representative full day, not B2 upload evidence or permission to retire canonical rows.
+
+## Future decision-tape capacity
+
+Migration 052 deliberately stores compact scalars instead of provider payloads. Its isolated
+PostgreSQL 16 benchmark inserted the configured worst-case daily envelope: 100 decisions, 600
+checkpoints and 2,100 normalized quote rows. After `ANALYZE`, the three table/index groups occupied
+1,523,712 bytes in total. The latest insert generated 1,798,928 bytes (about 1.72 MiB) of WAL.
+Holding 60
+such daily cohorts conservatively projects to 91,422,720 bytes (about 87.2 MiB) before normal page
+reuse.
+
+The claim and retention candidate queries used `idx_alpha_decision_checkpoint_claim` and
+`idx_alpha_decision_tape_retention`; both completed below 0.2 ms with no temp write in the generated
+plan. Cleanup shares the existing bounded maintenance batch/time budget and can
+retire a decision only after all six checkpoints are terminal. These are generated local capacity
+figures, not shared-host throughput or production-equilibrium proof. Migration 052 and its worker
+remain undeployed.
 
 ## Required rollout gates
 

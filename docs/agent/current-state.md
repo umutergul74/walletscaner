@@ -3,6 +3,37 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 future exact-pool alpha decision tape
+
+- **Implemented and locally validated, not deployed:** migration 052 freezes
+  `survival-execution-tape-v1-20260830`. It admits at most 100 future decisions per UTC day and
+  schedules exact-pool checkpoints at 0/15/30/60/120/300 seconds for fixed $6/$25/$100 read-only
+  Jupiter Swap V2 quote-only surfaces. Historical rows are not imported. Telegram, paper and live
+  execution are disabled in the persisted policy, and `paper_eligible` is constrained false.
+- **Fail-closed evidence:** coverage/finality, token/program risk, creator status, address-level
+  flow and cluster/funder/bundle independence are separate. Missing identity evidence remains
+  `unknown`. Wrong-pool/no-route/stale/provider failures remain non-fill evidence. PostgreSQL
+  constraints reject nullable “passed risk” and incomplete or mismatched `quoted-not-filled` rows;
+  provider response JSON is not retained. Discovery incidents are checked for any overlap between
+  pool creation and decision time. Direct-creator buys are checked over that complete interval,
+  while market-flow features retain their fixed trailing-five-minute meaning. Passed risk requires
+  the directly persisted top-10 concentration evidence to be present and at most 70%.
+- **Bounded runtime/storage:** oldest-first seed is 25 rows, daily admission 100, claim concurrency
+  two, attempts six, retention 60 days, worker database pool two, Compose limit 0.03 CPU/80 MiB.
+  The worst-case generated day (100 decisions, 600 checkpoints, 2,100 quote rows) occupied
+  1,523,712 bytes and generated 1,798,928 bytes (about 1.72 MiB) of WAL; conservative 60-day storage
+  is 91,422,720 bytes (about 87.2 MiB). Claim/retention plans used their intended indexes, completed
+  below 0.2 ms and wrote no temp data in the generated benchmark.
+- **Validated locally:** populated PostgreSQL 16 upgrade did not rewrite the existing 1,000-row
+  pool relation or import history. Decision idempotency, lease/atomic completion, exact-pool quote
+  constraints, terminal retention and storage plans pass. Production remains migrations through
+  051 and its previously recorded service images; no server, secret, Telegram or worker state was
+  inspected or changed in this phase.
+- **Next measurable gate:** a separately authorized production-ops rollout needs a fresh backup,
+  disk/WAL/resource headroom, a configured Jupiter key and a worker-only canary. Even then this is
+  evidence collection, not alpha. Cluster/funder/bundle proof must be implemented and at least
+  seven future days/30 mature markets must pass the frozen research gates before any paper phase.
+
 ## 2026-08-29 contextual wallet survival falsification
 
 - **Implemented and locally audited:** immutable research version

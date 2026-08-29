@@ -46,6 +46,13 @@ describe("loadRuntimeConfig", () => {
     expect(config.quotePrices.maxStalenessSeconds).toBe(90);
     expect(config.alerts.outboxPollIntervalMs).toBe(2_000);
     expect(config.alerts.qualifiedPoolDeliveryMode).toBe("notify");
+    expect(config.alphaDecisionTape).toMatchObject({
+      enabled: false,
+      pollIntervalMs: 3_000,
+      seedIntervalSeconds: 30,
+      healthIntervalSeconds: 300,
+      jupiterApiUrl: "https://api.jup.ag/swap/v2"
+    });
     expect(
       loadRuntimeConfig({ QUALIFIED_POOL_DELIVERY_MODE: "shadow" }).alerts.qualifiedPoolDeliveryMode
     ).toBe("shadow");

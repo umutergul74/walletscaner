@@ -77,9 +77,7 @@ describe("operational maintenance SQL contract", () => {
   it("uses the production-measured small compaction batch and bounded catch-up window", async () => {
     const source = await readFile(scriptPath, "utf8");
 
-    expect(source).toContain(
-      "positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 250)"
-    );
+    expect(source).toContain("positiveInt(process.env.MAINTENANCE_COMPACT_BATCH_SIZE, 250)");
     expect(source).toContain("positiveInt(process.env.MAINTENANCE_MAX_RUN_SECONDS, 45)");
     expect(source).toContain("positiveInt(process.env.MAINTENANCE_MAX_BATCHES_PER_RUN, 50)");
   });
@@ -159,6 +157,22 @@ describe("operational maintenance SQL contract", () => {
     );
     expect(source).toContain("walletAlphaScoresHardExpiry: deletedExpiredWalletAlphaScores");
     expect(source).toContain("walletAlphaScoresSuperseded: deletedSupersededWalletAlphaScores");
+  });
+
+  it("retires only terminal decision tapes in bounded oldest-first batches", async () => {
+    const source = await readFile(scriptPath, "utf8");
+    const retention = source.slice(
+      source.indexOf("deletedAlphaDecisionTape = await pruneInBatches("),
+      source.indexOf("const priceRetentionState")
+    );
+
+    expect(retention).toContain("decision.retain_until < NOW()");
+    expect(retention).toContain("checkpoint.status NOT IN ('completed', 'dead_letter')");
+    expect(retention).toContain("ORDER BY decision.retain_until, decision.id");
+    expect(retention).toContain("LIMIT $2");
+    expect(retention).toContain("FOR UPDATE OF decision SKIP LOCKED");
+    expect(retention).toContain('"alpha-decision-tape"');
+    expect(source).toContain("alphaDecisionTape: deletedAlphaDecisionTape");
   });
 
   it("adds the exact rejected-evidence predicate as a concurrent partial index", async () => {

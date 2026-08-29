@@ -15,6 +15,7 @@ export interface JupiterRouteStep {
 }
 
 export interface JupiterQuoteResponse {
+  mode?: string;
   inputMint?: string;
   inAmount?: string;
   outputMint?: string;
@@ -22,8 +23,19 @@ export interface JupiterQuoteResponse {
   otherAmountThreshold?: string;
   swapMode?: string;
   slippageBps?: number;
+  priceImpact?: number;
   priceImpactPct?: string;
   routePlan?: JupiterRouteStep[];
+  feeBps?: number;
+  feeMint?: string;
+  platformFee?: {
+    amount?: string;
+    feeBps?: number;
+    feeMint?: string;
+  };
+  router?: string;
+  transaction?: string | null;
+  totalTime?: number;
   contextSlot?: number;
   timeTaken?: number;
 }
@@ -38,7 +50,7 @@ export interface DirectExactInQuoteRequest {
 }
 
 export interface DirectExactInQuoteEvidence {
-  provider: "jupiter-swap-v1";
+  provider: "jupiter-swap-v2-order";
   status: "quoted-not-filled";
   inputMint: string;
   outputMint: string;
@@ -49,8 +61,15 @@ export interface DirectExactInQuoteEvidence {
   priceImpactPercent: number;
   routePoolAddress: string;
   routeLabel?: string;
+  routeRouter?: string;
+  providerFeeBps?: number;
+  providerFeeMint?: string;
+  platformFeeRawAmount?: string;
+  platformFeeBps?: number;
+  platformFeeMint?: string;
   contextSlot?: number;
-  providerTimeSeconds?: number;
+  providerTimeMs?: number;
+  httpLatencyMs: number;
   observedAt: string;
   raw: JupiterQuoteResponse;
 }
@@ -70,7 +89,7 @@ export class JupiterQuoteIntegrityError extends Error {
 export class JupiterQuoteClient {
   constructor(
     private readonly apiKey: string,
-    private readonly baseUrl = "https://api.jup.ag/swap/v1",
+    private readonly baseUrl = "https://api.jup.ag/swap/v2",
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly requestTimeoutMs = 5_000
   ) {
@@ -88,15 +107,14 @@ export class JupiterQuoteClient {
       throw new JupiterQuoteIntegrityError("Jupiter quote mints must differ.");
     }
 
-    const url = new URL(`${this.baseUrl.replace(/\/$/u, "")}/quote`);
+    const url = new URL(`${this.baseUrl.replace(/\/$/u, "")}/order`);
     url.searchParams.set("inputMint", inputMint);
     url.searchParams.set("outputMint", outputMint);
     url.searchParams.set("amount", amount.toString());
     url.searchParams.set("swapMode", "ExactIn");
     url.searchParams.set("slippageBps", slippageBps.toString());
-    url.searchParams.set("onlyDirectRoutes", "true");
-    url.searchParams.set("restrictIntermediateTokens", "true");
 
+    const requestedAt = Date.now();
     const response = await this.fetchImpl(url, {
       headers: { "x-api-key": this.apiKey },
       signal: AbortSignal.timeout(this.requestTimeoutMs)
@@ -108,9 +126,8 @@ export class JupiterQuoteClient {
       outputMint,
       amount,
       slippageBps,
-      ...(request.expectedPoolAddress
-        ? { expectedPoolAddress: request.expectedPoolAddress }
-        : {})
+      ...(request.expectedPoolAddress ? { expectedPoolAddress: request.expectedPoolAddress } : {}),
+      httpLatencyMs: Math.max(0, Date.now() - requestedAt)
     });
   }
 }
@@ -123,6 +140,7 @@ function validateDirectQuote(
     amount: bigint;
     slippageBps: number;
     expectedPoolAddress?: string;
+    httpLatencyMs: number;
   }
 ): DirectExactInQuoteEvidence {
   if (
@@ -133,6 +151,11 @@ function validateDirectQuote(
     quote.slippageBps !== expected.slippageBps
   ) {
     throw new JupiterQuoteIntegrityError("Jupiter quote identity did not match the request.");
+  }
+  if (quote.transaction !== undefined && quote.transaction !== null) {
+    throw new JupiterQuoteIntegrityError(
+      "Jupiter quote-only response unexpectedly contained a transaction."
+    );
   }
   const outAmount = parsePositiveU64(quote.outAmount, "outAmount");
   const minimumOut = parsePositiveU64(quote.otherAmountThreshold, "otherAmountThreshold");
@@ -149,12 +172,20 @@ function validateDirectQuote(
       "Jupiter direct route did not use the signal's exact pool."
     );
   }
-  const priceImpactPercent = Number(quote.priceImpactPct);
-  if (!Number.isFinite(priceImpactPercent) || priceImpactPercent < 0) {
+  const priceImpactPercent =
+    typeof quote.priceImpact === "number" ? quote.priceImpact : Number(quote.priceImpactPct) * 100;
+  if (
+    !Number.isFinite(priceImpactPercent) ||
+    priceImpactPercent < -100 ||
+    priceImpactPercent > 100
+  ) {
     throw new JupiterQuoteIntegrityError("Jupiter quote price impact was invalid.");
   }
+  const providerFeeBps = validOptionalBps(quote.feeBps, "total fee bps");
+  const platformFeeBps = validOptionalBps(quote.platformFee?.feeBps, "platform fee bps");
+  const platformFeeRawAmount = optionalRawAmount(quote.platformFee?.amount, "platform fee amount");
   return {
-    provider: "jupiter-swap-v1",
+    provider: "jupiter-swap-v2-order",
     status: "quoted-not-filled",
     inputMint: expected.inputMint,
     outputMint: expected.outputMint,
@@ -165,13 +196,38 @@ function validateDirectQuote(
     priceImpactPercent,
     routePoolAddress,
     ...(route[0]?.swapInfo?.label ? { routeLabel: route[0].swapInfo.label } : {}),
+    ...(quote.router ? { routeRouter: quote.router } : {}),
+    ...(providerFeeBps !== undefined ? { providerFeeBps } : {}),
+    ...(quote.feeMint ? { providerFeeMint: quote.feeMint } : {}),
+    ...(platformFeeRawAmount !== undefined ? { platformFeeRawAmount } : {}),
+    ...(platformFeeBps !== undefined ? { platformFeeBps } : {}),
+    ...(quote.platformFee?.feeMint ? { platformFeeMint: quote.platformFee.feeMint } : {}),
     ...(Number.isSafeInteger(quote.contextSlot) ? { contextSlot: quote.contextSlot } : {}),
-    ...(typeof quote.timeTaken === "number" && Number.isFinite(quote.timeTaken)
-      ? { providerTimeSeconds: quote.timeTaken }
-      : {}),
+    ...(typeof quote.totalTime === "number" && Number.isFinite(quote.totalTime)
+      ? { providerTimeMs: Math.max(0, Math.round(quote.totalTime)) }
+      : typeof quote.timeTaken === "number" && Number.isFinite(quote.timeTaken)
+        ? { providerTimeMs: Math.max(0, Math.round(quote.timeTaken * 1_000)) }
+        : {}),
+    httpLatencyMs: expected.httpLatencyMs,
     observedAt: new Date().toISOString(),
     raw: quote
   };
+}
+
+function optionalRawAmount(value: string | undefined, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > U64_MAX) throw new Error("outside uint64");
+    return parsed.toString();
+  } catch {
+    throw new JupiterQuoteIntegrityError(`Jupiter ${name} was invalid.`);
+  }
+}
+
+function validOptionalBps(value: number | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  return boundedInteger(value, 0, 10_000, name);
 }
 
 function parseRawAmount(value: bigint | string): bigint {

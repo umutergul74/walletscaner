@@ -149,6 +149,22 @@ to observation delay of at most 60 seconds. Use
 it to the production Compose loop until the query plan, runtime/RSS and protected co-tenant impact
 are measured and the user explicitly authorizes a shadow rollout.
 
+Migration 052's future decision tape is a different disabled-by-default worker. It refuses startup
+unless `ALPHA_DECISION_TAPE_ENABLED=true` and a non-empty `JUPITER_API_KEY` are present. Its normal
+settings are a three-second claim poll, 30-second bounded seed pass and five-minute health report.
+Run `npm run benchmark:alpha-decision-tape-storage` with `TEST_DATABASE_URL` before rollout changes
+to its daily/claim/retention limits. Do not place the key in source, Compose or logs.
+
+Production activation is not a normal profile start. It requires a separately authorized
+production-ops rollout with a current verified dump/off-host acknowledgement, migration-052
+checksum and populated-upgrade proof, disk/WAL/temp headroom, exact image identity, pre/post
+co-tenant inventory and a worker-only canary. Start only the named `alpha-decision-tape` service
+with the `alpha-research` profile and `--no-deps` after the one-shot migration succeeds; never use a
+dependency-following create to rebind existing services. Verify decision/day caps, checkpoint lag,
+retry/dead-letter count, Jupiter failure/rate-limit behavior, RSS/CPU and database growth. A failed
+gate stops or rolls back this worker. It does not justify enabling Telegram, paper or live
+execution.
+
 The 2026-08-16 production one-shot is the current resource baseline. The original all-at-once
 25-wallet query reported 176.56 MiB process RSS and violated the intended 160 MiB boundary. The
 five-wallet-batch replacement retained 5,204 of 5,771 entries under the 60-second timing gate,
@@ -161,6 +177,7 @@ the query is still I/O-heavy and is not a recurring service.
 
 - the default core: `postgres`, Redis with AOF, one-shot `migrate` and `solana-ingestion`;
 - `research`: `evidence-sampler` and periodic `wallet-alpha`;
+- `alpha-research`: the isolated, disabled-by-default future exact-pool decision tape;
 - `paper`: one explicitly selected, version-frozen qualified-pool paper simulator;
 - `notifications`: Telegram-only signal, qualified-pool, paper-event and status delivery;
 - `ui`: PostgreSQL-backed `api` and production-built `web`;

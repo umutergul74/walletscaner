@@ -185,6 +185,27 @@ services:
       redis:
         condition: service_healthy
 
+  alpha-decision-tape:
+    <<: *app
+    image: ${WALLETSCANER_RESEARCH_IMAGE:-walletscaner-worker:local}
+    profiles: ["alpha-research"]
+    command: ["node", "--import", "tsx", "apps/worker/src/collect-alpha-decision-tape.ts"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      REDIS_URL: redis://redis:6379
+      ENABLE_LIVE_EXECUTION: "false"
+      ALPHA_DECISION_TAPE_ENABLED: "true"
+      NODE_OPTIONS: "--max-old-space-size=48"
+      PGOPTIONS: "-c max_parallel_workers_per_gather=0"
+    mem_limit: 80m
+    cpus: "0.03"
+    cpu_shares: 32
+    pids_limit: 64
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   wallet-alpha:
     <<: *app
     image: ${WALLETSCANER_RESEARCH_IMAGE:-walletscaner-worker:local}

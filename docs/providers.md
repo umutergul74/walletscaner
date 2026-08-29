@@ -4,13 +4,29 @@ Implementation inventory updated 2026-07-11. Provider responses are treated as e
 
 ## Jupiter executable-route quote evidence
 
-`JupiterQuoteClient` uses the authenticated Swap V1 quote endpoint in read-only mode. It requests
-an `ExactIn`, single-hop route and records expected output, minimum output after slippage tolerance,
-price impact, context slot and the AMM account. When an expected signal pool is supplied, a route
-through another pool fails closed. Evidence is explicitly labelled `quoted-not-filled`: it is more
-realistic than a DexScreener midpoint snapshot, but is not proof that a signed transaction landed.
-It may feed only a new future-only shadow/paper cohort after `JUPITER_API_KEY` is configured;
-existing negative cohorts remain immutable.
+`JupiterQuoteClient` uses the current authenticated
+[Swap V2 `/order`](https://developers.jup.ag/docs/api-reference/swap/order) endpoint without a
+`taker`, so the request is quote-only and cannot contain a transaction. It requests `ExactIn` with
+fixed slippage and accepts only a single 100% route whose AMM account is the exact expected pool.
+It records expected/minimum output, signed price impact, winning router, total/provider fee fields,
+platform-fee fields, provider processing time and measured HTTP latency. A response containing a
+transaction, a missing/split route or another pool fails closed. Evidence is explicitly labelled
+`quoted-not-filled`: it is more realistic than a DexScreener midpoint snapshot, but is not proof
+that a transaction would land.
+
+Migration 052's local-only `survival-execution-tape-v1-20260830` collector uses this adapter at
+fixed $6/$25/$100 notionals. At decision time it records one buy and an immediate sell quote for
+each size; later 15/30/60/120/300-second checkpoints sell the conservative minimum token output
+frozen by the corresponding decision-time buy. DexScreener is read by exact pair only. Pair
+absence, zero liquidity, stale price, provider failure and a wrong Jupiter pool are durable
+non-fill evidence rather than a price estimate. Only normalized scalar evidence is persisted; the
+provider response body is never written to PostgreSQL.
+
+The collector is disabled by default and refuses startup without both
+`ALPHA_DECISION_TAPE_ENABLED=true` and `JUPITER_API_KEY`. Migration 052 and the collector are not
+deployed or operational. They may feed only a future research shadow after a separately authorized
+rollout; existing negative cohorts remain immutable, and neither paper nor Telegram consumes the
+tape.
 
 The opt-in reviewed venue manifest pins exact current official SDK/IDL commits for Raydium CLMM,
 Meteora DBC/DAMM v2/DLMM and Orca Whirlpools. Raydium AMM v4 is deliberately not claimed by this
@@ -145,13 +161,13 @@ are staged in `ingestion_gap_repair_signatures` across bounded cycles and proces
 transaction is replayed and no cursor advances until the old durable cursor boundary is reached.
 The staged set is then replayed oldest-first in batches of
 `SOLANA_DISCOVERY_GAP_REPAIR_REPLAY_LIMIT` (50 by default). Collection fails closed at
-  `SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES` (500 by default on the public filtered route), so
-  repair cannot become an
-  unbounded JSON/RPC or PostgreSQL workload. An incident becomes reconciled only after every staged
-  signature is durably admitted, completion equals the immutable collected target signature/slot, a
-  separate history-aware signature-status query proves that exact target successful and `finalized`,
-  and post-incident WebSocket evidence exists. A later live cursor or program head cannot replace or
-  invalidate that target. Anything less remains alpha-excluded.
+`SOLANA_DISCOVERY_GAP_REPAIR_MAX_SIGNATURES` (500 by default on the public filtered route), so
+repair cannot become an
+unbounded JSON/RPC or PostgreSQL workload. An incident becomes reconciled only after every staged
+signature is durably admitted, completion equals the immutable collected target signature/slot, a
+separate history-aware signature-status query proves that exact target successful and `finalized`,
+and post-incident WebSocket evidence exists. A later live cursor or program head cannot replace or
+invalidate that target. Anything less remains alpha-excluded.
 
 If collection reaches that reviewed cap before the boundary, or a persisted collecting/replaying
 repair is already above a newly lowered cap, the repair row becomes `failed` and is never coverage

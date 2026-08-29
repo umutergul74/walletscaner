@@ -36,6 +36,23 @@ with 6,000 trades, 3,000 entries and 3,000 managed outcomes under a 112 MiB Node
 runtime exceeds ten seconds, heap exceeds 100 MiB, RSS exceeds 160 MiB, or deterministic watch
 counts differ. This generated benchmark is an anti-regression gate, not live-provider validation.
 
+## Future survival/execution decision tape
+
+`survival-execution-tape-v1-20260830` is an evidence-collection contract, not a strategy or a
+positive alpha claim. It freezes one exact-pool decision before any later outcome and records fixed
+short-horizon path, liquidity and two-way executable quote evidence. The entry quantity for every
+later sell check is the minimum output from the decision-time buy quote, so later price knowledge
+cannot resize a historical entry. Missing, stale, wrong-pool, provider-error and no-route outcomes
+stay in the denominator.
+
+Do not optimize a selector while this cohort matures. After at least seven stable future days and
+30 distinct mature markets, run a chronological survival-first analysis with the predeclared
+market-only and shuffled-identity controls. A promotable hypothesis must have positive median and
+average return excluding its best winner, profit factor at least 1.30, catastrophic-loss and rug
+rates at most 3%, best-winner contribution at most 30%, exact-pool two-way quote coverage and
+independently verified identity evidence. Failure rejects the hypothesis; it does not authorize
+weaker gates. Any later paper version is new and future-only and still requires at least 14 days.
+
 ## Qualified-pool paper strategy
 
 `qualified-pool-paper-v1` is deliberately isolated from wallet-alpha scoring so its results cannot

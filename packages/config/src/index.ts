@@ -32,12 +32,7 @@ const archiveEnvSchema = z.object({
   ARCHIVE_DRY_RUN: booleanFromEnv.default("true"),
   ARCHIVE_STAGING_DIR: z.string().min(1).default("/app/archive-staging"),
   ARCHIVE_SETTLE_HOURS: z.coerce.number().int().min(1).max(48).default(6),
-  ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS: z.coerce
-    .number()
-    .int()
-    .min(24)
-    .max(720)
-    .default(72),
+  ARCHIVE_WALLET_EVIDENCE_SETTLE_HOURS: z.coerce.number().int().min(24).max(720).default(72),
   ARCHIVE_LEASE_SECONDS: z.coerce.number().int().min(60).max(7_200).default(1_800),
   ARCHIVE_RETRY_SECONDS: z.coerce.number().int().min(30).max(86_400).default(300),
   ARCHIVE_MAX_SEGMENTS_PER_RUN: z.coerce.number().int().min(1).max(7).default(1),
@@ -144,6 +139,12 @@ const envSchema = z.object({
   PYTH_MAX_STALENESS_SECONDS: z.coerce.number().int().positive().default(90),
   DEXSCREENER_BASE_URL: z.string().url().default("https://api.dexscreener.com"),
   DEXSCREENER_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+  JUPITER_API_URL: z.string().url().default("https://api.jup.ag/swap/v2"),
+  JUPITER_API_KEY: optionalString,
+  ALPHA_DECISION_TAPE_ENABLED: booleanFromEnv.default("false"),
+  ALPHA_DECISION_TAPE_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).default(3_000),
+  ALPHA_DECISION_TAPE_SEED_INTERVAL_SECONDS: z.coerce.number().int().min(15).default(30),
+  ALPHA_DECISION_TAPE_HEALTH_INTERVAL_SECONDS: z.coerce.number().int().min(60).default(300),
   TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_CHAT_ID: optionalString,
   TELEGRAM_NOTIFIER_POLL_INTERVAL_MS: z.coerce.number().int().min(15_000).default(30_000),
@@ -237,6 +238,14 @@ export function loadRuntimeConfig(env: Record<string, string | undefined> = proc
     dexscreener: {
       baseUrl: parsed.DEXSCREENER_BASE_URL,
       pollIntervalSeconds: parsed.DEXSCREENER_POLL_INTERVAL_SECONDS
+    },
+    alphaDecisionTape: {
+      enabled: parsed.ALPHA_DECISION_TAPE_ENABLED,
+      pollIntervalMs: parsed.ALPHA_DECISION_TAPE_POLL_INTERVAL_MS,
+      seedIntervalSeconds: parsed.ALPHA_DECISION_TAPE_SEED_INTERVAL_SECONDS,
+      healthIntervalSeconds: parsed.ALPHA_DECISION_TAPE_HEALTH_INTERVAL_SECONDS,
+      jupiterApiUrl: parsed.JUPITER_API_URL,
+      jupiterApiKey: parsed.JUPITER_API_KEY
     },
     alerts: {
       telegramBotToken: parsed.TELEGRAM_BOT_TOKEN,

@@ -123,6 +123,13 @@ rejects unprovable or over-60-second source-buy detection, and never substitutes
 price for the entry pool. Its output cannot feed Telegram or paper entry before the future-only
 shadow and fill-realism gates pass.
 
+Migration 052 and `worker:alpha-decision-tape` implement a separate future-only exact-pool research
+tape. The disabled-by-default worker records fixed 0/15/30/60/120/300-second market checkpoints and
+read-only Jupiter quote evidence at $6/$25/$100, rejects wrong-pool routes and persists no provider
+payload body. It cannot create a signal, Telegram message or paper position. The worker requires an
+explicit `JUPITER_API_KEY` and belongs only to the opt-in `alpha-research` Compose profile; the
+feature is currently implemented and locally validated, not deployed or operational.
+
 The production wallet-alpha worker still leases exactly one revision at a time. It may first peek at
 100 unlocked revisions and prefetch only the six-trade/three-entry admission floors in one bounded,
 five-second-timeout query. Cached admission is valid only for the same queue revision; concurrent

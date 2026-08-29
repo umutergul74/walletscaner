@@ -103,6 +103,7 @@ try {
       ingestion_gap_repair_signatures: boolean;
       solana_transaction_finality: boolean;
       wallet_alpha_scores: boolean;
+      alpha_decision_tape: boolean;
       database_bytes: string;
     }>(
       `SELECT
@@ -153,6 +154,16 @@ try {
             WHERE supersession.calculated_at <
                   NOW() - make_interval(days => $3::integer))
          ) AS wallet_alpha_scores,
+         EXISTS(
+           SELECT 1
+           FROM alpha_decision_tape decision
+           WHERE decision.retain_until < NOW()
+             AND NOT EXISTS (
+               SELECT 1 FROM alpha_decision_checkpoints checkpoint
+               WHERE checkpoint.decision_id = decision.id
+                 AND checkpoint.status NOT IN ('completed', 'dead_letter')
+             )
+         ) AS alpha_decision_tape,
          pg_database_size(current_database())::text AS database_bytes`,
       [
         priceRetentionDays,
@@ -183,6 +194,7 @@ try {
     let deletedWalletAlphaScores = 0;
     let deletedExpiredWalletAlphaScores = 0;
     let deletedSupersededWalletAlphaScores = 0;
+    let deletedAlphaDecisionTape = 0;
     let deletedRejectedWalletOutcomes = 0;
     let deletedRejectedWalletEntries = 0;
     let deletedWalletOutcomes = 0;
@@ -597,6 +609,29 @@ try {
       );
       deletedWalletAlphaScores =
         deletedExpiredWalletAlphaScores + deletedSupersededWalletAlphaScores;
+      deletedAlphaDecisionTape = await pruneInBatches(
+        `WITH doomed AS (
+           SELECT decision.id
+           FROM alpha_decision_tape decision
+           WHERE decision.retain_until < NOW()
+             AND NOT EXISTS (
+               SELECT 1 FROM alpha_decision_checkpoints checkpoint
+               WHERE checkpoint.decision_id = decision.id
+                 AND checkpoint.status NOT IN ('completed', 'dead_letter')
+             )
+           ORDER BY decision.retain_until, decision.id
+           LIMIT $2
+           FOR UPDATE OF decision SKIP LOCKED
+         )
+         DELETE FROM alpha_decision_tape AS target
+         USING doomed
+         WHERE target.id = doomed.id`,
+        60,
+        maintenanceStartedAt + totalBudgetMs,
+        batchSize,
+        [],
+        "alpha-decision-tape"
+      );
     }
 
     const priceRetentionState = await pool.query<{
@@ -657,7 +692,8 @@ try {
         rawChainEventPayloadHours: rawPayloadRetentionHours,
         walletAlphaScores: scoreRetentionDays,
         walletEvidence: walletEvidenceRetentionDays,
-        rejectedWalletEvidence: rejectedWalletEvidenceRetentionDays
+        rejectedWalletEvidence: rejectedWalletEvidenceRetentionDays,
+        alphaDecisionTape: 60
       },
       eligibleBeforeRun: {
         priceObservations: Boolean(eligible.rows[0]?.price_observations),
@@ -668,7 +704,8 @@ try {
         solanaSignatureQueue: Boolean(eligible.rows[0]?.solana_signature_queue),
         gapRepairSignatures: Boolean(eligible.rows[0]?.ingestion_gap_repair_signatures),
         solanaFinality: Boolean(eligible.rows[0]?.solana_transaction_finality),
-        walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores)
+        walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores),
+        alphaDecisionTape: Boolean(eligible.rows[0]?.alpha_decision_tape)
       },
       archiveRetirement: {
         runtimeEnabled: archiveRetirementEnabled,
@@ -689,6 +726,7 @@ try {
         walletAlphaScores: deletedWalletAlphaScores,
         walletAlphaScoresHardExpiry: deletedExpiredWalletAlphaScores,
         walletAlphaScoresSuperseded: deletedSupersededWalletAlphaScores,
+        alphaDecisionTape: deletedAlphaDecisionTape,
         rejectedWalletOutcomes: deletedRejectedWalletOutcomes,
         rejectedWalletEntries: deletedRejectedWalletEntries,
         walletOutcomes: deletedWalletOutcomes,
