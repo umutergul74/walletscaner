@@ -537,3 +537,22 @@ anything; never infer deployment from the presence of the local image.
   mutation is `up -d --no-build --no-deps --force-recreate solana-ingestion`, followed immediately
   by identity, resource, flow and fail-closed startup verification. Roll back env/container to exact
   R43 on a hard gate.
+
+## R44 ingestion-only canary running — 2026-08-29 06:23 UTC
+
+- Only `solana-ingestion` was recreated with `--no-build --no-deps`. New container
+  `bd9caf7041ec...` runs exact R44 image `sha256:44e6beae...`, restart/OOM `0/false`, 0.20 CPU,
+  160 MiB and live false. PostgreSQL `a5c2b747d129...` and wallet-alpha `1b7df492ccf0...` identities
+  are unchanged and restart/OOM-free; all 12 Walletscaner services remain running.
+- R44 live diagnostics expose `maximumLiveQueueDelayMs=15000`. Trade transport is open/OK with
+  queue zero and no new pressure/purge episode. The first startup load briefly showed 236 canonical
+  events and 196 seconds oldest age, then drained 236 -> 51 -> 0 with parser claim errors zero.
+  Dead-letter, unresolved 24-hour finality and signature backlog stayed zero; wallet trades remained
+  fresh.
+- Startup opened two expected `backfill_truncated` incidents for `6EF8...` and `pAMM...`; both
+  closed after 60 seconds as `transport_recovered_gap_unreconciled`. The next health sample shows
+  all four program sources open/OK/current, aggregate discovery OK and open incident count zero.
+- The deploy is operational but the new breaker is not yet real-data validated because no new
+  post-R44 saturated hot-pool episode has occurred. Keep ledger revision 69 in progress through a
+  bounded clean observation, then complete the canary if restart/OOM/backlog/coverage/error gates
+  remain clean; real saturation evidence becomes a separate waiting acceptance gate.
