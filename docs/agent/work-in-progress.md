@@ -681,3 +681,12 @@ anything; never infer deployment from the presence of the local image.
 - Next action is revision 75 `in_progress`, atomically change only `WALLETSCANER_INGEST_IMAGE`, prove
   the rendered 0.20 CPU/160 MiB/live-false contract and recreate only `solana-ingestion` with no
   dependencies. Roll back to exact R44 on a hard gate.
+
+## R45 rollout mutation armed — 2026-08-29 06:50 UTC
+
+- Ledger revision 75/SHA-256 `bae1a762c97fab07feb33244d6204cd70a295483e4aae32ceb704965774968b8`
+  is in progress. Only the ingestion image key was atomically moved R44 -> R45; `.env.server` SHA
+  moved `0273ae86...` -> `7f6704a8...` without exposing contents.
+- Render proves exact R45, CPU 0.20, memory 167,772,160 bytes and live false. The R44 container is
+  still running at this checkpoint. Next exact mutation is an ingestion-only no-dependency recreate,
+  then immediate identity/startup/backlog/coverage verification.
