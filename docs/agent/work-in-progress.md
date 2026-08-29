@@ -659,3 +659,13 @@ anything; never infer deployment from the presence of the local image.
   non-quarantine failures zero and one intentional quarantine. Recent cycles process 71-100 wallets
   with zero cycle failure but producer revisions exceed background drain; the signal lane remains
   current. Do not conflate this with the R45 transport canary or claim alpha equilibrium.
+
+## R45 immutable transfer artifact — 2026-08-29 06:43 UTC
+
+- Local artifact `walletscaner-worker-trade-watchdog-r45-20260829.tar.zst` is exactly 462,948,255
+  bytes with SHA-256 `9539118b136ef094d47610e61d4f70d31fb8f98d4a8a675bb6521c26cfd7e80f`.
+  Independent `zstd -t` passed and reported a 463,697,408-byte decoded stream. The temporary raw tar
+  was removed only after proof; the compressed artifact and loaded local image remain.
+- Production is unchanged at R44/revision 73. Next action is open R45 `planned`, copy only to an
+  exact `.partial` server path, verify size/SHA/zstd, atomically rename/load and then enter
+  `in_progress` before changing only the ingestion image key/container.
