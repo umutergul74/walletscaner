@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-29T00:06:00Z
+status: waiting
+updated_at_utc: 2026-08-29T00:08:00Z
 owner: codex
 task: diagnose and repair recurrent Solana discovery disconnects and alpha-queue failures without losing the pending storage-retirement and 24-hour equilibrium gates
-last_safe_checkpoint: the first normal post-boundary maintenance made chain_event_payloads_20260826 absent at 000553Z and free space rose from 17598472192 to 18864463872 bytes; no manual DROP ran, and the next action is full read-only manifest/hold/log/flow/service verification before recording the autonomous retirement in the ledger
+last_safe_checkpoint: ledger revision 67 verified autonomous guarded retirement of chain_event_payloads_20260826 with manifest 99 retained in Governance, zero holds/blocks, 20355218455-byte DB and 18869415936-byte free disk; R43 flow is operational and the remaining gates are a clean 24h storage slope plus alpha P1 fairness/equilibrium observation
 ---
 
 # Walletscaner Work In Progress
@@ -398,13 +398,24 @@ repeating any step.
 - Next exact action is read-only verification of the completed maintenance record, verified archive
   manifest/Object Lock evidence, unresolved hold count, database/flow state and unchanged service
   identities. Only after all gates pass should a new ledger verification phase be recorded.
+- Verification passed. Maintenance completed at 00:06:17 UTC and reported one retired payload
+  partition, zero unresolved holds and zero archive blocks. Manifest 99 remains verified for 125,265
+  rows, 273,108,927 archive bytes, Governance retention through 2026-09-26. Direct database state
+  has no 26-August partition or hold rows; PostgreSQL is 20,355,218,455 bytes.
+- Canonical flow remained live at backlog 91/53 seconds, dead-letter/open incident/signature backlog/
+  finality-unresolved `0/0/0/0`, with fresh pool/swap/trade evidence. All four inspected services
+  kept their identities and restart/OOM `0/false`; only Compose project Walletscaner is listed.
+  Host free space is 18,869,415,936 bytes and the current verified backup remains acknowledged.
+- Ledger revisions 65-67 completed `26aug-payload-retirement-verification`; revision 67 canonical
+  SHA-256 is `9915ecd12af45e5d828786c015ae2e0237691083b7e0952250ae5d43775e1494`.
 
 ## Rollback and next exact action
 
 - Rollback/recovery evidence is the independently verified local 28-August dump plus the same newest
-  acknowledged server generation; R42/R36 service topology is unchanged.
-- Next exact action: open a revision-checked `r43-alpha-canary`, atomically update only the research
-  image key, recreate only wallet-alpha and prove the known natural-key retry succeeds or roll back
-  to exact R34. Independently, after the
-  first normal maintenance cycle following 2026-08-29 00:00 UTC, verify the 26-August partition
-  retirement and disk gain; do not manually drop it or rerun backup reconciliation.
+  acknowledged server generation. R42 and R34 images remain exact service rollback points; manifest
+  99 plus its retained B2 object is the retired raw-payload recovery point.
+- Do not rerun either R43 canary, the exact transfer-file removal or the 26-August retirement. Let the
+  system run for a clean 24-hour post-retirement window, then recompute recent disk/database slopes,
+  reserve runway, compaction cursor progress and archive/compact backlog. In the same future read-only
+  review, measure P1 producer/consumer slope and oldest-lane age; P2 signal work must remain current.
+  Only a new measured deficit should open another implementation/deployment phase.
