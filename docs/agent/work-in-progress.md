@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:21:18Z
+updated_at_utc: 2026-08-29T17:22:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: R45 source f17d8216 and exact image bc17668d are operational only on solana-ingestion; ledger revision 76 SHA 95786f13 completes its 10.48-hour canary with 185 durable watchdog releases at p95 15056ms, p99 15998ms and max 18374ms, restart/OOM 0/false and backlog/dead/open 0/0/0; next action is a separate revision-checked retirement of only the exact 462948255-byte server transfer artifact after hash/rollback proof
+last_safe_checkpoint: R45 canary is complete at ledger revision 76 SHA 95786f13; local and server transfer artifacts are both exactly 462948255 bytes/SHA 9539118b, server zstd test passes, running/loaded R45 is bc17668d and exact R44 rollback is 44e6beae; next action is ledger revision 77 planned for removal of only the exact server transfer file, not an unrecorded delete
 ---
 
 # Walletscaner Work In Progress
@@ -741,3 +741,16 @@ anything; never infer deployment from the presence of the local image.
 - R45 is operational. Storage equilibrium and alpha queue equilibrium remain separate unvalidated
   gates. Next, open a new exact transfer-artifact retirement phase; do not remove any file before
   revision-checked planned/in-progress records and local/server SHA plus rollback-image proof.
+
+## R45 transfer-artifact retirement preflight — 2026-08-29 17:22 UTC
+
+- The local and server transfer artifacts independently match at 462,948,255 bytes and SHA-256
+  `9539118b136ef094d47610e61d4f70d31fb8f98d4a8a675bb6521c26cfd7e80f`; a new low-priority server
+  `zstd -t` decoded 463,697,408 bytes successfully.
+- Running and loaded R45 is exact image `sha256:bc17668d...3722`; exact R44 rollback image
+  `sha256:44e6beae...35cb` remains loaded. Ingestion is running with restart/OOM `0/false`. Server free
+  space before retirement is 15,896,514,560 bytes. Revision 76 is completed and the latest health
+  gate has a verified/off-site-acknowledged dump plus healthy flow.
+- The only proposed deletion is the exact staged transfer file under `/opt/walletscaner/deploy/`.
+  Keep the byte-identical local artifact, both Docker images, database, archives, B2 and all services.
+  Next action is revision 77 `planned`, not file removal.
