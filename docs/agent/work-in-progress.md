@@ -556,3 +556,22 @@ anything; never infer deployment from the presence of the local image.
   post-R44 saturated hot-pool episode has occurred. Keep ledger revision 69 in progress through a
   bounded clean observation, then complete the canary if restart/OOM/backlog/coverage/error gates
   remain clean; real saturation evidence becomes a separate waiting acceptance gate.
+
+## R44 canary accepted — 2026-08-29 06:27 UTC
+
+- Multiple post-startup samples passed. Canonical backlog drained to zero and remained bounded
+  (latest point 18/16 seconds), open incidents/dead-letter/unresolved finality/signature backlog were
+  zero, discovery stayed all-four current/OK and wallet trades remained fresh. Ingestion restart/OOM
+  remained `0/false`; parser errors were zero. Post-deploy trade delay stayed below 5,243ms with no
+  pressure/purge event, and the configured breaker remained 15,000ms.
+- Independent operations health still says degraded only for storage metrics: database above the
+  legacy 12 GiB warning threshold, payload compaction lag about 7,239 seconds and the pre-clean-window
+  runway estimate below 14 days. Flow, backup and coverage gates are healthy. One post-deploy trade
+  coverage exclusion was normal `rpc-trade-observation-capacity-rotation`, not an error or stale
+  breaker activation.
+- Ledger revision 70/SHA-256 `757efae5266d4bf14e9c47dc855a997843442927319374e96bdf01336aed858a`
+  completed the ingestion-only canary. R44 is operational. Natural hot-pool stale-breaker behavior
+  and the clean 24-hour storage slope remain explicitly waiting, not validated.
+- The verified 462,877,766-byte transfer artifact still occupies server disk. Before removing only
+  that exact file, prove its size/SHA again, prove the byte-identical local artifact, loaded R44 and
+  exact R43 rollback image remain, and use a separate revision-checked retirement phase.
