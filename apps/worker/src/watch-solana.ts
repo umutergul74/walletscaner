@@ -30,7 +30,11 @@ import {
   type SolanaEventSourceDiagnostics
 } from "@memecoin-alpha/providers";
 import { recordFirstWalletEntry } from "@memecoin-alpha/core";
-import { PostgresRepository, type CanonicalChainEvent } from "@memecoin-alpha/db";
+import {
+  PostgresRepository,
+  type CanonicalChainEvent,
+  type WalletAlphaQueueAdmission
+} from "@memecoin-alpha/db";
 import type {
   NormalizedEvent,
   PoolSnapshot,
@@ -207,6 +211,11 @@ const webhookManagementEnabled = parseBooleanEnv(
   false
 );
 const strategyVersion = process.env.ALPHA_STRATEGY_VERSION ?? "evidence-v1";
+const walletAlphaQueueAdmission: WalletAlphaQueueAdmission = {
+  minimumTradeEvents: boundedInteger(process.env.WALLET_ALPHA_MIN_TRADE_EVENTS, 6, 1, 100),
+  minimumEntries: boundedInteger(process.env.WALLET_ALPHA_MIN_ENTRIES, 3, 1, 100),
+  sourceWindowDays: boundedInteger(process.env.WALLET_ALPHA_WINDOW_DAYS, 30, 1, 3_650)
+};
 const programs = parsePrograms(process.env.SOLANA_POOL_PROGRAMS_JSON);
 const discoveryWebSocketRoutes = resolveDiscoveryWebSocketRoutes({
   configuredWsUrl: wsUrl,
@@ -1732,7 +1741,7 @@ async function sampleDuePoolsOnce() {
       raw: compactPair
     };
     poolSamplingDiagnostics.liveMarketContextCount += 1;
-    await repository.enrichWalletTradePrices(observation);
+    await repository.enrichWalletTradePrices(observation, walletAlphaQueueAdmission);
     await materializeWalletEntriesForToken(pool, observation, flowEvidence);
   }
 }

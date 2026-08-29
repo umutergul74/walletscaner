@@ -2,8 +2,8 @@
 status: active
 updated_at_utc: 2026-08-29T17:31:00Z
 owner: codex
-task: stop inadmissible trade and price evidence from generating unbounded wallet-alpha background work while preserving every canonical evidence row, revision safety, signal priority, configured admission semantics and shared-host limits
-last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; live alpha diagnosis found 8108 pending jobs, 7814 after the latest cycles, 4401 processed over 64 recent cycles but net +930, dominated by 7477 price-enrichment wallets; oldest/newest 500 samples have 96%/98% zero entries and only 3.8%/0.6% meet 6-trade-or-3-entry admission; next action is local R46 code/tests that persist all evidence but condition queue creation on the exact configured admission thresholds, not a production mutation
+task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
+last_safe_checkpoint: R45 and its artifact retirement are complete at ledger revision 79 SHA a0d6bf7c; live alpha diagnosis found 8108 pending jobs, 7814 after the latest cycles, 4401 processed over 64 recent cycles but net +930, dominated by 7477 price-enrichment wallets; R46 now gates only redundant price-enrichment revisions and leaves trade/entry producers unconditional after concurrency review; memory 19/19 and PostgreSQL16 evidence 34/34 pass, next action is full exact Linux/zstd validation and immutable image proof before any production mutation
 ---
 
 # Walletscaner Work In Progress
@@ -16,15 +16,15 @@ repeating any step.
 ## Active objective — R46 wallet-alpha producer admission
 
 - Preserve every wallet trade, exact price enrichment and later entry/outcome. Change only whether
-  trade/price producers increment the derived score-work revision before a wallet meets the same
+  price enrichment increments a redundant score-work revision before a wallet meets the same
   configured admission boundary used by the worker (`trade_count >= minimumTradeEvents OR
   recent_entry_count >= minimumEntries`).
 - The thresholds must be passed explicitly from ingestion configuration, remain bounded, and be
-  optional for repository callers/tests that need legacy unconditional queue semantics. A new
-  wallet-entry write already enqueues atomically; therefore a wallet that matures later cannot be
-  lost when its earlier trade-only updates did not create work.
-- Acceptance: memory and PostgreSQL tests prove sub-threshold trade/price evidence is persisted but
-  not queued, the crossing trade or entry creates work, revisions arriving during a lease remain
+  optional for repository callers/tests that need unconditional enrichment semantics. Trade and
+  wallet-entry writes stay unconditional atomic queue producers; therefore a threshold crossing,
+  concurrent trade or wallet that matures later cannot be lost.
+- Acceptance: memory and PostgreSQL tests prove sub-threshold price enrichment is persisted but
+  does not create a second revision, every trade or entry still creates work, revisions arriving during a lease remain
   pending, priority lanes remain unchanged, and target/type/lint/build plus populated PostgreSQL 16
   gates pass. Do not alter scoring/risk thresholds, current queue rows, CPU/RAM, providers or live
   execution. Production remains exact R45 until a separate immutable R46 canary is fully proven.
@@ -42,6 +42,25 @@ repeating any step.
 - Existing indexes cover bounded probes by strategy/wallet/time. Do not add an index or migration
   before the exact SQL and PostgreSQL 16 plans show one is required. Next action is the smallest
   repository/caller/test change locally; no server mutation is open.
+
+## R46 local implementation — 2026-08-29 17:46 UTC
+
+- Concurrency review narrowed the change to price enrichment. Every trade and entry remains an
+  unconditional transactional queue producer, so two simultaneous threshold-crossing trades cannot
+  suppress discovery. Price enrichment always persists its changed trade rows, then uses the exact
+  configured bounded `trade >= 6 OR recent entry >= 3` test only to decide whether it adds another
+  derived revision. Repository callers may omit the option for unconditional replay semantics.
+- The memory implementation deduplicates enrichment queueing once per changed wallet, matching
+  PostgreSQL. Tests prove five trade rows are persisted and enriched with no second revision after
+  their initial trade work was completed; the sixth trade still enqueues unconditionally. Memory
+  and PostgreSQL suites pass 45/45 combined, including PostgreSQL's complete 34-test evidence suite.
+- Typecheck, lint and workspace build pass. The broad Windows suite is 418 passed, 49 intentional
+  database-environment skips and only the same three local `zstd ENOENT` failures. A populated-host
+  read-only plan used the existing trade and entry strategy/wallet/time indexes; the bounded probes
+  themselves were about 6.7ms cold for six trades and 0.4ms for zero recent entries with no temp or
+  WAL. The 2.7-second outer candidate scan was diagnostic-only and is not part of the write path.
+- Next action is commit the coherent R46 source/tests/docs/recipe, build from exact R45, and run the
+  exact Linux/zstd full suite plus targeted PostgreSQL 16 gate. Production remains R45/revision 79.
 
 ## Objective and exclusions
 

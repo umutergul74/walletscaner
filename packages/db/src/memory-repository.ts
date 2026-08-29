@@ -63,6 +63,7 @@ import type {
   TokenRiskReport,
   WalletAlphaCoverageSummary,
   WalletAlphaAdmissionProbe,
+  WalletAlphaQueueAdmission,
   WalletAlphaEvidenceBounds,
   WalletAlphaDetail,
   WalletAlphaRankingQuery,
@@ -633,8 +634,12 @@ export class MemoryRepository
     return true;
   }
 
-  async enrichWalletTradePrices(observation: PriceObservationEvidence): Promise<number> {
+  async enrichWalletTradePrices(
+    observation: PriceObservationEvidence,
+    queueAdmission?: WalletAlphaQueueAdmission
+  ): Promise<number> {
     let updated = 0;
+    const changedWallets = new Map<string, WalletTradeEvidence>();
     const observedAt = new Date(observation.observedAt).getTime();
     for (const [key, trade] of this.walletTradeEvents) {
       const tradeAt = new Date(trade.observedAt).getTime();
@@ -665,6 +670,14 @@ export class MemoryRepository
           }
         }
       });
+      changedWallets.set(
+        `${trade.chain}:${trade.walletAddress}:${trade.strategyVersion}`,
+        trade
+      );
+      updated += 1;
+    }
+    for (const trade of changedWallets.values()) {
+      if (!this.hasWalletAlphaAdmissionEvidence(trade, queueAdmission)) continue;
       this.enqueueWalletAlpha(
         trade.chain,
         trade.walletAddress,
@@ -672,9 +685,43 @@ export class MemoryRepository
         0,
         "price-enrichment"
       );
-      updated += 1;
     }
     return updated;
+  }
+
+  private hasWalletAlphaAdmissionEvidence(
+    scope: Pick<WalletTradeEvidence, "chain" | "walletAddress" | "strategyVersion">,
+    queueAdmission?: WalletAlphaQueueAdmission
+  ): boolean {
+    if (!queueAdmission) return true;
+    const minimumTradeEvents = clampLimit(queueAdmission.minimumTradeEvents, 1, 100);
+    const minimumEntries = clampLimit(queueAdmission.minimumEntries, 1, 100);
+    const minimumEntryObservedAt =
+      Date.now() - clampLimit(queueAdmission.sourceWindowDays, 1, 3_650) * 86_400_000;
+    let tradeEvents = 0;
+    for (const trade of this.walletTradeEvents.values()) {
+      if (
+        trade.chain === scope.chain &&
+        trade.walletAddress === scope.walletAddress &&
+        trade.strategyVersion === scope.strategyVersion &&
+        ++tradeEvents >= minimumTradeEvents
+      ) {
+        return true;
+      }
+    }
+    let entries = 0;
+    for (const entry of this.walletEntrySignals.values()) {
+      if (
+        entry.chain === scope.chain &&
+        entry.walletAddress === scope.walletAddress &&
+        entry.strategyVersion === scope.strategyVersion &&
+        new Date(entry.observedAt).getTime() >= minimumEntryObservedAt &&
+        ++entries >= minimumEntries
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async materializeHistoricalWalletTrades(): Promise<number> {

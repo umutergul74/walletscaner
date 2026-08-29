@@ -248,6 +248,13 @@ always take the highest ready priority and remain FIFO within a lane. PostgreSQL
 same bounded worker for elevated work, but the durable queue and 30/300-second fallback polls remain
 the recovery truth if a notification or listener is lost.
 
+Live price enrichment passes the worker's configured trade/entry admission floors and source window
+into persistence. PostgreSQL always stores the changed price evidence, then increments score work
+only when the wallet has reached either bounded floor. Trade and entry writes remain unconditional
+transactional producers; this preserves threshold crossings and concurrent smart-wallet discovery
+while suppressing the dominant redundant enrichment revisions. It does not filter canonical
+evidence, change lane priority or weaken score/risk gates.
+
 The optional `wallet-alpha-managed-v2` research path reuses the same canonical entries, trades and
 frozen outcomes, selects the managed `tp15-sl20-20m` followability series, and compares it with the
 fixed-horizon source score in a bounded read-only report. It does not claim the wallet-alpha work

@@ -3,6 +3,33 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-29 R45 exact-pool watchdog and R46 queue-admission work
+
+- **Operational — R45 ingestion:** only `solana-ingestion` runs immutable
+  `trade-watchdog-r45-20260829`, image `sha256:bc17668d2eea...`, source `f17d8216a915...`, at 0.20
+  CPU/160 MiB with live execution false and restart/OOM `0/false`. Across 568 health samples and
+  10.48 hours, 185 natural blocked-head releases fired at p50 15,001ms, p95 15,056ms, p99 15,998ms
+  and maximum 18,374ms; none exceeded 20 seconds. Every release used the existing durable
+  coverage-incomplete-before-unsubscribe path. This supersedes R44's dequeue-only 35-41 second
+  behavior and the earlier 127-second incident without extra concurrency or provider spend.
+- **Operational closure:** ledger revision 76 completed the R45 canary. Revision 79/SHA-256
+  `a0d6bf7ce0d1...` then removed only the independently hashed 462,948,255-byte server transfer
+  archive, recovering 462,729,216 allocation bytes. The byte-identical local artifact, exact R45
+  and R44 rollback images, PostgreSQL, archives and B2 remain. Post-removal flow was
+  backlog/dead/unresolved/signature `0/0/0/0` with no new ingestion error.
+- **Implemented locally — R46 producer admission:** a 17:26 UTC baseline found the active alpha
+  queue dominated by 7,477 `price-enrichment` wallets. Sixty-four recent cycles processed 4,401
+  wallets but pending moved 6,884 -> 7,814. In bounded oldest/newest 500 samples, 96%/98% had zero
+  entries and only 3.8%/0.6% met the existing `6 trades OR 3 recent entries` floor. R46 persists all
+  trade/price evidence but suppresses only redundant price-enrichment revisions below the exact
+  configured admission boundary. Trade and entry writes remain unconditional atomic producers, so
+  later maturity and concurrent threshold crossings are not lost. Memory tests and the full
+  PostgreSQL 16 evidence suite pass; R46 is not yet production.
+- **Waiting:** prove the full source gate and immutable image before any R46 ingestion-only canary.
+  After rollout, require a negative one-hour producer-adjusted queue slope, unchanged evidence
+  persistence/freshness, P2 latency within five minutes, no failures/restarts/OOM and no CPU/RAM
+  increase. Storage still needs the normal 27-August partition retirement and a clean 24-hour slope.
+
 ## 2026-08-29 R44 bounded exact-pool trade latency rollout
 
 - **Operational — R44 ingestion:** only `solana-ingestion` was recreated on immutable

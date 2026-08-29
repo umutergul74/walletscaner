@@ -530,6 +530,16 @@ export interface WalletAlphaAdmissionProbe extends WalletAlphaWorkCandidate {
   entryCount: number;
 }
 
+/**
+ * Price-enrichment queue admission. Evidence is always persisted; only the redundant
+ * enrichment revision is suppressed until either bounded evidence threshold is met.
+ */
+export interface WalletAlphaQueueAdmission {
+  minimumTradeEvents: number;
+  minimumEntries: number;
+  sourceWindowDays: number;
+}
+
 export interface WalletAlphaEvidenceBounds {
   tradeEventsExceeded: boolean;
   entriesExceeded: boolean;
@@ -698,7 +708,10 @@ export interface EvidenceRepository {
   materializeHistoricalWalletFlowEvidence(strategyVersion: string): Promise<number>;
   saveWalletEntrySignal(signal: WalletEntrySignalEvidence): Promise<boolean>;
   saveWalletTradeEvent(trade: WalletTradeEvidence): Promise<boolean>;
-  enrichWalletTradePrices(observation: PriceObservationEvidence): Promise<number>;
+  enrichWalletTradePrices(
+    observation: PriceObservationEvidence,
+    queueAdmission?: WalletAlphaQueueAdmission
+  ): Promise<number>;
   materializeHistoricalWalletTrades(strategyVersion: string): Promise<number>;
   saveWalletAlphaScore(score: WalletAlphaScoreSnapshot): Promise<void>;
   replaceWalletPositionLedger(

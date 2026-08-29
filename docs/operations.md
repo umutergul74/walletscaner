@@ -379,6 +379,14 @@ completes only the claimed revision without materializing a ledger or score; can
 remains and a later write requeues the wallet. The ordered claim SQL itself remains evidence-free.
 A correlated evidence predicate inside that claim query caused a 56+ second production disk scan
 under backup I/O and is prohibited.
+Live price enrichment therefore applies admission at its already-changed wallet scope, not in the
+ordered claim. It passes `WALLET_ALPHA_MIN_TRADE_EVENTS`, `WALLET_ALPHA_MIN_ENTRIES` and
+`WALLET_ALPHA_WINDOW_DAYS` explicitly. The two probes stop at their small configured limits on the
+existing strategy/wallet/time indexes. Sub-threshold price evidence remains durable but creates no
+second work revision. Trade and entry writes stay unconditional, so a threshold crossing or later
+entry requeues the wallet even under concurrent ingestion. Do not clean evidence or lower admission
+thresholds to reduce backlog. Operational acceptance is a negative producer slope plus unchanged
+evidence insert/enrichment counts, not merely a temporarily empty queue.
 Migrations 043 and 048 add three scheduling lanes without adding another process or duplicating
 queue rows. Priority 2 is restricted to a controlled-flow, critical-risk-passed entry whose latest
 persisted wallet status is `watch`, `candidate` or `validated-paper`. Risk-passed entries from

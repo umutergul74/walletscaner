@@ -23,6 +23,69 @@ const thresholds = {
 };
 
 describe("MemoryRepository", () => {
+  it("persists sub-threshold trade pricing without producing premature alpha work", async () => {
+    const repo = new MemoryRepository();
+    const admission = { minimumTradeEvents: 6, minimumEntries: 3, sourceWindowDays: 30 };
+    const trade = (index: number) => ({
+      idempotencyKey: `admission-trade-${index}`,
+      chain: "solana" as const,
+      walletAddress: "AdmissionWallet",
+      tokenAddress: "AdmissionToken",
+      poolAddress: "AdmissionPool",
+      side: "buy" as const,
+      baseAmount: 10,
+      dataQuality: "observed-balance" as const,
+      signature: `admission-signature-${index}`,
+      slot: index,
+      provider: "test",
+      observedAt: `2026-08-29T00:0${index}:00.000Z`,
+      strategyVersion: "admission-v1",
+      raw: {}
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      await expect(repo.saveWalletTradeEvent(trade(index))).resolves.toBe(true);
+    }
+    const [initialWork] = await repo.claimWalletAlphaWork({
+      strategyVersion: "admission-v1",
+      workerId: "admission-initial",
+      limit: 1
+    });
+    expect(initialWork).toBeDefined();
+    await expect(repo.completeWalletAlphaWork(initialWork!)).resolves.toBe(true);
+
+    await expect(
+      repo.enrichWalletTradePrices(
+        {
+          idempotencyKey: "admission-price-1",
+          chain: "solana",
+          tokenAddress: "AdmissionToken",
+          poolAddress: "AdmissionPool",
+          priceUsd: 2,
+          liquidityUsd: 25_000,
+          rugged: false,
+          signature: "admission-price-signature-1",
+          slot: 10,
+          provider: "test",
+          observedAt: "2026-08-29T00:04:30.000Z",
+          strategyVersion: "admission-v1",
+          raw: {}
+        },
+        admission
+      )
+    ).resolves.toBe(5);
+    expect(await repo.listWalletTradeEvents("AdmissionWallet")).toHaveLength(5);
+    await expect(repo.getWalletAlphaWorkSummary("admission-v1")).resolves.toMatchObject({
+      pending: 0
+    });
+
+    await expect(repo.saveWalletTradeEvent(trade(5))).resolves.toBe(true);
+    await expect(repo.getWalletAlphaWorkSummary("admission-v1")).resolves.toMatchObject({
+      pending: 1,
+      backgroundPending: 1
+    });
+  });
+
   it("finds the nearest persisted quote observation within the requested distance", async () => {
     const repo = new MemoryRepository();
     const observation = {

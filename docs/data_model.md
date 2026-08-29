@@ -221,6 +221,13 @@ selection purposes.
   an alpha score. `NOTIFY wallet_alpha_work` is only a commit-bound wake hint; this table is the
   durable source of truth.
 
+Price enrichment applies the same configured admission floor as the consumer: at least the bounded
+trade count or the bounded recent-entry count. This gates only its redundant derived revision; the
+price provenance is always persisted. Trade, entry and outcome writes remain unconditional
+transactional queue producers, so threshold crossings and concurrent wallet discovery cannot be
+lost. Repository callers that omit enrichment admission retain explicit unconditional queue
+semantics for replay and tests.
+
 Scores are versioned by `strategy_version`; reports and APIs should never silently mix versions.
 Failed or unknown token risk cannot enter the live wallet-entry/outcome cohort. Transitional
 risk-failed/excluded evidence is kept for three days for diagnosis, while admitted wallet evidence

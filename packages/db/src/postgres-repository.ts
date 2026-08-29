@@ -51,6 +51,7 @@ import type {
   TokenRiskReport,
   WalletAlphaCoverageSummary,
   WalletAlphaAdmissionProbe,
+  WalletAlphaQueueAdmission,
   WalletAlphaDetail,
   WalletAlphaRankingQuery,
   WalletAlphaSignalQuery,
@@ -769,7 +770,19 @@ export class PostgresRepository
     return Boolean(result.rows[0]?.changed);
   }
 
-  async enrichWalletTradePrices(observation: PriceObservationEvidence): Promise<number> {
+  async enrichWalletTradePrices(
+    observation: PriceObservationEvidence,
+    queueAdmission?: WalletAlphaQueueAdmission
+  ): Promise<number> {
+    const minimumTradeEvents = queueAdmission
+      ? clampLimit(queueAdmission.minimumTradeEvents, 1, 100)
+      : null;
+    const minimumEntries = queueAdmission
+      ? clampLimit(queueAdmission.minimumEntries, 1, 100)
+      : null;
+    const sourceWindowDays = queueAdmission
+      ? clampLimit(queueAdmission.sourceWindowDays, 1, 3_650)
+      : null;
     const result = await this.pool.query(
       `WITH changed AS (
        UPDATE wallet_trade_events
@@ -798,6 +811,34 @@ export class PostgresRepository
       ), changed_wallets AS (
         SELECT DISTINCT chain, wallet_address, strategy_version
         FROM changed
+      ), eligible_wallets AS MATERIALIZED (
+        SELECT changed_wallets.*
+        FROM changed_wallets
+        WHERE $10::integer IS NULL
+           OR (
+             SELECT COUNT(*)
+             FROM (
+               SELECT 1
+               FROM wallet_trade_events trade
+               WHERE trade.chain = changed_wallets.chain
+                 AND trade.strategy_version = changed_wallets.strategy_version
+                 AND trade.wallet_address = changed_wallets.wallet_address
+               LIMIT COALESCE($10::integer, 1)
+             ) bounded_trades
+           ) >= COALESCE($10::integer, 1)
+           OR (
+             SELECT COUNT(*)
+             FROM (
+               SELECT 1
+               FROM wallet_entry_signals entry
+               WHERE entry.chain = changed_wallets.chain
+                 AND entry.strategy_version = changed_wallets.strategy_version
+                 AND entry.wallet_address = changed_wallets.wallet_address
+                 AND entry.observed_at >=
+                   NOW() - make_interval(days => COALESCE($12::integer, 1))
+               LIMIT COALESCE($11::integer, 1)
+             ) bounded_entries
+           ) >= COALESCE($11::integer, 1)
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(
           chain,
@@ -806,7 +847,7 @@ export class PostgresRepository
           0::smallint,
           'price-enrichment'
         ) AS queued
-        FROM changed_wallets
+        FROM eligible_wallets
       )
       SELECT
         COUNT(*)::int AS changed_count,
@@ -821,7 +862,10 @@ export class PostgresRepository
         observation.strategyVersion,
         observation.provider,
         observation.signature,
-        observation.liquidityUsd
+        observation.liquidityUsd,
+        minimumTradeEvents,
+        minimumEntries,
+        sourceWindowDays
       ]
     );
     return Number(result.rows[0]?.changed_count ?? 0);

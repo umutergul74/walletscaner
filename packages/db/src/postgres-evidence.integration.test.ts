@@ -296,6 +296,69 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(status.alphaQueuePending).toBe(1);
   });
 
+  it("persists sub-threshold trade pricing without producing premature alpha work", async () => {
+    const strategyVersion = "producer-admission-v1";
+    const walletAddress = "ProducerAdmissionWallet111";
+    const admission = { minimumTradeEvents: 6, minimumEntries: 3, sourceWindowDays: 30 };
+    const trade = (index: number) => ({
+      idempotencyKey: `producer-admission-trade-${index}`,
+      chain: "solana" as const,
+      walletAddress,
+      tokenAddress: "ProducerAdmissionMint111",
+      poolAddress: "ProducerAdmissionPool111",
+      side: "buy" as const,
+      baseAmount: 10,
+      dataQuality: "observed-balance" as const,
+      signature: `producer-admission-signature-${index}`,
+      slot: 20_000 + index,
+      provider: "integration-test",
+      observedAt: `2026-08-29T00:0${index}:00.000Z`,
+      strategyVersion,
+      raw: {}
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      expect(await repository.saveWalletTradeEvent(trade(index))).toBe(true);
+    }
+    const [initialWork] = await repository.claimWalletAlphaWork({
+      strategyVersion,
+      workerId: "producer-admission-initial",
+      limit: 1
+    });
+    expect(initialWork).toBeDefined();
+    expect(await repository.completeWalletAlphaWork(initialWork!)).toBe(true);
+    expect(
+      await repository.enrichWalletTradePrices(
+        {
+          idempotencyKey: "producer-admission-price-1",
+          chain: "solana",
+          tokenAddress: "ProducerAdmissionMint111",
+          poolAddress: "ProducerAdmissionPool111",
+          priceUsd: 2,
+          liquidityUsd: 25_000,
+          rugged: false,
+          signature: "producer-admission-price-signature-1",
+          slot: 20_010,
+          provider: "integration-test",
+          observedAt: "2026-08-29T00:04:30.000Z",
+          strategyVersion,
+          raw: {}
+        },
+        admission
+      )
+    ).toBe(5);
+    expect(await repository.getWalletAlphaWorkSummary(strategyVersion)).toMatchObject({
+      pending: 0
+    });
+    expect(await repository.listWalletTradeEvents(walletAddress)).toHaveLength(5);
+
+    expect(await repository.saveWalletTradeEvent(trade(5))).toBe(true);
+    expect(await repository.getWalletAlphaWorkSummary(strategyVersion)).toMatchObject({
+      pending: 1,
+      backgroundPending: 1
+    });
+  });
+
   it("preserves work arriving during an incremental wallet-alpha lease", async () => {
     const firstTrade = {
       idempotencyKey: "queue-trade-1",
