@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T06:00:00Z
+updated_at_utc: 2026-08-29T06:06:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: read-only 0844 TRT review proved R43 discovery current and error-free but the one-address ordered trade lane reached 1050 queued signatures and 113990ms queue delay on a roughly 9-10 notifications-per-second pool before fail-closed release purged 1081 queued items; next action is a tested trade-only maximum queue-delay circuit breaker, not a concurrency or provider-budget increase
+last_safe_checkpoint: R44 source 1252b2b and immutable Linux image 44e6beae implement a trade-only 15000ms queue-age breaker; targeted 51/51, typecheck/lint/build and validation-Linux 416/416 passed, with database integration unchanged from R43; next action is production preflight and a revision-ledgered ingestion-only canary, not an unrecorded deploy
 ---
 
 # Walletscaner Work In Progress
@@ -450,3 +450,30 @@ repeating any step.
   above the one-hour target. The 26-August partition remains absent, manifest 99 remains verified,
   archive/compact dead-letter and mismatch counts are zero, and a clean 24-hour slope is still
   required before sustainability can be validated.
+
+## R44 local implementation and artifact — 2026-08-29 06:06 UTC
+
+- Commit `1252b2b93e98911377ad101d3ef5fa41cd8b6c5d` adds an optional standard-source
+  `maximumLiveQueueDelayMs`, exposes it in diagnostics and reports one deduplicated `stale`
+  pressure episode until a fresh event or unsubscribe resets that address. Only the RPC trade source
+  wires the 15,000ms bound; discovery behavior is unchanged. The worker reuses its existing durable
+  persist-before-unsubscribe coverage release, so the admitted head remains processable while only
+  that address's queued work is purged and its interval remains incomplete.
+- Provider regression passed 51/51. Local typecheck, lint and workspace build passed. The Windows
+  full suite passed 416 tests apart from the three expected missing-`zstd` artifact cases. Exact R44
+  Linux targeted tests/typecheck passed; a validation-only derivative added Python and the current
+  Compose file without changing the runtime image and passed 416/416 with 48 intentional
+  database-environment skips. PostgreSQL schema/repository code did not change; R43's previously
+  completed 33/33 PostgreSQL 16 gate remains the database baseline.
+- Immutable runtime tag `walletscaner-worker:trade-latency-r44-20260829` has local image id
+  `sha256:44e6beae6b0e8c00bb26a466c287109070528cc4663fd99bdfe48a45cd8235cb`, release label
+  `trade-latency-r44-20260829` and source label `1252b2b93e98911377ad101d3ef5fa41cd8b6c5d`.
+  Recipe commit is `4ea474a`. No production file, environment, image or service has changed yet.
+- Before deployment, refresh exact R43 ingestion/DB/service identities, live false, verified backup,
+  disk/RAM/WAL/temp headroom, current flow and protected project inventory. Export/hash/load R44,
+  prove the rendered service keeps 0.20 CPU/160 MiB and live false, then open a revision-checked
+  ingestion-only canary. Recreate no dependency and roll back only to exact R43 on any hard gate.
+
+This checkpoint was committed before any R44 production mutation. On interruption, verify the
+production ledger and actual ingestion container/image before exporting, loading or recreating
+anything; never infer deployment from the presence of the local image.
