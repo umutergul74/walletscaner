@@ -627,3 +627,17 @@ anything; never infer deployment from the presence of the local image.
   source/tests/docs/recipe, build an immutable R45 from exact R44, run exact-image targeted/full
   gates, then repeat the backup/resource/flow preflight before opening a new revision-ledgered
   ingestion-only canary.
+
+## R45 immutable image and full gate — 2026-08-29 06:40 UTC
+
+- Source/recipe commit is `f17d8216a915845ff408403e31d4f02024f0aa07`. The minimal runtime tag
+  `walletscaner-worker:trade-watchdog-r45-20260829` is exact local image
+  `sha256:bc17668d2eea1c28692ff819a23419e42548dfa30a0b9be12cc7fdc2e6033722`, labeled with that source
+  and release `trade-watchdog-r45-20260829`.
+- The exact runtime image passed provider 52/52 and typecheck. A validation-only derivative of the
+  prior Python/Compose validation base passed the complete Linux/zstd suite: 417/417 with 48
+  intentional database-environment skips. PostgreSQL/schema code is unchanged and the R43 33/33
+  PostgreSQL 16 gate remains applicable baseline.
+- R44 production is still unchanged and healthy. Next action is refresh current backup, disk/RAM,
+  exact R44/service identities, flow/coverage and ledger revision 73; then export/hash/stage R45.
+  Open a new ledger phase before the first server artifact mutation and recreate only ingestion.
