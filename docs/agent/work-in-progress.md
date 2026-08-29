@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:23:00Z
+updated_at_utc: 2026-08-29T17:24:00Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: ledger revision 77 SHA e7d7c324 has planned retirement of only the exact 462948255-byte/SHA 9539118b server R45 transfer file; local artifact, loaded/running R45 bc17668d and R44 rollback 44e6beae are proven; next action is a fresh exact rehash then revision 78 in_progress before any guarded removal
+last_safe_checkpoint: ledger revision 78 SHA 456bd4b3 is in_progress after a fresh resolved-path/462948255-byte/SHA 9539118b server artifact guard; local artifact, running R45 bc17668d and loaded R44 44e6beae remain; next action is one guarded removal of only that exact server transfer file, then immediate disk/image/service/flow proof before ledger completion
 ---
 
 # Walletscaner Work In Progress
@@ -761,3 +761,10 @@ anything; never infer deployment from the presence of the local image.
   records the exact artifact bytes/SHA, R45/R44 image identities and pre-removal free bytes.
 - No file or service changed. Next action is a fresh server path/size/SHA guard followed by revision
   78 `in_progress`; only after that may the one exact server transfer file be removed.
+
+## R45 transfer-artifact retirement armed — 2026-08-29 17:24 UTC
+
+- A fresh resolved-path, 462,948,255-byte and full SHA-256 guard passed. Ledger revision 78/SHA-256
+  `456bd4b331d80910ae2b72f7d8901d83862a4b0c54f95d92aaaef5377b99ef85` is `in_progress`.
+- The artifact still exists and no service changed. Next action is one guarded removal of only that
+  path, followed immediately by absence, allocation gain, image, container and live-flow checks.
