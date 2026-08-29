@@ -522,3 +522,18 @@ anything; never infer deployment from the presence of the local image.
 - Running R43, `.env.server`, PostgreSQL and all containers remain unchanged. Next action is a
   low-priority `docker load`, exact R44 image/label verification, then revision 69 `in_progress`
   before the image environment or ingestion container is changed.
+
+## R44 loaded and rollout in progress — 2026-08-29 06:21 UTC
+
+- Server `docker load` produced the exact local image ID
+  `sha256:44e6beae6b0e8c00bb26a466c287109070528cc4663fd99bdfe48a45cd8235cb`; release/source labels
+  exactly match `trade-latency-r44-20260829` and commit `1252b2b...`. Disk free after staging/loading
+  was 17,421,438,976 bytes.
+- Ledger revision 69/SHA-256 `8b4711a747194ddaf71a48136d0968379f0b6bf55805ab1a758ba4a094af41ca`
+  is `in_progress`. Only `WALLETSCANER_INGEST_IMAGE` was atomically changed from exact R43 to exact
+  R44; `.env.server` SHA moved from `f6896892...` to `0273ae86...` without exposing its contents.
+- The rendered ingestion service proves image R44, CPU 0.20, memory 167,772,160 bytes and live
+  execution false. The old R43 ingestion container is still running at this checkpoint. Next exact
+  mutation is `up -d --no-build --no-deps --force-recreate solana-ingestion`, followed immediately
+  by identity, resource, flow and fail-closed startup verification. Roll back env/container to exact
+  R43 on a hard gate.
