@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:24:00Z
+updated_at_utc: 2026-08-29T17:24:23Z
 owner: codex
 task: bound the exact-pool trade observation latency incident without weakening ordered admission, increasing shared-host resources, consuming unbounded Helius credits, or losing the pending storage-equilibrium gate
-last_safe_checkpoint: ledger revision 78 SHA 456bd4b3 is in_progress after a fresh resolved-path/462948255-byte/SHA 9539118b server artifact guard; local artifact, running R45 bc17668d and loaded R44 44e6beae remain; next action is one guarded removal of only that exact server transfer file, then immediate disk/image/service/flow proof before ledger completion
+last_safe_checkpoint: the guarded exact R45 server transfer file is absent and free allocation rose 462729216 bytes to 16353013760; running/loaded R45 bc17668d, R44 rollback 44e6beae, PostgreSQL and wallet-alpha remain running at restart/OOM 0/false; ledger revision 78 remains in_progress and next action is a fresh health/flow proof followed by revision 79 completion, not another removal
 ---
 
 # Walletscaner Work In Progress
@@ -768,3 +768,13 @@ anything; never infer deployment from the presence of the local image.
   `456bd4b331d80910ae2b72f7d8901d83862a4b0c54f95d92aaaef5377b99ef85` is `in_progress`.
 - The artifact still exists and no service changed. Next action is one guarded removal of only that
   path, followed immediately by absence, allocation gain, image, container and live-flow checks.
+
+## R45 transfer artifact removed — 2026-08-29 17:24 UTC
+
+- The in-shell path/size/SHA guard passed again and only the exact server transfer file was removed.
+  It is absent. Free allocation moved 15,890,284,544 -> 16,353,013,760 bytes, a 462,729,216-byte
+  gain; filesystem allocation accounts for the small difference from compressed byte length.
+- Exact running/loaded R45 and loaded R44 rollback images remain. Ingestion, PostgreSQL and
+  wallet-alpha remain running at restart/OOM `0/false`; no container was recreated or restarted.
+- Ledger revision 78 remains `in_progress`. Next action is a fresh bounded flow/coverage health read,
+  then revision 79 completion if it remains clean. Do not repeat the removal.
