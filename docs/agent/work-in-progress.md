@@ -669,3 +669,15 @@ anything; never infer deployment from the presence of the local image.
 - Production is unchanged at R44/revision 73. Next action is open R45 `planned`, copy only to an
   exact `.partial` server path, verify size/SHA/zstd, atomically rename/load and then enter
   `in_progress` before changing only the ingestion image key/container.
+
+## R45 staged and loaded — 2026-08-29 06:49 UTC
+
+- Ledger revision 74/SHA-256 `b1538d7705c5acb78fca82739b6c673258da94055ad2148560721f133ff4763e`
+  opened the canary as planned. SCP targeted only `.partial`; server size/SHA and `zstd -t` matched,
+  then the artifact was atomically renamed.
+- Low-priority load produced the exact local R45 image ID `sha256:bc17668d...3722` and exact
+  release/source labels. Server free space after staging/loading is 17,269,272,576 bytes. R44,
+  `.env.server`, containers and database remain unchanged.
+- Next action is revision 75 `in_progress`, atomically change only `WALLETSCANER_INGEST_IMAGE`, prove
+  the rendered 0.20 CPU/160 MiB/live-false contract and recreate only `solana-ingestion` with no
+  dependencies. Roll back to exact R44 on a hard gate.
