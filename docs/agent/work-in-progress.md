@@ -477,3 +477,25 @@ repeating any step.
 This checkpoint was committed before any R44 production mutation. On interruption, verify the
 production ledger and actual ingestion container/image before exporting, loading or recreating
 anything; never infer deployment from the presence of the local image.
+
+## R44 production preflight — 2026-08-29 06:10 UTC
+
+- Only the `walletscaner` Compose project is listed with 12 running services. Exact ingestion is
+  still R43 container `de09c79caabd...`, image `sha256:e87020e75036...`, restart/OOM `0/false`,
+  0.20 CPU, 160 MiB and live execution false. PostgreSQL remains container `a5c2b747d129...`,
+  healthy, restart/OOM `0/false`; no service has been changed.
+- Host free space is 17,930,731,520 bytes, available RAM 1,032,515,584 bytes and free swap
+  1,993,351,168 bytes. PostgreSQL is 21,277,170,711 bytes and WAL is 536,870,912 bytes. The newest
+  dump is still `memecoin_alpha_20260828T173517Z.dump`, 2,455,550,148 bytes, sidecar present and
+  off-site acknowledged with SHA-256 `c2e6f93862613e4b8a1563f7c350fa617e4bc94fd1fe5f778d9233f801f17bad`.
+- Canonical flow samples were 230/101s then 245/73s pending/oldest, with dead-letter, unresolved
+  24-hour finality and signature backlog all zero and wallet trades about 90 seconds fresh. This is
+  a bounded fluctuating parser backlog, not a monotonic stop; it remains a canary rollback metric.
+- Discovery remains open and current for all four programs with no post-startup incident. The
+  separate trade lane confirms the target failure: maximum queue delay 127,100ms, high-water 1,620,
+  5,676 purged notifications and 125 coverage-excluded pools. Current queue had returned to nine;
+  no false-complete coverage or dead-letter was observed.
+- Production ledger remains revision 67/SHA-256
+  `9915ecd12af45e5d828786c015ae2e0237691083b7e0952250ae5d43775e1494`. The next safe action is to
+  export and hash the already tested R44 image locally, stage it on the server, verify/load it and
+  then open a revision-checked ingestion-only canary before changing `.env.server` or a container.
