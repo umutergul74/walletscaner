@@ -2532,7 +2532,12 @@ async function reconcileRpcTradeObservation(
 async function releaseRpcTradeObservation(
   pool: TrackedPool,
   reason: string,
-  gapAt: Date
+  gapAt: Date,
+  details: {
+    queueDelayMs?: number;
+    queuedSignatures?: number;
+    maxQueuedSignatures?: number;
+  } = {}
 ): Promise<void> {
   const result = await tradeCoverageReleaseCoordinator.release(
     pool.poolAddress,
@@ -2551,7 +2556,8 @@ async function releaseRpcTradeObservation(
         type: "solana-trade-coverage-excluded",
         poolAddress: pool.poolAddress,
         reason,
-        disposition: "durable-before-unsubscribe"
+        disposition: "durable-before-unsubscribe",
+        ...details
       })
     );
   }
@@ -2562,6 +2568,7 @@ function handleTradeQueuePressure(pressure: {
   reason: "stale" | "high-water" | "full";
   queuedSignatures: number;
   maxQueuedSignatures: number;
+  oldestQueueDelayMs?: number;
 }): void {
   const pool = activePools.get(pressure.address);
   if (
@@ -2572,9 +2579,13 @@ function handleTradeQueuePressure(pressure: {
     return;
   }
   poolSamplingDiagnostics.tradeQueuePressureCount += 1;
-  void releaseRpcTradeObservation(pool, `rpc-trade-queue-${pressure.reason}`, new Date()).catch(
-    (error) => recordTradeCoverageReleaseError(pool, error, pressure)
-  );
+  void releaseRpcTradeObservation(pool, `rpc-trade-queue-${pressure.reason}`, new Date(), {
+    ...(pressure.oldestQueueDelayMs === undefined
+      ? {}
+      : { queueDelayMs: pressure.oldestQueueDelayMs }),
+    queuedSignatures: pressure.queuedSignatures,
+    maxQueuedSignatures: pressure.maxQueuedSignatures
+  }).catch((error) => recordTradeCoverageReleaseError(pool, error, pressure));
 }
 
 async function handleTradeBackfillTruncation(truncation: SolanaBackfillTruncation): Promise<void> {

@@ -2253,6 +2253,95 @@ describe("StandardSolanaEventSource", () => {
     await source.stop();
   });
 
+  it("fires the stale queue watchdog while the admitted address head is still blocked", async () => {
+    const cursorStore = new MemoryCursorStore();
+    const socket = new FakeSocket();
+    let releaseFirstTransaction: (() => void) | undefined;
+    const firstTransactionGate = new Promise<void>((resolve) => {
+      releaseFirstTransaction = resolve;
+    });
+    let transactionRequestCount = 0;
+    const pressure: Array<{
+      reason: string;
+      queuedSignatures: number;
+      oldestQueueDelayMs?: number;
+    }> = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["PoolWatchdog111"],
+      cursorStore,
+      maximumLiveQueueDelayMs: 25,
+      maxQueuedSignatures: 10,
+      queuePressureRatio: 0.8,
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { method: string };
+        if (request.method === "getTransaction") {
+          transactionRequestCount += 1;
+          if (transactionRequestCount === 1) await firstTransactionGate;
+        }
+        const result =
+          request.method === "getSignaturesForAddress"
+            ? []
+            : {
+                blockTime: 1_700_000_000,
+                transaction: { message: { instructions: [] } },
+                meta: {}
+              };
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      onQueuePressure: (event) => {
+        pressure.push({
+          reason: event.reason,
+          queuedSignatures: event.queuedSignatures,
+          ...(event.oldestQueueDelayMs === undefined
+            ? {}
+            : { oldestQueueDelayMs: event.oldestQueueDelayMs })
+        });
+        source.unsubscribeAddress(event.address);
+      },
+      webSocketFactory: () => socket
+    });
+    const accepted: string[] = [];
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    socket.open();
+    socket.message({ id: 1, result: 99 });
+    socket.message(standardLogNotification(99, "watchdog-head", 100));
+    socket.message(standardLogNotification(99, "watchdog-queued", 101));
+    await waitUntil(
+      () =>
+        source.getDiagnostics().activeTransactionWorkerCount === 1 &&
+        source.getDiagnostics().queuedSignatureCount === 1
+    );
+
+    await waitUntil(() => pressure.length === 1);
+
+    expect(pressure[0]).toMatchObject({
+      reason: "stale",
+      queuedSignatures: 1
+    });
+    expect(pressure[0]!.oldestQueueDelayMs).toBeGreaterThanOrEqual(25);
+    expect(accepted).toEqual([]);
+    expect(source.getDiagnostics()).toMatchObject({
+      maximumLiveQueueDelayMs: 25,
+      lastQueuePressureReason: "stale",
+      purgedSignatureCount: 1,
+      queuedSignatureCount: 0,
+      activeTransactionWorkerCount: 1
+    });
+    expect(source.getDiagnostics().lastQueuePressureDelayMs).toBeGreaterThanOrEqual(25);
+
+    releaseFirstTransaction?.();
+    await waitUntil(() => source.getDiagnostics().activeTransactionWorkerCount === 0);
+    expect(accepted).toEqual(["watchdog-head"]);
+    await source.stop();
+  });
+
   it("purges queued work for an unsubscribed address without cancelling the admitted head", async () => {
     const cursorStore = new MemoryCursorStore();
     const socket = new FakeSocket();

@@ -253,6 +253,9 @@ export interface SolanaEventSourceDiagnostics {
   durablyDeferredSignatureCount?: number;
   queuePressureCount?: number;
   queuePressureAddressCount?: number;
+  lastQueuePressureAt?: string | null;
+  lastQueuePressureReason?: "stale" | "high-water" | "full" | null;
+  lastQueuePressureDelayMs?: number | null;
   queueHighWatermark?: number;
   transactionRequestCount?: number;
   transactionRetryCount?: number;
@@ -363,6 +366,7 @@ export interface StandardSolanaEventSourceOptions {
     reason: "stale" | "high-water" | "full";
     queuedSignatures: number;
     maxQueuedSignatures: number;
+    oldestQueueDelayMs?: number;
   }) => void;
   onBackfillTruncated?: (truncation: SolanaBackfillTruncation) => Promise<void> | void;
   now?: () => Date;
@@ -476,6 +480,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly automaticBackfillRerunAddresses = new Set<string>();
   private readonly truncatedBackfillAddresses = new Set<string>();
   private readonly queuePressureByAddress = new Map<string, "stale" | "high-water" | "full">();
+  private readonly staleQueueTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly addressTaskTails = new Map<string, Promise<void>>();
   private readonly activeTransactionAddresses = new Set<string>();
   private readonly durableRefillAddresses = new Set<string>();
@@ -690,6 +695,9 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       durableSignatureReloadCount: 0,
       durablyDeferredSignatureCount: 0,
       queuePressureCount: 0,
+      lastQueuePressureAt: null,
+      lastQueuePressureReason: null,
+      lastQueuePressureDelayMs: null,
       queueHighWatermark: 0,
       successfulSubscriptionAckCount: 0,
       lastSubscriptionRequestAt: null,
@@ -742,6 +750,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.diagnostics.nextReconnectDelayMs = null;
     this.clearHeartbeat();
     this.clearSubscriptionState();
+    for (const timer of this.staleQueueTimers.values()) clearTimeout(timer);
+    this.staleQueueTimers.clear();
     this.liveSignatureQueue.length = 0;
     this.queuedSignatures.clear();
     const socket = this.socket;
@@ -771,6 +781,9 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.refreshFastLogPrefilter();
     this.backfillAddresses.delete(address);
     this.truncatedBackfillAddresses.delete(address);
+    const staleQueueTimer = this.staleQueueTimers.get(address);
+    if (staleQueueTimer) clearTimeout(staleQueueTimer);
+    this.staleQueueTimers.delete(address);
     let purged = 0;
     for (let index = this.liveSignatureQueue.length - 1; index >= 0; index -= 1) {
       const queued = this.liveSignatureQueue[index];
@@ -1514,6 +1527,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     }
     this.queuedSignatures.add(signature);
     this.liveSignatureQueue.push({ address, signature, slot, notifiedAtMs });
+    this.scheduleStaleQueueCheck(address);
     this.diagnostics.queueHighWatermark = Math.max(
       this.diagnostics.queueHighWatermark ?? 0,
       this.liveSignatureQueue.length
@@ -1563,6 +1577,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
           slot: item.slot,
           notifiedAtMs: Date.parse(item.notifiedAt)
         });
+        this.scheduleStaleQueueCheck(item.address);
         loaded += 1;
       }
       this.diagnostics.durableSignatureReloadCount =
@@ -1677,22 +1692,72 @@ export class StandardSolanaEventSource implements SolanaEventSource {
 
   private notifyQueuePressure(
     address: string,
-    reason: "stale" | "high-water" | "full"
+    reason: "stale" | "high-water" | "full",
+    oldestQueueDelayMs?: number
   ): void {
     const previous = this.queuePressureByAddress.get(address);
     if (previous === "full" || previous === "stale" || previous === reason) return;
     this.queuePressureByAddress.set(address, reason);
     this.diagnostics.queuePressureCount = (this.diagnostics.queuePressureCount ?? 0) + 1;
+    this.diagnostics.lastQueuePressureAt = this.now().toISOString();
+    this.diagnostics.lastQueuePressureReason = reason;
+    this.diagnostics.lastQueuePressureDelayMs = oldestQueueDelayMs ?? null;
     try {
       this.options.onQueuePressure?.({
         address,
         reason,
         queuedSignatures: this.liveSignatureQueue.length,
-        maxQueuedSignatures: this.maxQueuedSignatures
+        maxQueuedSignatures: this.maxQueuedSignatures,
+        ...(oldestQueueDelayMs === undefined ? {} : { oldestQueueDelayMs })
       });
     } catch {
       this.diagnostics.status = "degraded";
     }
+  }
+
+  private scheduleStaleQueueCheck(address: string): void {
+    if (
+      this.maximumLiveQueueDelayMs === null ||
+      this.stopped ||
+      this.staleQueueTimers.has(address) ||
+      this.queuePressureByAddress.get(address) === "stale"
+    ) {
+      return;
+    }
+    const oldest = this.oldestQueuedSignature(address);
+    if (!oldest || !Number.isFinite(oldest.notifiedAtMs)) return;
+    const remainingMs = Math.max(
+      0,
+      oldest.notifiedAtMs + this.maximumLiveQueueDelayMs - this.now().getTime()
+    );
+    const timer = setTimeout(
+      () => {
+        this.staleQueueTimers.delete(address);
+        if (this.stopped || this.maximumLiveQueueDelayMs === null) return;
+        const queued = this.oldestQueuedSignature(address);
+        if (!queued || !Number.isFinite(queued.notifiedAtMs)) return;
+        const queueDelayMs = Math.max(0, this.now().getTime() - queued.notifiedAtMs);
+        if (queueDelayMs >= this.maximumLiveQueueDelayMs) {
+          this.diagnostics.status = "degraded";
+          this.notifyQueuePressure(address, "stale", queueDelayMs);
+          return;
+        }
+        this.scheduleStaleQueueCheck(address);
+      },
+      Math.min(2_147_483_647, Math.max(1, remainingMs))
+    );
+    this.staleQueueTimers.set(address, timer);
+  }
+
+  private oldestQueuedSignature(address: string): QueuedLiveSignature | undefined {
+    let oldest: QueuedLiveSignature | undefined;
+    for (const candidate of this.liveSignatureQueue) {
+      if (candidate.address !== address) continue;
+      if (oldest === undefined || candidate.notifiedAtMs < oldest.notifiedAtMs) {
+        oldest = candidate;
+      }
+    }
+    return oldest;
   }
 
   private async processSignatureUnlocked(
@@ -1722,7 +1787,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         queueDelayMs >= this.maximumLiveQueueDelayMs
       ) {
         this.diagnostics.status = "degraded";
-        this.notifyQueuePressure(address, "stale");
+        this.notifyQueuePressure(address, "stale", queueDelayMs);
       } else if (this.queuePressureByAddress.get(address) === "stale") {
         this.queuePressureByAddress.delete(address);
       }

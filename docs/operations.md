@@ -50,9 +50,10 @@ Required for the canonical production path:
   Health logs expose request, retry, recovery, final-unresolved, active, queued and dropped counts;
 - `RPC_TRADE_MAX_QUEUE_DELAY_MS=15000` is a trade-only latency circuit breaker. Because exact-pool
   cursor admission remains ordered per address, a hot pool can exceed the shared host's sustainable
-  request/parser rate before reaching the depth high-water mark. The first admitted head older than
-  this bound invokes the same durable coverage-release path as depth pressure, keeps that head
-  admitted, purges only the released address's queued work and marks the partial interval
+  request/parser rate before reaching the depth high-water mark. A one-timer-per-address watchdog
+  observes the oldest queued live notification and invokes the same durable coverage-release path
+  at this bound even when the admitted head is still blocked in RPC retry/timeout work. It keeps the
+  head admitted, purges only the released address's queued work and marks the partial interval
   incomplete. It does not increase concurrency, provider credits or turn incomplete evidence into
   alpha coverage;
 - canonical inbox claims use an index skip-scan over one unresolved head per partition instead of
@@ -618,10 +619,11 @@ uses:
   profile; one ordered worker per active address, 0.20 ingestion CPU and the existing 160 MiB
   memory ceiling;
 - a 15-second maximum live queue-delay guard in the fixed shared-host profile. Depth alone is not a
-  sufficient saturation signal: the 29-August production incident reached roughly 114 seconds of
-  queue delay before the 80%/2,000-item high-water guard released the pool. The delay guard exits an
-  unsustainable observation earlier and leaves the lane available for a pool whose raw notification
-  rate fits the fixed budget;
+  sufficient saturation signal: the first 29-August production incident reached roughly 114 seconds
+  of queue delay before the 80%/2,000-item high-water guard released the pool. R44 reduced the next
+  stale release to 35.2 seconds but exposed that a dequeue-only check still waited for the admitted
+  head. R45's independent watchdog enforces the wall-clock queue bound and records the pressure age;
+  it leaves the lane available for a pool whose raw notification rate fits the fixed budget;
 - a five-minute minimum observation hold. Rotation never treats the resulting partial interval as
   complete wallet-profitability evidence; the exact pool remains fail-closed after its durable gap.
 

@@ -608,3 +608,22 @@ anything; never infer deployment from the presence of the local image.
   is cleared on unsubscribe/stop, and records the observed pressure age. Preserve ordered admission,
   durable-before-unsubscribe release and default-disabled behavior. This is R45; production remains
   safely on R44 until its tests and immutable artifact pass.
+
+## R45 local implementation — 2026-08-29 06:38 UTC
+
+- The standard source now owns at most one stale-queue timer per queued address. It scans the bounded
+  in-memory queue only when arming/firing, does not poll, and fires `stale` from wall-clock queue age
+  even while that address's admitted head remains blocked. Unsubscribe/stop clear timers; discovery
+  still leaves the option disabled.
+- Pressure diagnostics now record time, reason and observed oldest queue delay. The existing worker
+  event includes that delay plus queue size, while durable coverage persistence still completes
+  before unsubscribe/purge. No concurrency, retry, CPU/RAM or provider route changed.
+- The new blocked-head watchdog test proves pressure fires and the queued item is purged before the
+  admitted head is released; the head then finishes alone. Provider regression is 52/52. Typecheck,
+  lint, diff-check and workspace build pass. The broad Windows suite is 417 passed/48 intentional
+  database skips with only the same three local `zstd ENOENT` artifact failures; an exact Linux/zstd
+  full gate is still required before production.
+- Production remains exact R44 and ledger revision 73. Next action is commit the coherent R45
+  source/tests/docs/recipe, build an immutable R45 from exact R44, run exact-image targeted/full
+  gates, then repeat the backup/resource/flow preflight before opening a new revision-ledgered
+  ingestion-only canary.

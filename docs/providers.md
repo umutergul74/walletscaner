@@ -92,10 +92,12 @@ cap or converting a truncated interval into complete coverage.
 
 Exact-pool standard-WebSocket trade observation has a separate optional live queue-age breaker.
 `RPC_TRADE_MAX_QUEUE_DELAY_MS` applies only to that trade source; discovery leaves the provider
-option unset. When an ordered trade head exceeds the bound, source diagnostics record `stale`
-pressure and the worker uses its existing persist-before-unsubscribe coverage release. The already
-admitted head may finish, but queued work for only that address is purged and the interval remains
-explicitly incomplete. This bounds stale CPU/RPC work without same-address concurrent cursor writes
+option unset. A bounded one-timer-per-address watchdog follows the oldest queued live notification;
+it does not wait for the admitted ordered head's RPC timeout/retry cycle to finish. At the bound,
+source diagnostics record `stale`, pressure time/reason/age and the worker uses its existing
+persist-before-unsubscribe coverage release. The already admitted head may finish, but queued work
+for only that address is purged and the interval remains explicitly incomplete. Timers are cleared
+on unsubscribe/stop. This bounds stale CPU/RPC work without same-address concurrent cursor writes
 or unbudgeted Helius HTTP fallback.
 
 Some public RPC providers acknowledge several independent `logsSubscribe` sockets from one host
