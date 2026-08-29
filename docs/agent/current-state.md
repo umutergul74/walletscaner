@@ -25,7 +25,14 @@ before every operational claim or mutation.
   configured admission boundary. Trade and entry writes remain unconditional atomic producers, so
   later maturity and concurrent threshold crossings are not lost. Memory tests and the full
   PostgreSQL 16 evidence suite pass; R46 is not yet production.
-- **Waiting:** prove the full source gate and immutable image before any R46 ingestion-only canary.
+- **Validated locally — R46 artifact:** exact Node 24/Linux/zstd validation passes 418/418 tests
+  with 49 intentional no-database skips, followed by 34/34 PostgreSQL 16 evidence integration
+  tests. Runtime image `sha256:e376cfd...380b` and the 463,454,623-byte transfer artifact SHA
+  `a505591b...560c` match source commit `53b5949`; production remains R45.
+- **Waiting:** the 29-August daily `pg_dump`, started at 17:35 UTC, was still active during the
+  17:54 UTC preflight and single-CPU/I/O pressure was elevated. No R46 rollout phase was opened.
+  Repeat backup acknowledgement, disk/resource, flow and identity gates after it completes; only
+  then start the ingestion-only canary.
   After rollout, require a negative one-hour producer-adjusted queue slope, unchanged evidence
   persistence/freshness, P2 latency within five minutes, no failures/restarts/OOM and no CPU/RAM
   increase. Storage still needs the normal 27-August partition retirement and a clean 24-hour slope.

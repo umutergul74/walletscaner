@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-29T17:57:00Z
+updated_at_utc: 2026-08-29T17:59:00Z
 owner: codex
 task: stop inadmissible price enrichment from generating unbounded wallet-alpha background work while preserving every canonical evidence row, unconditional trade/entry threshold crossings, revision safety, signal priority, configured admission semantics and shared-host limits
-last_safe_checkpoint: R46 source commit 53b5949 and immutable runtime/validation images e376cfd/ed7691a are fully proven; the 17:54-17:56 UTC production preflight found exact restart-free R45, live=false, current fail-closed flow and 15.85 GB free, but the daily pg_dump generation is actively running and host CPU/I/O pressure is elevated; no rollout ledger phase or production mutation was opened, next action is local-only immutable R46 transfer artifact creation while waiting for the backup and its off-site acknowledgement
+last_safe_checkpoint: R46 source commit 53b5949 and immutable runtime/validation images e376cfd/ed7691a are fully proven; local transfer artifact SHA a505591b and 463454623 bytes passed zstd integrity; production remains exact R45 because the 17:35 UTC daily pg_dump is active under elevated single-CPU/I/O pressure, no rollout ledger phase or production mutation was opened, next action is to wait for dump completion plus normal off-site acknowledgement and then repeat resource/disk/flow/identity gates before revision 80
 ---
 
 # Walletscaner Work In Progress
@@ -102,6 +102,19 @@ repeating any step.
   elevated. Therefore transfer, `docker load` and ingestion recreate are deliberately not started
   concurrently with the backup. The safe next action is local-only artifact creation; re-run the
   resource, backup/off-site acknowledgement, disk and flow gates before opening rollout revision 80.
+
+## R46 transfer artifact — 2026-08-29 17:59 UTC
+
+- The exact runtime image was exported locally to
+  `C:\Users\Umut\AppData\Local\Temp\walletscaner-r46-artifact\walletscaner-worker-alpha-producer-admission-r46-20260829.tar.zst`.
+  It is 463,454,623 bytes, SHA-256
+  `a505591b70e12dda67f8372bc52fd19f82047ab2f6a851db6b717e7aadce560c`, and `zstd -t`
+  passed. This artifact remains local and the server has not received a partial or final R46 file.
+- The uncompressed 463,808,512-byte intermediate also remains in that dedicated local temporary
+  directory because the command environment rejected the exact local deletion operation before it
+  executed. It is not in the repository or on the production host and must not be mistaken for a
+  server transfer artifact. Preserve the verified compressed file until rollout and rollback
+  evidence are complete.
 
 ## Objective and exclusions
 
