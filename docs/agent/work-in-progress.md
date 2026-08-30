@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-30T10:56:00Z
+status: complete
+updated_at_utc: 2026-08-30T11:01:00Z
 owner: codex
 task: persist user-supplied Pyth and Jupiter free API credentials in Walletscaner's production secret configuration, verify provider authentication without exposing values, and leave restart/deploy gated
-last_safe_checkpoint: credential file atomically updated and locally verified; both names present exactly once, root-owned mode0600, rollback file created; services still unchanged; next action is bounded provider auth verification, rollback on failure
+last_safe_checkpoint: credential persistence and provider verification complete; Pyth latest/legacy Hermes/Benchmarks and Jupiter quote-only probes passed; machine ledger revision3 complete; no restart/deploy occurred because current offsite backup acknowledgement is missing
 ---
 
 # Walletscaner Work In Progress
@@ -51,6 +51,29 @@ repeating any step.
   R45 ingestion image and env file. It performs Pyth latest SOL/USD and Jupiter quote-only `/order`
   with no taker/signing/submission, prints booleans/status only, then removes itself. Failure rolls
   the secret file back; success completes credential persistence but does not authorize restart.
+
+### Completion — 2026-08-30 11:01 UTC
+
+- Existing R45 image received the saved credentials only in bounded one-shot containers. Pyth's
+  official new Hermes endpoint, the legacy/default Hermes endpoint and Benchmarks all returned
+  authenticated parsed evidence. Jupiter `/swap/v2/order` returned an authenticated USDC-to-SOL
+  quote with matching inputs and a route, without a taker or transaction. No provider body, price,
+  key, fingerprint, signed object or request credential was printed or retained.
+- Both one-shot containers used `--no-deps`, explicit `ENABLE_LIVE_EXECUTION=false`, no signing or
+  submission, then were removed. Post-state shows no probe container. Ingestion remains the exact
+  R45 image, restart0/OOMfalse and its original start time; root free space is 13,351,292,928 bytes.
+  Protected co-tenant inventory remained empty/unchanged.
+- Persisted file and rollback remain root:root mode0600; each key name occurs exactly once and
+  `ENABLE_LIVE_EXECUTION=false`. Machine ledger revision 3 is completed with boolean evidence only.
+- The already-running ingestion container correctly still reports both new variables absent: Docker
+  does not reload env files into an existing process. It was deliberately not restarted because the
+  latest dump's offsite acknowledgement is missing/mismatched. Thus keys are saved and proven, but
+  production Pyth enrichment has not resumed yet. Next separate task: repair/verify offsite backup,
+  then perform a named ingestion restart (and later the separately gated 052/053 worker rollout).
+- Rollback remains `.env.server.credential-rollback-20260830T105526Z`. There is no active provider
+  probe, migration, deploy, upload or cleanup to resume. No local credential copy was created; the
+  production secret file is the only required durable location and will be reused by future Compose
+  recreations so the user need not supply the keys again.
 
 ## Active objective — collection integrity and bounded work, 2026-08-30
 

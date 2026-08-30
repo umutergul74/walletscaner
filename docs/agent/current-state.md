@@ -5,6 +5,20 @@ before every operational claim or mutation.
 
 ## 2026-08-30 collection integrity, authentication and future tape v2
 
+- **Provider credentials persisted and verified at 11:01 UTC:** the user-supplied Pyth and Jupiter
+  free keys now exist exactly once in `/opt/walletscaner/.env.server`, root-owned mode0600. Values
+  and fingerprints were not logged or committed. A root-only byte-for-byte rollback copy is
+  `.env.server.credential-rollback-20260830T105526Z`; release ledger
+  `reports/deploy/provider-credentials-20260830.json` completed revision 3.
+- Bounded no-dependency probes using the deployed R45 image passed Pyth new Hermes, legacy Hermes,
+  Benchmarks and Jupiter quote-only `/order`; the Jupiter request had no taker, transaction signing
+  or submission. Probe containers were removed and live execution remained false.
+- **Saved, not loaded into the long-running ingestion process:** R45 remains restart0/OOMfalse at
+  its original start time, so its environment still lacks the newly saved variables. It was not
+  restarted because the current 2.77 GB dump's offsite acknowledgement is missing/mismatched.
+  Verify that backup gate before a named-service recreation. Future Compose starts will reuse the
+  saved values; do not request or duplicate them in source/local files.
+
 - **Local implementation, not deployed:** Pyth now fails fast without `PYTH_API_KEY`, performs one
   bounded HTTP attempt and shares sanitized auth/429/outage backoff across latest/historical calls.
   Operational health explicitly exposes absent price authentication. A credential-free Hermes
