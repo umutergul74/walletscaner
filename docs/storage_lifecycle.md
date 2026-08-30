@@ -245,6 +245,12 @@ starvation mechanism; it does not establish canonical-wallet retention or disk e
 Schema051 dry-run/failure/recovery and real PostgreSQL statement-cancellation tests pass locally.
 Linux artifact validation and named maintenance/monitor canary remain required before deployment.
 
+Follow-up live EXPLAIN identified another cost boundary: completed-signature retirement at5000
+rows chooses a full165944-row scan/hash join;500 rows uses the existing composite primary key.
+Only this stage is capped at min(inboxBatchSize,500), with its existing time/retention/retry budget.
+Pending and fresh-completed rows remain excluded. This does not shorten canonical evidence
+retention or add an index/migration; repeated bounded passes must still demonstrate drain capacity.
+
 ### Continuation gap found and local core repair — 2026-08-30
 
 Migration051 is not a sufficient scorer checkpoint. It retains one aggregate per round trip,

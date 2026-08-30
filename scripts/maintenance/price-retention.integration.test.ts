@@ -3,6 +3,49 @@ import pg from "pg";
 import { describe, expect, it } from "vitest";
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)("partition-safe price retention", () => {
+  it("retires completed signatures in small exact-key batches without touching pending or fresh work", async () => {
+    const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`CREATE TEMP TABLE solana_signature_queue (
+        provider text, address text, signature text, status text, completed_at timestamptz,
+        PRIMARY KEY(provider,address,signature)) ON COMMIT DROP`);
+      await client.query(`INSERT INTO solana_signature_queue
+        SELECT 'provider', 'address', n::text, CASE WHEN n>1050 THEN 'pending' ELSE 'completed' END,
+          CASE WHEN n>1000 AND n<=1050 THEN NOW() ELSE NOW()-INTERVAL '4 days' END
+        FROM generate_series(1,1100) n`);
+      const source = await readFile(
+        new URL("./prune-operational-data.ts", import.meta.url),
+        "utf8"
+      );
+      const match = source
+        .slice(source.indexOf("deletedSolanaSignatures = await pruneInBatches("))
+        .match(/`([\s\S]*?)`/);
+      expect(match).not.toBeNull();
+      expect((await client.query(match![1]!, [3, 500])).rowCount).toBe(500);
+      expect(
+        (
+          await client.query(
+            "SELECT count(*)::int AS n FROM solana_signature_queue WHERE status='pending'"
+          )
+        ).rows[0].n
+      ).toBe(50);
+      expect(
+        (
+          await client.query(
+            "SELECT count(*)::int AS n FROM solana_signature_queue WHERE completed_at>NOW()-INTERVAL '1 day'"
+          )
+        ).rows[0].n
+      ).toBe(50);
+      expect((await client.query(match![1]!, [3, 500])).rowCount).toBe(500);
+      expect((await client.query(match![1]!, [3, 500])).rowCount).toBe(0);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      await pool.end();
+    }
+  });
   it("reproduces the old ctid collision and proves the actual maintenance SQL retains fresh rows", async () => {
     const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
     const schema = `price_retention_${Date.now()}`;

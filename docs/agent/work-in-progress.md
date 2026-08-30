@@ -168,6 +168,50 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
 - Full current nativePG16 suite537/537passed106files/no skips;typecheck/lint pass. Exact source-only
   tar C:/Users/Umut/AppData/Local/Temp/walletscaner-maintenance-r47-20260831.tar is118784bytes,
   SHA f63395b611b1464580c1bbd50e84f8ce5f71929f4bbd86fedfdfa05970dc904b. No production upload yet.
+- Source committedf2472a937b0b3de3bc1709082b2983d036952738;final workspace build passed.
+  Overlay uploaded/hashed and copy-only build completed (~5s, no RUN/install/download): R47 image
+  sha256:7f2125d2b1c78b0cf50d9c1166a25a0cdd38ac97f60ad8b8fe75752bcf92db68.
+  Server ledgerrevision5 in_progress; exactLinux unit test is next/running before marking artifact
+  completed. No production service has been started or replaced since containment.
+- ExactLinuxunit30passed;the1PG-dependent test intentionally omitted in networkless Linux unit
+  container and passed in nativePG16 full537suite. Both dry-run/read-only canaries completed on
+  schema051, no writes/provider alerts, inventory no timeout/deferred. Monitor correctly identifies
+  dry-run, DB size and compaction lag instead of falsely healthy. Ledgerrevision8 in_progress.
+- Next: complete read-only phase, planned/in_progress named activation, guarded operations image-key
+  updateR36->R47, recreate ONLYdata-maintenance andoperations-monitor, verify identities/resources,
+  then one bounded maintenance pass under its existing64MiB/0.04CPU to check fresh-price preservation.
+  Other operations schedulers remain on their original image/container; no migration or data rebuild.
+- Activation guard safely aborted BEFORE environment or service mutation: configured operations
+  baseline isR42, even though maintenance/monitor currently ranR36. Ledgerrevision11 failed with
+  reason pre-state mismatch. Do not retry with a guessed expected value and thereby regress future
+  archive schedulers toR36. Build a new immutable R47b derivative of configuredR42 instead.
+- ExactR42 image4d9cbf85ada0981a79b394bf445465fcd4d7134b52c2aecbc9dca784c54fdcb6,
+  source423559147ea6b4f8c4c08a6bde8ccc5db528b565. Samef2472a9patch/overlaySHA and tests;
+  newtagmaintenance-r47b-20260831 must pass exactLinux/dry-run again. OldR47tag is not retagged.
+- R47b built with exactR42layers+2copylayers;image6d59cc34ddfdbc6bbf5b771fdd4911dc9bb24b53c1898af81edee100ba9e1a65.
+  ExactLinuxunit30passed again. Ledgerrevision16 read-only canary running (native tests remain537).
+  reports/deploy/maintenance-r47-price-sample.json holds100fresh price keys for post-retention check.
+  Local disposable PG16 was stopped21:58UTC after all tests; no local restore/service is running.
+- R47b dry-run/monitor passed again. Guarded operations image-key R42->R47b applied (envSHA
+  c84d7a01e31a12cac3e2b131f4d3ba12ba584d090f1083b8f26701a20f912e23). ONLYtwo services recreated
+ 22:01:14UTC: maintenancee157811111946fc1d2a256b8d3197e9b460c4c78795d1b0b308f21658c335863,
+  monitor9805e30f76699295d43ae3945b52c49d710cd995b8def0f5a709ea3e084da439.
+  Both exactR47b/restart0/OOMfalse,64MiB and0.04/0.03CPU, mounts unchanged;other10services unchanged.
+  Ledgerrevision19 in_progress. Next: one bounded manual pass inside maintenance (its scheduled
+  startup delay remains unchanged), then verify100fresh prices and zero canonical-wallet retirement.
+- First actual bounded pass22:02:52UTC completed43.805s:19expired prices,2000verified payloads,
+  3502swaps,15000terminal repair signatures,252superseded scores;zero canonical wallet rows retired.
+  All100protected fresh prices remain. Inventory timeout/deferred0, restart/OOM0. Only the
+  pre-existing completed-signature timeout remains (honestly reportedpartial, not completed).
+- Exact live EXPLAIN shows why:5000batch chooses full165944-row sequential-scan/hash join;500batch
+  uses composite-PK nested loop. Local follow-up caps only this stage to min(inboxBatchSize,500),
+  without longer SQL budgets, schema changes, retention changes or dropping unresolved signatures.
+  R47b stays running while the small R48 follow-up is tested. Ledger19 activation verification
+  remains open until automatic first cycle/post-state is checked; do not repeat recreate/manualrun.
+- R48 local full nativePG16 gate539/539passed106files/no skips;typecheck/lint pass. New fixture
+  verifies500+500+0 expired-completed retirement while preserving50fresh-completed and50pending
+  signatures. Next: commit the coherent follow-up, build an immutable copy-only derivative of the
+  exact runningR47b image, repeat exactLinux/read-only gates, then recreate ONLYdata-maintenance.
 
 ## Completion conditions
 

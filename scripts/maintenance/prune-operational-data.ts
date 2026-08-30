@@ -317,7 +317,9 @@ try {
            AND target.signature = doomed.signature`,
         signatureQueueRetentionDays,
         maintenanceStartedAt + totalBudgetMs * 0.5,
-        batchSize,
+        // At 5,000 rows the live planner hashes/scans the entire retained queue.
+        // The small bounded batch uses the composite PK and avoids that recurring I/O.
+        Math.min(inboxBatchSize, 500),
         [],
         "solana-signature-queue"
       );

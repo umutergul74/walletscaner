@@ -16,6 +16,18 @@ const postgresRepositoryPath = new URL(
 );
 
 describe("operational maintenance SQL contract", () => {
+  it("keeps completed-signature retirement on a bounded primary-key probe plan", async () => {
+    const source = await readFile(scriptPath, "utf8");
+    const stage = source.slice(
+      source.indexOf("deletedSolanaSignatures = await pruneInBatches("),
+      source.indexOf("deletedGapRepairSignatures = await pruneInBatches(")
+    );
+    expect(stage).toContain("Math.min(inboxBatchSize, 500)");
+    expect(stage).toContain("ORDER BY completed_at, provider, address, signature");
+    expect(stage).toContain("target.provider = doomed.provider");
+    expect(stage).toContain("target.address = doomed.address");
+    expect(stage).toContain("target.signature = doomed.signature");
+  });
   it("identifies price rows by partition and physical row, never by cross-partition ctid alone", async () => {
     const source = await readFile(scriptPath, "utf8");
     const price = source.slice(
