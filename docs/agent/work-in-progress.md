@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-30T09:28:00Z
+status: blocked
+updated_at_utc: 2026-08-30T09:29:00Z
 owner: codex
 task: optimize useful evidence collection through bounded provider failure handling and truthful future-checkpoint timing; local implementation and disposable tests, production read-only
-last_safe_checkpoint: final current-source 509 tests, typecheck, lint and build passed; populated 053 upgrade and capacity plans verified; temporary PG16 stopped and port54329 closed; ready to commit local source/tests/docs; no production changes
+last_safe_checkpoint: local implementation complete and committed as a7875e9; 509 tests plus typecheck/lint/build and populated053 upgrade pass; temporary PG16 stopped; production activation blocked on missing Pyth/Jupiter access, backup acknowledgement and explicit worker-only rollout authority; no pending mutation to resume
 ---
 
 # Walletscaner Work In Progress
@@ -96,6 +96,20 @@ repeating any step.
 - Local code and documentation phase is ready for one coherent commit. Production rollout stays
   blocked by missing Pyth/Jupiter access and unverified latest backup acknowledgement, and is not
   authorized by this checkpoint. There is no ongoing migration/upload/cleanup to resume.
+
+### Handoff — 2026-08-30 09:29 UTC
+
+- Source/tests/docs committed locally as `a7875e9` (`fix: bound price evidence collection and
+  checkpoint timing`). No push, server deploy, live migration, provider purchase or credentials
+  change occurred. Only the four pre-existing protected transfer remnants remain untracked.
+- The implementation phase is complete. Overall live collection improvement is **blocked**, not
+  operational: Pyth/Jupiter access must be supplied outside the repository, latest offsite backup
+  acknowledgement independently verified, and a worker-only rollout explicitly authorized.
+  Docker's Linux image/cgroup validation remains a rollout prerequisite; native PG16 tests do not
+  replace it. Do not restart the unrelated PostgreSQL18 or reset Docker data to bypass this gate.
+- Resume with git status/log and read-only provider-presence/backup/migration/resource verification.
+  Do not rerun migration 052/053 on production or recreate the stopped temporary cluster blindly.
+  No source evidence, B2 object or user database has been deleted.
 
 ## Active objective — future exact-pool alpha decision tape v1
 
