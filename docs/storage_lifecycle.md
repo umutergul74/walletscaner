@@ -220,6 +220,31 @@ remain undeployed.
 
 ## Required rollout gates
 
+### Maintenance inventory isolation — 2026-08-30 (local, not deployed)
+
+The live24h audit observed37completed maintenance reports and9unhandled inventory statement
+timeouts. A single multi-relation eligibility query prevented all independent cleanup stages from
+starting on those attempts, while the previous successful JSON report remained on disk.
+
+A separate critical defect was reproduced on PostgreSQL16: price row retirement matched `ctid`
+without `tableoid` on a partitioned table. An expired row could therefore match and delete a fresh
+row in another daily partition. The corrected query identifies both partition and physical row;
+the regression demonstrates the old two-row deletion and the corrected one-row deletion. This
+does not establish the historical number affected. Only data-maintenance was paused21:44UTC
+pending the tested patch; collection, canonical trades, archive and backups continue unchanged.
+
+Inventory is now advisory, with separate read-only transactions, at most1second per probe and
+5seconds total. Timeout/deferred results are explicitly null, never false. Unknown payload priority
+reserves the compaction lane instead of allowing competing inbox retirement. Archive policy,
+per-row SHA/manifest/lock/retention checks and all retention periods remain unchanged. The optional
+decision-tape schema is detected without requiring undeployed052/053 on a051 maintenance host.
+
+Failed attempts atomically replace the stale report with a sanitized failure record. Partial stages,
+dry-run and stale/missing reports are visible in operational health. This removes one cleanup
+starvation mechanism; it does not establish canonical-wallet retention or disk equilibrium.
+Schema051 dry-run/failure/recovery and real PostgreSQL statement-cancellation tests pass locally.
+Linux artifact validation and named maintenance/monitor canary remain required before deployment.
+
 ### Continuation gap found and local core repair — 2026-08-30
 
 Migration051 is not a sufficient scorer checkpoint. It retains one aggregate per round trip,

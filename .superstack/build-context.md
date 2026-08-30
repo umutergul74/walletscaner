@@ -1,5 +1,6 @@
 {
 "current_release_hardening": {
+"maintenance_repair_local": "Aug30 21:44UTC maintenance-only safety pause: liveR36 CTID-only partition delete reproduced fresh-price loss in PG16 fixture, fixed to (tableoid,ctid). Independent1s/5s advisory inventory, explicit null/partial/failed latest reports, operational freshness checks, schema051 compatibility. Copy-only R36 derivative gate pending; other11services remain. This is not storage equilibrium or historical-impact proof.",
 "state": "r46-ingestion-operational-capacity-gate-failed-fifo-continuation-local",
 "date": "2026-08-30",
 "collection_integrity_local": "Aug30 20:58UTC ingestion-only R46 rollout loaded saved Pyth/Jupiter auth; latest/historical oracle prices work again. At21:13UTC new trades1113oracle-converted/19observed-execution/79proxy. Shared Pyth auth/backoff hardening and migration052/053 tape remain local, not included in R46. Live execution false.",

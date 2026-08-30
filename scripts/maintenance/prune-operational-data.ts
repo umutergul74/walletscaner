@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import pg from "pg";
+import { collectMaintenanceProbes, payloadCompactionHasPriority } from "./maintenance-inventory.js";
 import {
   archiveRetirementPolicyStatus,
   retireVerifiedPayloadPartitions
@@ -75,12 +76,15 @@ const pool = new pg.Pool({
   // performs bounded maintenance work. Session-level advisory locks must be
   // released by the same PostgreSQL backend that acquired them.
   max: 2,
-  statement_timeout: inventoryTimeoutMs
+  statement_timeout: inventoryTimeoutMs,
+  connectionTimeoutMillis: 5_000
 });
 let queryTimeoutCount = 0;
 const queryTimeoutsByStage: Record<string, number> = {};
 let lockClient: pg.PoolClient | undefined;
 let lockAcquired = false;
+let maintenanceStage = "inventory";
+const attemptStartedAt = Date.now();
 
 try {
   lockClient = await pool.connect();
@@ -93,91 +97,107 @@ try {
     console.log(JSON.stringify({ type: "operational-maintenance", status: "skipped-lock-held" }));
     process.exitCode = 0;
   } else {
-    const eligible = await pool.query<{
-      price_observations: boolean;
-      chain_event_payloads: boolean;
-      chain_event_payloads_overdue: boolean;
-      chain_events: boolean;
-      swaps: boolean;
-      solana_signature_queue: boolean;
-      ingestion_gap_repair_signatures: boolean;
-      solana_transaction_finality: boolean;
-      wallet_alpha_scores: boolean;
-      alpha_decision_tape: boolean;
-      database_bytes: string;
-    }>(
-      `SELECT
-         EXISTS(SELECT 1 FROM price_observations
-          WHERE observed_at < NOW() - make_interval(days => $1::integer))
-           AS price_observations,
-         EXISTS(SELECT 1 FROM chain_event_inbox
-          WHERE status = 'processed'
-            AND payload_compacted_at IS NULL
-            AND COALESCE(processed_at, received_at) <
-                NOW() - make_interval(hours => $4::integer))
-           AS chain_event_payloads,
-         EXISTS(SELECT 1 FROM chain_event_inbox
-          WHERE status = 'processed'
-            AND payload_compacted_at IS NULL
-            AND COALESCE(processed_at, received_at) <
-                NOW() - make_interval(hours => $4::integer)
-                      - make_interval(secs => $10::integer))
-           AS chain_event_payloads_overdue,
-         EXISTS(SELECT 1 FROM chain_event_inbox
-          WHERE status IN ('processed', 'rolled_back')
-            AND COALESCE(processed_at, received_at) <
-                NOW() - make_interval(days => $2::integer))
-           AS chain_events,
-         EXISTS(SELECT 1 FROM swaps
-          WHERE observed_at < NOW() - make_interval(days => $5::integer))
-           AS swaps,
-         EXISTS(SELECT 1 FROM solana_signature_queue
-          WHERE status = 'completed'
-            AND completed_at < NOW() - make_interval(days => $7::integer))
-           AS solana_signature_queue,
-         EXISTS(
-           SELECT 1
-           FROM ingestion_gap_repair_signatures signature
-           JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
-           WHERE repair.status IN ('completed', 'failed')
-             AND COALESCE(signature.completed_at, signature.created_at) <
-                 NOW() - make_interval(days => $9::integer)
-         ) AS ingestion_gap_repair_signatures,
-         EXISTS(SELECT 1 FROM solana_transaction_finality
-          WHERE status <> 'pending'
-            AND updated_at < NOW() - make_interval(days => $8::integer))
-           AS solana_transaction_finality,
-         (
-           EXISTS(SELECT 1 FROM wallet_alpha_scores score
-            WHERE score.calculated_at < NOW() - make_interval(days => $6::integer))
-           OR EXISTS(SELECT 1 FROM wallet_alpha_score_supersessions supersession
-            WHERE supersession.calculated_at <
-                  NOW() - make_interval(days => $3::integer))
-         ) AS wallet_alpha_scores,
-         EXISTS(
-           SELECT 1
-           FROM alpha_decision_tape decision
-           WHERE decision.retain_until < NOW()
-             AND NOT EXISTS (
-               SELECT 1 FROM alpha_decision_checkpoints checkpoint
-               WHERE checkpoint.decision_id = decision.id
-                 AND checkpoint.status NOT IN ('completed', 'dead_letter')
-             )
-         ) AS alpha_decision_tape,
-         pg_database_size(current_database())::text AS database_bytes`,
+    const inventory = await collectMaintenanceProbes(
+      pool,
       [
-        priceRetentionDays,
-        inboxRetentionDays,
-        scoreRetentionDays,
-        rawPayloadRetentionHours,
-        swapRetentionDays,
-        walletEvidenceRetentionDays,
-        signatureQueueRetentionDays,
-        finalityRetentionDays,
-        gapRepairSignatureRetentionDays,
-        compactionPriorityLagSeconds
-      ]
+        {
+          key: "chain_event_payloads_overdue",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM chain_event_inbox WHERE status = 'processed'
+            AND payload_compacted_at IS NULL
+            AND COALESCE(processed_at, received_at) <
+                NOW() - make_interval(hours => $1::integer)
+                      - make_interval(secs => $2::integer)
+        ) AS eligible`,
+          parameters: [rawPayloadRetentionHours, compactionPriorityLagSeconds]
+        },
+        {
+          key: "price_observations",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM price_observations WHERE observed_at <
+            NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [priceRetentionDays]
+        },
+        {
+          key: "chain_event_payloads",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM chain_event_inbox WHERE status = 'processed'
+            AND payload_compacted_at IS NULL AND COALESCE(processed_at, received_at) <
+              NOW() - make_interval(hours => $1::integer)
+        ) AS eligible`,
+          parameters: [rawPayloadRetentionHours]
+        },
+        {
+          key: "chain_events",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM chain_event_inbox WHERE status IN ('processed', 'rolled_back')
+            AND COALESCE(processed_at, received_at) <
+              NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [inboxRetentionDays]
+        },
+        {
+          key: "swaps",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM swaps WHERE observed_at < NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [swapRetentionDays]
+        },
+        {
+          key: "solana_signature_queue",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM solana_signature_queue WHERE status = 'completed'
+            AND completed_at < NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [signatureQueueRetentionDays]
+        },
+        {
+          key: "ingestion_gap_repair_signatures",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM ingestion_gap_repair_signatures signature
+          JOIN ingestion_gap_repairs repair ON repair.repair_id = signature.repair_id
+          WHERE repair.status IN ('completed', 'failed')
+            AND COALESCE(signature.completed_at, signature.created_at) <
+              NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [gapRepairSignatureRetentionDays]
+        },
+        {
+          key: "solana_transaction_finality",
+          sql: `SELECT EXISTS(
+          SELECT 1 FROM solana_transaction_finality WHERE status <> 'pending'
+            AND updated_at < NOW() - make_interval(days => $1::integer)
+        ) AS eligible`,
+          parameters: [finalityRetentionDays]
+        },
+        {
+          key: "wallet_alpha_scores",
+          sql: `SELECT (
+          EXISTS(SELECT 1 FROM wallet_alpha_scores WHERE calculated_at <
+            NOW() - make_interval(days => $1::integer))
+          OR EXISTS(SELECT 1 FROM wallet_alpha_score_supersessions WHERE calculated_at <
+            NOW() - make_interval(days => $2::integer))
+        ) AS eligible`,
+          parameters: [walletEvidenceRetentionDays, scoreRetentionDays]
+        },
+        // This optional research phase is not deployed on schema051. Absence must not
+        // prevent the independent raw/price maintenance jobs from running.
+        {
+          key: "alpha_decision_tape_available",
+          sql: `SELECT (
+          to_regclass('alpha_decision_tape') IS NOT NULL
+          AND to_regclass('alpha_decision_checkpoints') IS NOT NULL
+        ) AS eligible`
+        }
+      ],
+      { budgetMs: inventoryTimeoutMs, probeTimeoutMs: 1_000 }
     );
+    for (const stage of inventory.timedOut) recordStageTimeout(`inventory:${stage}`);
+    const databaseSize = await pool.query<{ database_bytes: string }>(
+      "SELECT pg_database_size(current_database())::text AS database_bytes"
+    );
+    maintenanceStage = "archive-policy";
     const archivePolicy = await archiveRetirementPolicyStatus(pool, archiveMinimumRemainingDays);
     const archiveMutationsEnabled = archiveRetirementEnabled && archivePolicy.ready;
     await pool.query("SELECT set_config('statement_timeout', $1, false)", [
@@ -210,6 +230,7 @@ try {
     const maintenanceStartedAt = Date.now();
     const totalBudgetMs = maxRunSeconds * 1_000;
     if (!dryRun) {
+      maintenanceStage = "bounded-retention";
       payloadPartitionEnsure = await ensurePayloadPartitions(pool, payloadPartitionFutureDays, {
         lockTimeoutMs: partitionLockTimeoutMs,
         statementTimeoutMs
@@ -230,7 +251,7 @@ try {
       retiredPricePartitions = await retirePricePartitions(priceRetentionDays);
       deletedPriceObservations = await pruneInBatches(
         `WITH doomed AS (
-           SELECT ctid FROM price_observations
+           SELECT tableoid, ctid FROM price_observations
            WHERE observed_at < NOW() - make_interval(days => $1::integer)
            ORDER BY observed_at
            LIMIT $2
@@ -238,7 +259,7 @@ try {
         )
          DELETE FROM price_observations AS target
          USING doomed
-         WHERE target.ctid = doomed.ctid`,
+         WHERE target.tableoid = doomed.tableoid AND target.ctid = doomed.ctid`,
         priceRetentionDays,
         maintenanceStartedAt + totalBudgetMs * 0.3,
         batchSize,
@@ -344,7 +365,7 @@ try {
         "solana-finality"
       );
       if (archiveMutationsEnabled) {
-        if (!eligible.rows[0]?.chain_event_payloads_overdue) {
+        if (!payloadCompactionHasPriority(inventory)) {
           deletedChainEvents = await pruneInBatches(
             `WITH eligible_archive AS MATERIALIZED (
            SELECT archive.range_start, archive.range_end
@@ -609,8 +630,9 @@ try {
       );
       deletedWalletAlphaScores =
         deletedExpiredWalletAlphaScores + deletedSupersededWalletAlphaScores;
-      deletedAlphaDecisionTape = await pruneInBatches(
-        `WITH doomed AS (
+      if (inventory.values.alpha_decision_tape_available === true) {
+        deletedAlphaDecisionTape = await pruneInBatches(
+          `WITH doomed AS (
            SELECT decision.id
            FROM alpha_decision_tape decision
            WHERE decision.retain_until < NOW()
@@ -626,14 +648,16 @@ try {
          DELETE FROM alpha_decision_tape AS target
          USING doomed
          WHERE target.id = doomed.id`,
-        60,
-        maintenanceStartedAt + totalBudgetMs,
-        batchSize,
-        [],
-        "alpha-decision-tape"
-      );
+          60,
+          maintenanceStartedAt + totalBudgetMs,
+          batchSize,
+          [],
+          "alpha-decision-tape"
+        );
+      }
     }
 
+    maintenanceStage = "retention-telemetry";
     const priceRetentionState = await pool.query<{
       oldest_observed_at: Date | null;
       retention_lag_seconds: number;
@@ -679,7 +703,11 @@ try {
 
     const maintenanceReport = {
       type: "operational-maintenance",
-      status: dryRun ? "dry-run" : "completed",
+      status: dryRun
+        ? "dry-run"
+        : queryTimeoutCount > 0 || inventory.deferred.length > 0
+          ? "partial"
+          : "completed",
       checkedAt: new Date().toISOString(),
       durationMs: Date.now() - maintenanceStartedAt,
       retentionDays: {
@@ -696,16 +724,19 @@ try {
         alphaDecisionTape: 60
       },
       eligibleBeforeRun: {
-        priceObservations: Boolean(eligible.rows[0]?.price_observations),
-        chainEventPayloads: Boolean(eligible.rows[0]?.chain_event_payloads),
-        chainEventPayloadsOverdue: Boolean(eligible.rows[0]?.chain_event_payloads_overdue),
-        chainEvents: Boolean(eligible.rows[0]?.chain_events),
-        swaps: Boolean(eligible.rows[0]?.swaps),
-        solanaSignatureQueue: Boolean(eligible.rows[0]?.solana_signature_queue),
-        gapRepairSignatures: Boolean(eligible.rows[0]?.ingestion_gap_repair_signatures),
-        solanaFinality: Boolean(eligible.rows[0]?.solana_transaction_finality),
-        walletAlphaScores: Boolean(eligible.rows[0]?.wallet_alpha_scores),
-        alphaDecisionTape: Boolean(eligible.rows[0]?.alpha_decision_tape)
+        priceObservations: inventory.values.price_observations,
+        chainEventPayloads: inventory.values.chain_event_payloads,
+        chainEventPayloadsOverdue: inventory.values.chain_event_payloads_overdue,
+        chainEvents: inventory.values.chain_events,
+        swaps: inventory.values.swaps,
+        solanaSignatureQueue: inventory.values.solana_signature_queue,
+        gapRepairSignatures: inventory.values.ingestion_gap_repair_signatures,
+        solanaFinality: inventory.values.solana_transaction_finality,
+        walletAlphaScores: inventory.values.wallet_alpha_scores
+      },
+      inventory: { timedOut: inventory.timedOut, deferred: inventory.deferred },
+      optionalSchema: {
+        alphaDecisionTapeAvailable: inventory.values.alpha_decision_tape_available
       },
       archiveRetirement: {
         runtimeEnabled: archiveRetirementEnabled,
@@ -738,7 +769,7 @@ try {
         heldUnresolvedPayloads,
         archiveBlockedPayloadPartitions
       },
-      databaseBytes: Number(eligible.rows[0]?.database_bytes ?? 0),
+      databaseBytes: Number(databaseSize.rows[0]?.database_bytes ?? 0),
       priceRetention: {
         oldestObservedAt: priceRetentionState.rows[0]?.oldest_observed_at?.toISOString() ?? null,
         lagSeconds: Number(priceRetentionState.rows[0]?.retention_lag_seconds ?? 0)
@@ -766,19 +797,38 @@ try {
       queryTimeoutsByStage
     };
     try {
-      await mkdir("reports", { recursive: true });
-      await writeFile(`${maintenanceReportPath}.tmp`, JSON.stringify(maintenanceReport, null, 2));
-      await rename(`${maintenanceReportPath}.tmp`, maintenanceReportPath);
+      await persistMaintenanceReport(maintenanceReport);
     } catch (error) {
       console.error(
         JSON.stringify({
           type: "operational-maintenance-report-error",
-          message: error instanceof Error ? error.message : String(error)
+          code: safeErrorCode(error)
         })
       );
     }
     console.log(JSON.stringify(maintenanceReport));
   }
+} catch (error) {
+  // Do not leave an old successful report looking like the latest attempt succeeded.
+  const failed = {
+    type: "operational-maintenance",
+    status: "failed",
+    checkedAt: new Date().toISOString(),
+    durationMs: Date.now() - attemptStartedAt,
+    stage: maintenanceStage,
+    code: safeErrorCode(error),
+    queryTimeoutCount,
+    queryTimeoutsByStage
+  };
+  console.error(JSON.stringify(failed));
+  try {
+    await persistMaintenanceReport(failed);
+  } catch {
+    console.error(
+      JSON.stringify({ type: "operational-maintenance-report-error", status: "failed" })
+    );
+  }
+  process.exitCode = 1;
 } finally {
   try {
     if (lockClient && lockAcquired) {
@@ -790,6 +840,24 @@ try {
     lockClient?.release();
     await pool.end();
   }
+}
+
+async function persistMaintenanceReport(report: unknown): Promise<void> {
+  await mkdir("reports", { recursive: true });
+  await writeFile(`${maintenanceReportPath}.tmp`, JSON.stringify(report, null, 2));
+  await rename(`${maintenanceReportPath}.tmp`, maintenanceReportPath);
+}
+
+function safeErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Z0-9_]{2,30}$/.test(error.code)
+  )
+    return error.code;
+  return "UNEXPECTED_MAINTENANCE_ERROR";
 }
 
 async function pruneRejectedWalletEvidence(

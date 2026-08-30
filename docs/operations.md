@@ -1,5 +1,19 @@
 # Operations
 
+## Maintenance latest-attempt contract (local update, 2026-08-30)
+
+`operational-maintenance-latest.json` is the latest attempt, not the last success. New code reports
+`completed`, `partial`, `failed`, or `dry-run`; failed runs contain a sanitized stage/error code,
+not SQL, provider URLs or environment data. A held advisory lock does not overwrite the active
+owner's report. Inventory probes are independent read-only transactions capped at1s each/5s total;
+unknown results never authorize archive retirement. The operational monitor treats stale/missing,
+failed, partial and dry-run maintenance as non-healthy. Freshness allows two configured maintenance
+intervals plus180seconds. Database/retention-lag/reserve alerts remain independently enforced.
+
+This change is local until an immutable Linux artifact and named-service canary pass. It requires
+no migration and is compatible with schema051 before optional decision-tape deployment. Do not
+restart all operations services or retire canonical evidence to deploy this repair.
+
 Walletscaner v2 must be operated as a PostgreSQL-backed evidence system. A process being alive is not proof that chain coverage, parser quality or paper delivery is healthy.
 
 ## Required configuration

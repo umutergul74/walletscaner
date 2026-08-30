@@ -5,6 +5,7 @@ import pg from "pg";
 import { updateStorageHistory } from "./storage-runway";
 import { inspectBackupDirectory } from "./backup-health";
 import { quotePricePrerequisite } from "./quote-price-prerequisite";
+import { inspectMaintenanceReport } from "./maintenance-health";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for operational monitoring.");
@@ -320,6 +321,12 @@ try {
   const sqlTelemetry = await readSqlTelemetry(pool);
   const backup = await inspectBackupDirectory("/app/backups");
   const reasons: string[] = [];
+  const maintenance = await inspectMaintenanceReport(
+    "reports/operational-maintenance-latest.json",
+    new Date(checkedAt),
+    positiveNumber(process.env.MAINTENANCE_INTERVAL_SECONDS, 3_600) * 2 + 180
+  );
+  if (maintenance.reason) reasons.push(maintenance.reason);
   const quotePrice = quotePricePrerequisite(process.env.PYTH_API_KEY);
   if (quotePrice.reason) reasons.push(quotePrice.reason);
 
@@ -486,6 +493,7 @@ try {
       }
     },
     backup,
+    maintenance,
     resources: {
       databaseBytes: Number(row.database_bytes),
       diskTotalBytes,

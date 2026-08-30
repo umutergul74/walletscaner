@@ -16,6 +16,15 @@ const postgresRepositoryPath = new URL(
 );
 
 describe("operational maintenance SQL contract", () => {
+  it("identifies price rows by partition and physical row, never by cross-partition ctid alone", async () => {
+    const source = await readFile(scriptPath, "utf8");
+    const price = source.slice(
+      source.indexOf("deletedPriceObservations = await pruneInBatches("),
+      source.indexOf("deletedSwaps = await pruneInBatches(")
+    );
+    expect(price).toContain("SELECT tableoid, ctid FROM price_observations");
+    expect(price).toContain("target.tableoid = doomed.tableoid AND target.ctid = doomed.ctid");
+  });
   it("claims the oldest bounded prehashed batch and verifies archive coverage per row", async () => {
     const source = await readFile(scriptPath, "utf8");
     const compaction = source.slice(
@@ -68,7 +77,7 @@ describe("operational maintenance SQL contract", () => {
 
     expect(source).toContain("chain_event_payloads_overdue");
     expect(source).toContain("MAINTENANCE_COMPACTION_PRIORITY_LAG_SECONDS");
-    expect(source).toContain("if (!eligible.rows[0]?.chain_event_payloads_overdue)");
+    expect(source).toContain("if (!payloadCompactionHasPriority(inventory))");
     expect(source).toContain("maintenanceStartedAt + totalBudgetMs * 0.92");
     expect(source).toContain("MAINTENANCE_COMPACTION_STATEMENT_TIMEOUT_MS");
     expect(source).toContain("`${compactionStatementTimeoutMs}ms`");
@@ -173,6 +182,19 @@ describe("operational maintenance SQL contract", () => {
     expect(retention).toContain("FOR UPDATE OF decision SKIP LOCKED");
     expect(retention).toContain('"alpha-decision-tape"');
     expect(source).toContain("alphaDecisionTape: deletedAlphaDecisionTape");
+    expect(source).toContain("if (inventory.values.alpha_decision_tape_available === true)");
+  });
+
+  it("isolates diagnostic inventory and replaces a stale success report after failure", async () => {
+    const source = await readFile(scriptPath, "utf8");
+    expect(source).toMatch(/collectMaintenanceProbes\(\s*pool/);
+    expect(source).not.toContain("const eligible = await pool.query");
+    expect(source).toContain("persistMaintenanceReport(failed)");
+    expect(source).toContain('status: "failed"');
+    expect(source).toContain("process.exitCode = 1");
+    expect(source).toContain(
+      "inventory: { timedOut: inventory.timedOut, deferred: inventory.deferred }"
+    );
   });
 
   it("adds the exact rejected-evidence predicate as a concurrent partial index", async () => {

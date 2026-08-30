@@ -3,6 +3,24 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 21:44 UTC maintenance safety containment
+
+- Only data-maintenance is stopped after confirming its R36 price-retention query uses ctid alone
+  across daily partitions. PostgreSQL16 regression proves a fresh row can be deleted through a
+  physical-row collision. Local query now uses(tableoid,ctid); historical impact is not yet counted.
+- Other11running services remain unchanged, including ingestionR46/alphaR43/PG/Redis/archive/backup;
+  protected co-tenant inventory empty. Free14.60GB, WAL486.55MB, temp48KiB, availableRAM1015MiB.
+  Current dumpSHA/offsiteACK verified, age25.34h; no canonical data deletion occurred in this task.
+- Maintenance ledger reports/deploy/maintenance-r47-20260831.json revision3 records completed
+  containment, not completed repair. Do not restart the old unsafe image. A copy-only derivative of
+  the exact loadedR36 image avoids local Docker failure and any dependency/network/server build.
+- Separate inventory bug:37completed reports/9unhandled inventory timeouts in24h. Local repair
+  isolates advisory probes, records unknown/partial/failure explicitly, checks report freshness
+  and remains compatible with schema051. Final nativePG16 gate537/537passed with no skips;
+  typecheck/lint pass. Exact Linux artifact and named maintenance/monitor canary remain pending.
+- Latest21:34 operational snapshot: inbox0/dead0, finality14fresh/unresolved0, wallettrade15s.
+  Alpha pending19,893 and growing; DB24.28GB/free14.63GB; canonical-wallet equilibrium not solved.
+
 ## 2026-08-30 21:18 UTC queue/storage remediation checkpoint
 
 - R46 ingestion now runs: containerb524cc46b48840767325b9c3746b9308f1ee2664de58c8f31637fec0c2b1eaa3,

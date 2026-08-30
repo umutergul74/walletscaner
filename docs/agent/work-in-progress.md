@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-30T21:22:00Z
+updated_at_utc: 2026-08-30T21:44:00Z
 owner: codex
 task: bounded alpha producer and sustainable wallet evidence storage
 last_safe_checkpoint: R46 safe/auth working but queue capacity failed; no production mutation pending, ledger6; local continuation and scorer parity522tests pass
@@ -125,10 +125,49 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
 - Serial full gate now521/521passed, no skips (PG16.15/zstd). Added scorer-input parity test after
   that run:40targeted tests/typecheck/lint pass. Full522-test rerun is next before commit.
 - Final serial full gate522/522passed,102files, no skips; typecheck/lint passed. Workspace build
-  is completing. No source/scorer thresholds, provider routes or production timeouts changed.
+  passed. Source/tests/docs committed7c6a3da (main ahead240). No source/scorer thresholds,
+  provider routes or production timeouts changed.
 - Local disposable PG16.15 is running only127.0.0.1:54329 with32MiBshared buffers. Initial launch
   accidentally used default5432; it was stopped immediately and relaunched correctly. No user DB
   or production PostgreSQL was touched. Stop this exact local cluster when tests finish.
+
+## Phase2b: independent maintenance inventory (local, not deployed)
+
+- New live finding21:32UTC: last24h has37completed maintenance reports and9unhandled statement
+  failures. The monolithic eligibility inventory at prune-operational-data.ts:96 times out before
+  any cleanup. Latest successful report20:29UTC remains on disk, hiding the failed attempt.
+- Implement bounded independent advisory probes, explicit unknown states and fresh failure reports.
+  Unknown inventory must never grant archive deletion authority; payload priority fails closed.
+  Retention predicates/periods and resource limits stay unchanged. No schema mutation is planned.
+- Local Docker start did not yield a working Linux engine. Only our hung CLI clients18736/23540
+  were stopped at21:32UTC; Docker backend was not reset/stopped or reconfigured. No Linux artifact
+  or populated latest-dump restore is running. Native PG16 remains available for integration.
+- Next: test one inventory timeout does not block unrelated maintenance and unknown is not false;
+  preserve schema051 compatibility for the not-yet-deployed optional decision tape. Then full gate,
+  immutable Linux artifact and guarded maintenance-only canary; no canonical source retirement.
+
+### Urgent price-partition safety repair, verified21:43UTC
+
+- Live R36 maintenance SQL deletes price rows using ctid only. PostgreSQL16 regression reproduced
+  one expired row selecting/deleting a fresh row in another partition with the same ctid. New SQL
+  uses (tableoid,ctid); regression retains fresh row. Historical impact is unknown, not asserted zero.
+- Exact maintenance containercbaaa228eae8f5af851dc25626958140b38fcb315c4df2bbd8eac110fce9d1b3,
+  image24bcc3fa77d3a0a9e4369eb43ec4d33084b4985f1feedcc41db97cde1548d00a,
+  tagwalletscaner-worker:storage-r36-20260826;CPU0.04/memory64MiB, restart0/OOMfalse.
+- Preflight21:43:52UTC: free14,604,664,832bytes;availableRAM1015MiB;WAL486,547,456bytes;
+  temp49152bytes;backup current SHA/offsiteACK stillpass (age25.34h);all12running,co-tenantempty.
+- Next exact mutation: revision-ledgered stop ONLYdata-maintenance to prevent another unsafe price
+  cleanup. Ingestion/alpha/archive/backup/PG/Redis must remain unchanged. Keep old image as evidence,
+  but do not automatically resume known-unsafe retention if the new canary fails.
+- Docker fallback: narrowly scoped copy-only derivative of the exact already-loaded R36 image,
+  no dependency install/network build/full repository build. Hash source overlay, test the exact
+  Linux artifact, then read-only/dry-run canary before named-service replacement. No host reset.
+- Stop completed21:44:39UTC; maintenance exited, all11other running services unchanged andPG/Redis
+  healthy. Ledgermaintenance-r47-20260831.json revision3 SHA669fedecd016f492fb0ce1497a5543441fbc17cde7e2fb2e3e4fd14c6c5f9620.
+  No stop operation is pending; do not restart the old unsafe image. Next: copy-only artifact gates.
+- Full current nativePG16 suite537/537passed106files/no skips;typecheck/lint pass. Exact source-only
+  tar C:/Users/Umut/AppData/Local/Temp/walletscaner-maintenance-r47-20260831.tar is118784bytes,
+  SHA f63395b611b1464580c1bbd50e84f8ce5f71929f4bbd86fedfdfa05970dc904b. No production upload yet.
 
 ## Completion conditions
 
