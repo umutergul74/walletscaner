@@ -21,7 +21,13 @@ before every operational claim or mutation.
   rows, thresholds, lanes, strategy, resources and retention are unchanged. Full nativePG16 gate
   541/541passed across106files; typecheck/lint/build passed; generated99-useful-plus1-oversized
   benchmark completed412.22ms at38.41MiBheap/119.75MiBRSS. Linux artifact and live alpha-only
-  canary remain required; queue/storage equilibrium is not yet claimed.
+  canary were then executed. Exact Linux18/18 and read-only live parity passed, but the first active
+  cycle processed only39useful+21low-evidence revisions in248.0s versus the prior45useful/246.6s,
+  while pending grew21505->21976. Capacity acceptance therefore failed and only wallet-alpha was
+  rolled back to exactR43; release ledgerrevision15 records completed rollback. R49 remains a tested
+  inactive artifact. Queue/storage equilibrium is not claimed; the next fix is transactional FIFO
+  continuation/CAS plus compact historical realization/followability readers, not another timeout
+  or CPU increase.
 
 ## 2026-08-30 21:44 UTC maintenance safety containment
 

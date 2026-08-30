@@ -298,6 +298,56 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   a content-addressed overlay tar, hash locally/server-side, then build from exactR43. Do not update
   Compose or recreate a named service before exact Linux tests and a schema051 read-only/run-once
   canary pass.
+- Artifact recipe committed86ab6b702559cbbbf27a47638e4869a944a8bfcc. Exact seven-file overlay
+  is435712bytes/SHAca42e9c9e32a9aff9cfc267022a7d5700bdd602ca4916059197196664b93d696;
+  local listing was reviewed. Server release ledgeralpha-phase3a-r49-20260831.json is revision2
+  build-copy-only-artifact/in_progress. Upload landed at the exact deploy path with matching server
+  SHA/size; no service/config/image has changed. Next exact action: create a fresh context, build with
+  network=none from exactR43 image and verify parent layers/labels before running Linux tests.
+- First build attempt failed before image creation: Docker treated FROMsha256:e870... as a registry
+  repository reference and refused resolution. The seven-file context exists, targetR49 tag does
+  not, and no service/config changed. Record revision2 failed before retry. Correct retry may use
+  the local tag only after `docker image inspect` proves that tag still resolves to exactR43 ID;
+  preserve the failed history and do not recreate/re-extract the context.
+- Correct tagged-base build succeeded: R49 image
+  sha256:7c5d1788e10ba5c5ff6006a9af0dfc70275603c0bb84d7be1bb293f9707ee830;
+  exact31R43 layers are the prefix and exactly2COPY layers were added. First read-only Linux test
+  invocation stopped before tests because Vitest could not create `/app/node_modules/.vite-temp`;
+  this is a canary mount failure, not a code/test failure. Retry the same immutable image with an
+  exact32MiB tmpfs at that path; keep network none and do not rebuild.
+- Exact immutable Linux retry passed18/18; bounded benchmark at0.20CPU processed99useful/1oversized
+  in3922.07ms at16.32MiBheap/105.2MiBRSS. Read-only live canary used
+  `default_transaction_read_only=on`,5s per-statement timeout and no dependencies:100candidates,
+  0low-evidence/100admitted,2978scalar trade rows,raw payload empty and first-row canonical identity
+  parity true; pending21505. The top lane is currently admitted work, so batch low-evidence cleanup
+  will engage only after elevated work advances; no ordering/gate is changed.
+- Next exact mutation: complete artifact ledgerrevision5, then planned/in_progress activation. Guard
+  `.env.server` research image from exactR43tag to exactR49tag, retain a root-only rollback copy and
+  recreate ONLYwallet-alpha with `up -d --no-deps --force-recreate`. Verify all other container IDs,
+  resource limits, live=false, DB/Redis/co-tenant and first full cycle. Roll back on OOM/restart,
+  failure growth, useful throughput regression or non-alpha identity change.
+- First activation guard failed before R49 start because Compose config was rendered without the
+  research profile, so wallet-alpha was absent from JSON. The rollback trap restored exactR43 env
+  and recreated only alpha:container43c80632..., exactR43,restart0/OOMfalse,limits unchanged.
+  DB/Redis/co-tenant gates pass. A diagnostic initially reported maintenance/monitor changes only
+  because its comparison included human `Up N minutes` status text; use ID+image only. Record
+  activation revision8 failed, then retry under a new phase with `--profile research config` and a
+  fresh ID+image-only pre-inventory. Do not reuse the earlier success assumption.
+- Profile-aware activation changed ONLYwallet-alpha to exactR49 container e5563475...,restart0/
+  OOMfalse,limits/live=false unchanged; other ID+image pairs,DB/Redis/co-tenant passed. First full
+  cycle failed capacity acceptance:248017ms,39useful processed,21low-evidence skipped,0failures,
+  RSS108.96MiB; pending21505->21976 (background20126/elevated1850/signal0). Prior comparable
+  baseline was45useful/246603ms. R49 is safe but does not improve useful throughput or net slope.
+  Mark activation failed and restore only alpha via the exact profiled rollback env/R43 image;
+  retain R49 image/artifacts as evidence. Do not call this queue/storage resolution.
+- Rollback completed: ONLYwallet-alpha recreated as container24e887ca..., exactR43 image
+  sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b,
+  restart0/OOMfalse; config/limits/live=false restored. All other ID+image pairs unchanged and
+  DB/Redis/co-tenant gates pass. Release ledgerrevision15 phase rollback-alpha-r43/completed,
+  SHAd9d49641b2b1d3121648289ecaaae5b2aa029554c9b18b7181189ef4c8e49a65.
+  No R49 production mutation is pending. Next exact local design: additive transactional FIFO
+  checkpoint/CAS with source correction invalidation and durable partial-sale facts; do not deploy
+  another queue-only optimization before populated parity and benchmark evidence.
 
 ## Completion conditions
 
