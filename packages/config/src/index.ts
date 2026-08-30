@@ -130,7 +130,7 @@ const envSchema = z.object({
   HELIUS_MAX_ACCOUNT_FILTERS: z.coerce.number().int().min(1).max(50_000).default(50_000),
   SOLANA_RPC_URL: z.string().url().default("https://api.mainnet-beta.solana.com"),
   SOLANA_WS_URL: z.string().url().default("wss://api.mainnet-beta.solana.com"),
-  PYTH_HERMES_URL: z.string().url().default("https://hermes.pyth.network"),
+  PYTH_HERMES_URL: z.string().url().default("https://pyth.dourolabs.app/hermes"),
   PYTH_BENCHMARKS_URL: z.string().url().default("https://benchmarks.pyth.network"),
   PYTH_API_KEY: optionalString,
   PYTH_SOL_USD_FEED_ID: z

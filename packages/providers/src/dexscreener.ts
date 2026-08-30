@@ -50,7 +50,8 @@ export interface DexScreenerPair {
 export class DexScreenerClient {
   constructor(
     private readonly baseUrl = "https://api.dexscreener.com",
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly requestBudget: { timeoutMs?: number; retries?: number } = {}
   ) {}
 
   async fetchLatestTokenProfiles(): Promise<DexScreenerProfile[]> {
@@ -75,7 +76,7 @@ export class DexScreenerClient {
     const response = await fetchJson<{ pairs?: DexScreenerPair[] | null }>(
       "dexscreener",
       `${this.baseUrl}/latest/dex/pairs/${chain}/${pairAddress}`,
-      { fetchImpl: this.fetchImpl, retries: 2 }
+      { fetchImpl: this.fetchImpl, retries: 2, ...this.requestBudget }
     );
     return response.pairs ?? [];
   }

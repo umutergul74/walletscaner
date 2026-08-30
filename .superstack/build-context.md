@@ -1,7 +1,8 @@
 {
 "current_release_hardening": {
-"state": "r45-ingestion-operational-r46-producer-admission-and-migration052-local",
+"state": "r45-ingestion-operational-r46-producer-admission-and-migration052-053-local",
 "date": "2026-08-30",
+"collection_integrity_local": "Pyth authentication mandatory since Aug26; missing keys fail without network calls; shared bounded auth/429/outage circuit and health visibility. Migration053 freezes v2 hourly sampling and 10-second timing; one fenced writer, just-in-time dependent checkpoints, bounded SQL/HTTP, exact token/pair identity, Jupiter free-plan pacing. No production changes; Pyth/Jupiter keys absent and latest backup offsite acknowledgement not verified at Aug30 preflight.",
 "scope": "R45 enforces the trade-only 15-second wall-clock watchdog over R44; R46 locally suppresses only inadmissible price-enrichment score revisions while retaining unconditional trade/entry producers; migration 052 locally adds a bounded future exact-pool decision tape with no delivery/execution authority; R42 materializer and B2 archive remain active and canonical wallet retirement remains disabled",
 "migration": "050_wallet_evidence_cold_archive.sql and 051_wallet_evidence_compact_shadow.sql are deployed with exact checksums; migration 049 queue retry semantics remain active; 052_future_alpha_decision_tape.sql is local-only and not deployed",
 "verification": "Production R45 observed 185 natural watchdog releases over 10.48 hours at p50/p95/p99/max 15001/15056/15998/18374ms with no release above 20s, restart/OOM zero and current flow. R46 typecheck/lint/build pass; its exact Node24/Linux/zstd validation image passes 418/418 tests with 49 intentional no-DB skips and then the complete PostgreSQL16 evidence suite 34/34. The immutable transfer artifact passes SHA/zstd validation; production canary remains pending because the fresh preflight found the daily dump in progress under elevated single-CPU/I/O pressure.",

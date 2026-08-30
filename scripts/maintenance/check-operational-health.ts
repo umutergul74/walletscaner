@@ -4,6 +4,7 @@ import os from "node:os";
 import pg from "pg";
 import { updateStorageHistory } from "./storage-runway";
 import { inspectBackupDirectory } from "./backup-health";
+import { quotePricePrerequisite } from "./quote-price-prerequisite";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required for operational monitoring.");
@@ -319,6 +320,8 @@ try {
   const sqlTelemetry = await readSqlTelemetry(pool);
   const backup = await inspectBackupDirectory("/app/backups");
   const reasons: string[] = [];
+  const quotePrice = quotePricePrerequisite(process.env.PYTH_API_KEY);
+  if (quotePrice.reason) reasons.push(quotePrice.reason);
 
   if (!backup.available) reasons.push(`backup unavailable: ${backup.reason ?? "unknown"}`);
   if (backup.available && !backup.offsiteAcknowledged) {
@@ -431,6 +434,7 @@ try {
     checkedAt,
     reasons,
     pipeline: {
+      quotePrice,
       backlog: row.backlog,
       deadLetters: row.dead_letters,
       oldestPendingAgeSeconds: row.oldest_pending_age_seconds,

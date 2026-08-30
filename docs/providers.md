@@ -270,6 +270,19 @@ This prevents ordinary pool vaults from being promoted to wallet-alpha, but acce
 
 ## Pyth
 
+As of 2026-08-26, Hermes and Benchmarks require `PYTH_API_KEY`. The default Hermes URL is
+`https://pyth.dourolabs.app/hermes`; existing configured legacy URLs redirect upstream. Missing
+credentials make zero HTTP requests. The shared latest/historical circuit uses one bounded attempt,
+15-minute auth backoff, 60-second rate-limit backoff and 5–60-second outage backoff. Diagnostics
+expose only status/counters, never credentials or provider bodies. Missing USD evidence does not
+discard raw canonical trade quantities and must not be replaced with a current market mark.
+See the [Pyth upgrade contract](https://docs.pyth.network/price-feeds/core/upgrade/preparing).
+
+The isolated v2 tape requires both Pyth and Jupiter credentials before starting. Quote-only Jupiter
+requests are sequential and spaced by 1,050ms for the free-plan budget, with no taker, signing or
+submission. Auth/rate-limit failures open a bounded circuit. Quotes arriving after their fixed
+10-second horizon window are stale evidence, even if the provider returned a valid price.
+
 `PythPriceClient` provides:
 
 - latest Hermes price with a configured staleness limit;

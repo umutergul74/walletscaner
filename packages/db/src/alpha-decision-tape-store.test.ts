@@ -20,12 +20,13 @@ describe("AlphaDecisionTapeStore", () => {
     });
     const store = new AlphaDecisionTapeStore({ query } as never);
 
-    await expect(store.seedFutureDecisions()).resolves.toEqual({
+    await expect(store.seedFutureDecisions({ scanLimit: 25 })).resolves.toEqual({
       inspected: 25,
       inserted: 4,
       researchEligible: 2,
       hasMore: true,
-      dailyCapacityRemaining: 96
+      dailyCapacityRemaining: 96,
+      hourlyCapacityRemaining: 0
     });
     expect(query.mock.calls[0]?.[1]).toEqual([
       ALPHA_DECISION_TAPE_VERSION,

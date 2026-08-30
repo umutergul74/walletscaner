@@ -195,6 +195,14 @@ for one representative full day, not B2 upload evidence or permission to retire 
 
 ## Future decision-tape capacity
 
+Migration 053 adds only a scalar timing status and a new future policy. The 2026-08-30 native
+PostgreSQL 16.15 benchmark conservatively inserts the 100-decision hard daily ceiling (actual v2
+hourly cap permits at most 96/day): 600 checkpoints and 2,100 quote rows use 1,531,904 bytes, with
+1,757,152 bytes of insert WAL and a conservative 60-day envelope of 91,914,240 bytes (~87.7 MiB).
+Unlike the earlier empty-candidate plan, the updated benchmark exercises 100 due candidates and
+100 expired decisions; claim returns one row and retention 100, both without temp writes. These
+figures cover this small research lane only, not existing PostgreSQL/WAL/dump growth or B2 parity.
+
 Migration 052 deliberately stores compact scalars instead of provider payloads. Its isolated
 PostgreSQL 16 benchmark inserted the configured worst-case daily envelope: 100 decisions, 600
 checkpoints and 2,100 normalized quote rows. After `ANALYZE`, the three table/index groups occupied

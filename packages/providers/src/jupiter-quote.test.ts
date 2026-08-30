@@ -37,6 +37,30 @@ function response(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Jupiter quote evidence", () => {
+  it("spaces requests for the free-plan budget and suppresses auth retry storms", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify(response())));
+      const client = new JupiterQuoteClient("test-key", undefined, fetchImpl, 1000, 1050);
+      const request = { inputMint, outputMint, rawInputAmount: "6000000", slippageBps: 400, expectedPoolAddress: pool };
+      await client.fetchDirectExactInQuote(request);
+      const second = client.fetchDirectExactInQuote(request);
+      await vi.advanceTimersByTimeAsync(1049);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await second;
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      await expect(client.fetchDirectExactInQuote({ ...request,
+        deadlineAt: new Date(Date.now() + 500).toISOString()
+      })).rejects.toThrow("checkpoint deadline");
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const denied = vi.fn(async () => new Response("ignored", { status: 401 }));
+      const blocked = new JupiterQuoteClient("test-key", undefined, denied);
+      await expect(blocked.fetchDirectExactInQuote(request)).rejects.toThrow("401");
+      await expect(blocked.fetchDirectExactInQuote(request)).rejects.toThrow("bounded backoff");
+      expect(denied).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
   it("captures a direct exact-pool quote without claiming it was filled", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

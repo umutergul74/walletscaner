@@ -82,6 +82,48 @@ describe("alpha decision checkpoint collection", () => {
       "125000000"
     );
   });
+
+  it("does not spend provider calls on an expired v2 horizon", async () => {
+    const market = marketClient();
+    const quotes = { fetchDirectExactInQuote: vi.fn(quoteResponse) };
+    const flow = vi.fn();
+    const result = await collectAlphaDecisionCheckpoint(claim({
+      strategyVersion: "survival-execution-tape-v2-20260830", deadlineAt: "2026-08-30T00:02:10Z"
+    }), { marketClient: market, quoteClient: quotes, measureFlow: flow,
+      quoteUsdPrice: async () => 1, now: () => new Date("2026-08-30T00:02:11Z") });
+    expect(result.quotes).toHaveLength(6);
+    expect(result.quotes.every((row) => row.status === "stale")).toBe(true);
+    expect(result.liquidityRemoved).toBeUndefined();
+    expect(market.fetchPair).not.toHaveBeenCalled();
+    expect(quotes.fetchDirectExactInQuote).not.toHaveBeenCalled();
+    expect(flow).not.toHaveBeenCalled();
+  });
+
+  it("discards a late quote and stops requesting subsequent sizes", async () => {
+    let now = new Date("2026-08-30T00:02:01Z");
+    const quotes = { fetchDirectExactInQuote: vi.fn(async (request) => {
+      now = new Date("2026-08-30T00:02:11Z");
+      return quoteResponse(request);
+    }) };
+    const result = await collectAlphaDecisionCheckpoint(claim({
+      strategyVersion: "survival-execution-tape-v2-20260830", deadlineAt: "2026-08-30T00:02:10Z"
+    }), { marketClient: marketClient(), quoteClient: quotes,
+      measureFlow: async () => ({ uniqueBuyers: 0, uniqueSellers: 0 }), quoteUsdPrice: async () => 1,
+      now: () => now });
+    expect(quotes.fetchDirectExactInQuote).toHaveBeenCalledTimes(1);
+    expect(result.quotes.some((row) => row.status === "quoted-not-filled")).toBe(false);
+  });
+
+  it("rejects mismatching token identity even when the pair address matches", async () => {
+    const market = marketClient();
+    const pairs = await market.fetchPair();
+    pairs[0]!.baseToken.address = "WrongMint";
+    const result = await collectAlphaDecisionCheckpoint(claim(), {
+      marketClient: marketClient(pairs), quoteUsdPrice: async () => 1,
+      measureFlow: async () => ({ uniqueBuyers: 0, uniqueSellers: 0 }) });
+    expect(result.exactPairStatus).toBe("provider-error");
+    expect(result.liquidityRemoved).toBe(false);
+  });
 });
 
 function claim(
@@ -111,6 +153,8 @@ function marketClient(
     {
       chainId: "solana",
       pairAddress: "Pool111",
+      baseToken: { address: "Token111" },
+      quoteToken: { address: usdc },
       priceUsd: "0.001",
       liquidity: { usd: 20_000 },
       txns: { m5: { buys: 20, sells: 10 } }

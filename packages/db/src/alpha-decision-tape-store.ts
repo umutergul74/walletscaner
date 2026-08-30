@@ -1,6 +1,6 @@
 import type pg from "pg";
 
-export const ALPHA_DECISION_TAPE_VERSION = "survival-execution-tape-v1-20260830";
+export const ALPHA_DECISION_TAPE_VERSION = "survival-execution-tape-v2-20260830";
 
 export interface AlphaDecisionSeedOptions {
   strategyVersion?: string;
@@ -15,6 +15,7 @@ export interface AlphaDecisionSeedResult {
   researchEligible: number;
   hasMore: boolean;
   dailyCapacityRemaining: number;
+  hourlyCapacityRemaining: number;
 }
 
 export interface AlphaDecisionCheckpointClaim {
@@ -30,6 +31,7 @@ export interface AlphaDecisionCheckpointClaim {
   initialLiquidityUsd: number;
   horizonSeconds: 0 | 15 | 30 | 60 | 120 | 300;
   dueAt: string;
+  deadlineAt?: string;
   attemptCount: number;
   entryRawAmounts: Partial<Record<600 | 2500 | 10000, string>>;
 }
@@ -94,6 +96,7 @@ export interface AlphaDecisionTapeSummary {
   processingCheckpoints: number;
   completedCheckpoints: number;
   deadLetterCheckpoints: number;
+  lateCheckpoints: number;
   oldestDueAgeSeconds?: number;
   quoteRows: number;
   quotedRows: number;
@@ -131,7 +134,7 @@ export class AlphaDecisionTapeStore {
       options.sourceStrategyVersion ?? "evidence-v1",
       "source strategy version"
     );
-    const scanLimit = boundedInteger(options.scanLimit ?? 25, 1, 25, "scan limit");
+    const scanLimit = boundedInteger(options.scanLimit ?? 1, 1, 25, "scan limit");
     const dailyLimit = boundedInteger(
       options.maximumDecisionsPerUtcDay ?? 100,
       1,
@@ -144,6 +147,7 @@ export class AlphaDecisionTapeStore {
       research_eligible: number;
       has_more: boolean;
       daily_capacity_remaining: number;
+      hourly_capacity_remaining: number;
     }>(seedSql, [
       strategyVersion,
       sourceStrategyVersion,
@@ -158,7 +162,8 @@ export class AlphaDecisionTapeStore {
       inserted: Number(row?.inserted ?? 0),
       researchEligible: Number(row?.research_eligible ?? 0),
       hasMore: row?.has_more === true,
-      dailyCapacityRemaining: Number(row?.daily_capacity_remaining ?? 0)
+      dailyCapacityRemaining: Number(row?.daily_capacity_remaining ?? 0),
+      hourlyCapacityRemaining: Number(row?.hourly_capacity_remaining ?? 0)
     };
   }
 
@@ -272,6 +277,7 @@ export class AlphaDecisionTapeStore {
       processing_checkpoints: number;
       completed_checkpoints: number;
       dead_letter_checkpoints: number;
+      late_checkpoints: number;
       oldest_due_age_seconds: number | null;
       quote_rows: number;
       quoted_rows: number;
@@ -287,6 +293,7 @@ export class AlphaDecisionTapeStore {
       processingCheckpoints: Number(row?.processing_checkpoints ?? 0),
       completedCheckpoints: Number(row?.completed_checkpoints ?? 0),
       deadLetterCheckpoints: Number(row?.dead_letter_checkpoints ?? 0),
+      lateCheckpoints: Number(row?.late_checkpoints ?? 0),
       ...(row?.oldest_due_age_seconds === null || row?.oldest_due_age_seconds === undefined
         ? {}
         : { oldestDueAgeSeconds: Number(row.oldest_due_age_seconds) }),
@@ -336,11 +343,29 @@ WITH run AS MATERIALIZED (
   SELECT GREATEST(
     0,
     $4::integer - COUNT(decision.id)::integer
-  ) AS remaining
+  ) AS remaining,
+  GREATEST(0, COALESCE(MAX((run.policy->>'maximumDecisionsPerUtcHour')::integer), $4::integer)
+    - COUNT(decision.id) FILTER (WHERE decision.decided_at >= date_trunc('hour', NOW()))::integer
+  ) AS hourly_remaining,
+  COALESCE(MAX((run.policy->>'maximumSeedBatch')::integer), 25) AS seed_limit
   FROM run
   LEFT JOIN alpha_decision_tape decision
     ON decision.strategy_version = run.strategy_version
    AND decision.decided_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+), candidate_pools AS MATERIALIZED (
+  SELECT pool.*
+  FROM run JOIN pools pool
+    ON pool.chain = 'solana' AND pool.created_at >= run.activated_at
+   AND pool.created_at <= NOW() - INTERVAL '120 seconds'
+   AND pool.created_at >= NOW() - INTERVAL '30 minutes'
+  WHERE (SELECT LEAST(remaining, hourly_remaining) FROM capacity) > 0
+    AND NOT EXISTS (
+      SELECT 1 FROM alpha_decision_tape existing
+      WHERE existing.strategy_version = run.strategy_version
+        AND existing.chain = pool.chain AND existing.pool_address = pool.pool_address
+    )
+  ORDER BY pool.created_at, pool.pool_address
+  LIMIT $3::integer + 1
 ), source_candidates AS MATERIALIZED (
   SELECT pool.*, token.creator_address, token.metadata,
          risk.risk_score, risk.confidence, risk.warnings, risk.calculated_at,
@@ -356,11 +381,7 @@ WITH run AS MATERIALIZED (
              AND COALESCE(incident.closed_at, 'infinity'::timestamptz) >= pool.created_at
          ) AS coverage_incident_open
   FROM run
-  JOIN pools pool
-    ON pool.chain = 'solana'
-   AND pool.created_at >= run.activated_at
-   AND pool.created_at <= NOW() - INTERVAL '120 seconds'
-   AND pool.created_at >= NOW() - INTERVAL '30 minutes'
+  CROSS JOIN candidate_pools pool
   LEFT JOIN tokens token
     ON token.chain = pool.chain AND token.address = pool.base_token_address
   LEFT JOIN LATERAL (
@@ -415,6 +436,7 @@ WITH run AS MATERIALIZED (
       AND existing.chain = pool.chain
       AND existing.pool_address = pool.pool_address
   )
+    AND (SELECT LEAST(remaining, hourly_remaining) FROM capacity) > 0
   ORDER BY pool.created_at, pool.pool_address
   LIMIT $3::integer + 1
 ), bounded AS MATERIALIZED (
@@ -422,7 +444,7 @@ WITH run AS MATERIALIZED (
   FROM source_candidates candidate
   CROSS JOIN capacity
   ORDER BY candidate.created_at, candidate.pool_address
-  LIMIT LEAST($3::integer, (SELECT remaining FROM capacity))
+  LIMIT LEAST($3::integer, (SELECT LEAST(remaining, hourly_remaining, seed_limit) FROM capacity))
 ), classified AS MATERIALIZED (
   SELECT bounded.*,
          CASE WHEN jsonb_typeof(bounded.raw->'buys5m') = 'number'
@@ -554,23 +576,31 @@ SELECT
   (SELECT COUNT(*) FROM inserted)::integer AS inserted,
   (SELECT COUNT(*) FROM inserted WHERE research_eligible)::integer AS research_eligible,
   ((SELECT COUNT(*) FROM source_candidates) > $3::integer
-    OR (SELECT remaining FROM capacity) = 0) AS has_more,
+    OR (SELECT LEAST(remaining, hourly_remaining) FROM capacity) = 0) AS has_more,
   GREATEST(0, (SELECT remaining FROM capacity) - (SELECT COUNT(*) FROM inserted))::integer
-    AS daily_capacity_remaining`;
+    AS daily_capacity_remaining,
+  GREATEST(0, (SELECT hourly_remaining FROM capacity) - (SELECT COUNT(*) FROM inserted))::integer
+    AS hourly_capacity_remaining`;
 
 const claimSql = String.raw`
-WITH expired AS (
+WITH expired_candidates AS MATERIALIZED (
+  SELECT checkpoint.id
+  FROM alpha_decision_checkpoints checkpoint
+  JOIN alpha_decision_tape decision ON decision.id = checkpoint.decision_id
+  WHERE decision.strategy_version = $1 AND checkpoint.status = 'processing'
+    AND checkpoint.lock_expires_at <= NOW()
+  ORDER BY checkpoint.lock_expires_at, checkpoint.id
+  LIMIT 25
+  FOR UPDATE OF checkpoint SKIP LOCKED
+), expired AS (
   UPDATE alpha_decision_checkpoints checkpoint
   SET status = CASE WHEN checkpoint.attempt_count >= 6 THEN 'dead_letter' ELSE 'retry' END,
       locked_by = NULL, locked_at = NULL, lock_expires_at = NULL,
       available_at = NOW(),
       completed_at = CASE WHEN checkpoint.attempt_count >= 6 THEN NOW() ELSE NULL END,
       last_error = 'checkpoint lease expired', updated_at = NOW()
-  FROM alpha_decision_tape decision
-  WHERE checkpoint.decision_id = decision.id
-    AND decision.strategy_version = $1
-    AND checkpoint.status = 'processing'
-    AND checkpoint.lock_expires_at <= NOW()
+  FROM expired_candidates
+  WHERE checkpoint.id = expired_candidates.id
   RETURNING checkpoint.id
 ), candidates AS MATERIALIZED (
   SELECT checkpoint.id
@@ -581,6 +611,11 @@ WITH expired AS (
     AND checkpoint.status IN ('pending', 'retry')
     AND checkpoint.available_at <= NOW()
     AND checkpoint.due_at <= NOW()
+    AND (checkpoint.horizon_seconds = 0 OR EXISTS (
+      SELECT 1 FROM alpha_decision_checkpoints initial
+      WHERE initial.decision_id = checkpoint.decision_id AND initial.horizon_seconds = 0
+        AND initial.status IN ('completed', 'dead_letter')
+    ))
   ORDER BY checkpoint.due_at, checkpoint.id
   LIMIT $3
   FOR UPDATE OF checkpoint SKIP LOCKED
@@ -600,9 +635,12 @@ SELECT claimed.id AS checkpoint_id, claimed.decision_id,
        decision.pool_address, decision.dex, decision.pool_created_at, decision.decided_at,
        decision.liquidity_usd AS initial_liquidity_usd,
        claimed.horizon_seconds, claimed.due_at, claimed.attempt_count,
+       claimed.due_at + (run.policy->>'maximumCheckpointLatenessMs')::integer
+         * INTERVAL '1 millisecond' AS deadline_at,
        COALESCE(entry.entry_raw_amounts, '{}'::jsonb) AS entry_raw_amounts
 FROM claimed
 JOIN alpha_decision_tape decision ON decision.id = claimed.decision_id
+JOIN alpha_decision_tape_runs run ON run.strategy_version = decision.strategy_version
 LEFT JOIN LATERAL (
   SELECT jsonb_object_agg(quote.notional_usd_cents::text, quote.raw_minimum_output_amount::text)
            AS entry_raw_amounts
@@ -617,9 +655,13 @@ ORDER BY claimed.due_at, claimed.id`;
 
 const completeSql = String.raw`
 WITH lease AS MATERIALIZED (
-  SELECT checkpoint.id, checkpoint.horizon_seconds, decision.pool_address
+  SELECT checkpoint.id, checkpoint.decision_id, checkpoint.horizon_seconds, checkpoint.due_at,
+         decision.pool_address, decision.token_address, decision.quote_token_address,
+         checkpoint.due_at + (run.policy->>'maximumCheckpointLatenessMs')::integer
+           * INTERVAL '1 millisecond' AS deadline_at
   FROM alpha_decision_checkpoints checkpoint
   JOIN alpha_decision_tape decision ON decision.id = checkpoint.decision_id
+  JOIN alpha_decision_tape_runs run ON run.strategy_version = decision.strategy_version
   WHERE checkpoint.id = $1
     AND checkpoint.status = 'processing'
     AND checkpoint.locked_by = $2
@@ -645,7 +687,30 @@ WITH lease AS MATERIALIZED (
 ), valid_lease AS MATERIALIZED (
   SELECT lease.*
   FROM lease
-  WHERE (
+  WHERE (lease.deadline_at IS NULL OR NOT EXISTS (
+    SELECT 1 FROM quote_input quote WHERE quote.status = 'quoted-not-filled'
+      AND (quote.observed_at < lease.due_at OR quote.observed_at > lease.deadline_at)
+  )) AND NOT EXISTS (
+    SELECT 1 FROM quote_input quote
+    WHERE quote.status = 'quoted-not-filled' AND (
+      quote.input_mint <> CASE WHEN quote.direction = 'buy' THEN lease.quote_token_address ELSE lease.token_address END
+      OR quote.output_mint <> CASE WHEN quote.direction = 'buy' THEN lease.token_address ELSE lease.quote_token_address END
+      OR (quote.direction = 'sell' AND NOT EXISTS (
+        SELECT 1 FROM quote_input buy
+        WHERE lease.horizon_seconds = 0 AND buy.direction = 'buy' AND buy.status = 'quoted-not-filled'
+          AND buy.notional_usd_cents = quote.notional_usd_cents
+          AND buy.raw_minimum_output_amount = quote.raw_input_amount
+        UNION ALL
+        SELECT 1 FROM alpha_decision_checkpoints initial
+        JOIN alpha_execution_quote_evidence buy ON buy.checkpoint_id = initial.id
+        WHERE lease.horizon_seconds > 0 AND initial.decision_id = lease.decision_id
+          AND initial.horizon_seconds = 0 AND initial.status = 'completed'
+          AND buy.direction = 'buy' AND buy.status = 'quoted-not-filled'
+          AND buy.notional_usd_cents = quote.notional_usd_cents
+          AND buy.raw_minimum_output_amount = quote.raw_input_amount
+      ))
+    )
+  ) AND (
     (
         lease.horizon_seconds = 0
         AND (SELECT COUNT(*) FROM quote_input) = 6
@@ -684,6 +749,10 @@ WITH lease AS MATERIALIZED (
       cluster_adjusted_buyers = $10, identity_independence_status = $11,
       liquidity_removed = $12, market_observed_at = $13, market_provider = $14,
       market_provider_latency_ms = $15, completed_at = NOW(),
+      timing_status = CASE WHEN valid_lease.deadline_at IS NULL THEN 'unmeasured'
+        WHEN $13::timestamptz BETWEEN valid_lease.due_at AND valid_lease.deadline_at
+          AND (SELECT BOOL_AND(observed_at BETWEEN valid_lease.due_at AND valid_lease.deadline_at)
+               FROM quote_input) IS TRUE THEN 'on-time' ELSE 'late' END,
       locked_by = NULL, locked_at = NULL, lock_expires_at = NULL,
       last_error = NULL, updated_at = NOW()
   FROM valid_lease
@@ -695,9 +764,10 @@ SELECT EXISTS (SELECT 1 FROM completed) AS completed`;
 
 const summarySql = String.raw`
 WITH decisions AS MATERIALIZED (
-  SELECT * FROM alpha_decision_tape WHERE strategy_version = $1
+  SELECT id, research_eligible, paper_eligible, identity_independence_status
+  FROM alpha_decision_tape WHERE strategy_version = $1
 ), checkpoints AS MATERIALIZED (
-  SELECT checkpoint.*
+  SELECT checkpoint.id, checkpoint.status, checkpoint.due_at, checkpoint.timing_status
   FROM alpha_decision_checkpoints checkpoint
   JOIN decisions decision ON decision.id = checkpoint.decision_id
 )
@@ -710,6 +780,7 @@ SELECT
   (SELECT COUNT(*) FROM checkpoints WHERE status = 'processing')::integer AS processing_checkpoints,
   (SELECT COUNT(*) FROM checkpoints WHERE status = 'completed')::integer AS completed_checkpoints,
   (SELECT COUNT(*) FROM checkpoints WHERE status = 'dead_letter')::integer AS dead_letter_checkpoints,
+  (SELECT COUNT(*) FROM checkpoints WHERE timing_status = 'late')::integer AS late_checkpoints,
   (SELECT EXTRACT(EPOCH FROM NOW() - MIN(due_at))
    FROM checkpoints WHERE status IN ('pending', 'retry') AND due_at <= NOW())
     AS oldest_due_age_seconds,
@@ -741,6 +812,7 @@ function mapCheckpointClaim(row: Record<string, unknown>): AlphaDecisionCheckpoi
     initialLiquidityUsd: Number(row.initial_liquidity_usd),
     horizonSeconds: Number(row.horizon_seconds) as AlphaDecisionCheckpointClaim["horizonSeconds"],
     dueAt: new Date(String(row.due_at)).toISOString(),
+    ...(row.deadline_at ? { deadlineAt: new Date(String(row.deadline_at)).toISOString() } : {}),
     attemptCount: Number(row.attempt_count),
     entryRawAmounts
   };

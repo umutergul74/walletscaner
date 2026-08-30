@@ -242,6 +242,12 @@ wallet. Completing revision `N` clears its priority only if the current row is s
 
 ## Future exact-pool decision tape
 
+Migration 053 additively freezes `survival-execution-tape-v2-20260830` and adds
+`alpha_decision_checkpoints.timing_status` (`unmeasured`, `on-time`, `late`). Existing v1 rows are
+not relabelled or imported. Atomic completion rejects successful quote evidence outside a v2
+checkpoint's due-time + 10-second window; terminal stale evidence can still be retained. The
+collector checks the same bounds before/after network calls and never re-quotes an expired entry.
+
 Migration 052 adds four compact research objects without importing or rewriting historical rows:
 
 - `alpha_decision_tape_runs` freezes one strategy version, activation time, feature/quote policy,

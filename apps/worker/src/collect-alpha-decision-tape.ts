@@ -17,29 +17,49 @@ if (!config.alphaDecisionTape.jupiterApiKey) {
     "JUPITER_API_KEY is required before future executable quote evidence can be collected."
   );
 }
+if (!config.quotePrices.pythApiKey) {
+  throw new Error("PYTH_API_KEY is required before future SOL-denominated quote evidence can be collected.");
+}
 
-const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 2,
+  connectionTimeoutMillis: 5_000, statement_timeout: 5_000, query_timeout: 6_000,
+  application_name: "walletscaner-alpha-decision-tape" });
 const store = new AlphaDecisionTapeStore(pool);
-const marketClient = new DexScreenerClient(config.dexscreener.baseUrl);
+const marketClient = new DexScreenerClient(config.dexscreener.baseUrl, fetch, { timeoutMs: 2_000, retries: 0 });
 const quoteClient = new JupiterQuoteClient(
   config.alphaDecisionTape.jupiterApiKey,
   config.alphaDecisionTape.jupiterApiUrl,
   fetch,
-  5_000
+  1_000,
+  1_050
 );
 const pyth = new PythPriceClient({
   hermesUrl: config.quotePrices.pythHermesUrl,
   benchmarksUrl: config.quotePrices.pythBenchmarksUrl,
   ...(config.quotePrices.pythApiKey ? { apiKey: config.quotePrices.pythApiKey } : {}),
-  maxStalenessSeconds: config.quotePrices.maxStalenessSeconds
+  maxStalenessSeconds: config.quotePrices.maxStalenessSeconds,
+  timeoutMs: 1_000
 });
 const workerId = `${hostname()}:${process.pid}:alpha-decision-tape`;
+// One dedicated session fences the single producer; the other PG connection does bounded work.
+// This also makes the per-hour/day admission counters safe from concurrent worker replicas.
+const writerSession = await pool.connect();
+const writerLock = await writerSession.query<{ acquired: boolean }>(
+  "SELECT pg_try_advisory_lock(hashtext('walletscaner-alpha-decision-tape-writer')) AS acquired"
+);
+if (!writerLock.rows[0]?.acquired) {
+  writerSession.release();
+  await pool.end();
+  throw new Error("Another alpha decision tape writer owns the singleton lease.");
+}
 const pollIntervalMs = config.alphaDecisionTape.pollIntervalMs;
 const seedIntervalMs = config.alphaDecisionTape.seedIntervalSeconds * 1_000;
 const healthIntervalMs = config.alphaDecisionTape.healthIntervalSeconds * 1_000;
 let lastSeedAt = 0;
 let lastHealthAt = 0;
+let lastCapacityWindow = "";
 let stopping = false;
+writerSession.on("error", () => { stopping = true; });
 let cachedSolUsd: { price: number; expiresAt: number } | undefined;
 
 process.once("SIGINT", () => {
@@ -57,29 +77,32 @@ while (!stopping) {
   let completed = 0;
   let failed = 0;
   try {
-    if (cycleStartedAt - lastSeedAt >= seedIntervalMs) {
+    // Process urgent evidence before admitting a new decision. Never pre-lease a batch whose
+    // entry quantities or deadline can change while a previous network call is running.
+    const claims = await store.claimDueCheckpoints({ workerId, limit: 1, leaseSeconds: 45 });
+    if (claims.length === 0 && cycleStartedAt - lastSeedAt >= seedIntervalMs) {
       const result = await store.seedFutureDecisions();
       seeded = result.inserted;
       eligibleSeeded = result.researchEligible;
       lastSeedAt = cycleStartedAt;
-      if (result.hasMore && result.dailyCapacityRemaining === 0) {
+      const capacityWindow = new Date(cycleStartedAt).toISOString().slice(0, 13);
+      if (result.hasMore && (result.dailyCapacityRemaining === 0 || result.hourlyCapacityRemaining === 0)
+        && lastCapacityWindow !== capacityWindow) {
+        lastCapacityWindow = capacityWindow;
         console.warn(
           JSON.stringify({
-            type: "alpha-decision-tape-daily-capacity",
+            type: "alpha-decision-tape-capacity",
             strategyVersion: ALPHA_DECISION_TAPE_VERSION,
             inspected: result.inspected,
             dailyCapacityRemaining: result.dailyCapacityRemaining,
+            hourlyCapacityRemaining: result.hourlyCapacityRemaining,
             coverageComplete: false
           })
         );
       }
     }
 
-    const claims = await store.claimDueCheckpoints({
-      workerId,
-      limit: 2,
-      leaseSeconds: 90
-    });
+    if (seeded > 0) claims.push(...await store.claimDueCheckpoints({ workerId, limit: 1, leaseSeconds: 45 }));
     claimed = claims.length;
     for (const claim of claims) {
       try {
@@ -126,6 +149,7 @@ while (!stopping) {
           completed,
           failed,
           cycleDurationMs: Date.now() - cycleStartedAt,
+          quotePriceProvider: pyth.diagnostics(),
           ...(await store.getSummary())
         })
       );
@@ -144,6 +168,7 @@ while (!stopping) {
   await sleep(Math.max(0, pollIntervalMs - (Date.now() - cycleStartedAt)));
 }
 
+writerSession.release();
 await pool.end();
 
 async function quoteUsdPrice(mint: string): Promise<number> {

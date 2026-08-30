@@ -149,14 +149,14 @@ to observation delay of at most 60 seconds. Use
 it to the production Compose loop until the query plan, runtime/RSS and protected co-tenant impact
 are measured and the user explicitly authorizes a shadow rollout.
 
-Migration 052's future decision tape is a different disabled-by-default worker. It refuses startup
-unless `ALPHA_DECISION_TAPE_ENABLED=true` and a non-empty `JUPITER_API_KEY` are present. Its normal
+Migrations 052/053's future decision tape is a different disabled-by-default worker. It refuses startup
+unless `ALPHA_DECISION_TAPE_ENABLED=true`, `JUPITER_API_KEY` and `PYTH_API_KEY` are present. Its normal
 settings are a three-second claim poll, 30-second bounded seed pass and five-minute health report.
 Run `npm run benchmark:alpha-decision-tape-storage` with `TEST_DATABASE_URL` before rollout changes
 to its daily/claim/retention limits. Do not place the key in source, Compose or logs.
 
 Production activation is not a normal profile start. It requires a separately authorized
-production-ops rollout with a current verified dump/off-host acknowledgement, migration-052
+production-ops rollout with a current verified dump/off-host acknowledgement, migration-052/053
 checksum and populated-upgrade proof, disk/WAL/temp headroom, exact image identity, pre/post
 co-tenant inventory and a worker-only canary. Start only the named `alpha-decision-tape` service
 with the `alpha-research` profile and `--no-deps` after the one-shot migration succeeds; never use a
@@ -164,6 +164,15 @@ dependency-following create to rebind existing services. Verify decision/day cap
 retry/dead-letter count, Jupiter failure/rate-limit behavior, RSS/CPU and database growth. A failed
 gate stops or rolls back this worker. It does not justify enabling Telegram, paper or live
 execution.
+
+V2 admits one decision per seed pass and at most four per UTC hour (96/day, below the 100/day hard
+ceiling). The hourly sample is not a chain census; rejected/unknown decisions consume the same
+quota and remain in the denominator. One dedicated PostgreSQL session fences the sole writer;
+the second handles work with 5s statement/6s client/5s connection bounds. Claims are just-in-time,
+one at a time, with a 45s lease; expired recovery is capped at 25 rows/pass. Later horizons wait for
+terminal entry evidence. `lateCheckpoints` must be monitored separately from completed work.
+No missing or late quote may be counted as a successful fill. Source freshness, independent coverage,
+identity graph and storage equilibrium remain separate acceptance gates.
 
 The 2026-08-16 production one-shot is the current resource baseline. The original all-at-once
 25-wallet query reported 176.56 MiB process RSS and violated the intended 160 MiB boundary. The

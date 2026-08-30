@@ -1,9 +1,9 @@
 ---
-status: complete
-updated_at_utc: 2026-08-29T22:12:09Z
+status: active
+updated_at_utc: 2026-08-30T09:28:00Z
 owner: codex
-task: implement a bounded future-only exact-pool alpha decision tape for survival, two-way sellability, early market path and identity-independence evidence; local code, additive migration and PostgreSQL 16 validation only, with no production deploy, Telegram/paper activation or live execution
-last_safe_checkpoint: future exact-pool alpha decision tape v1 is complete locally at implementation commit 64df1ab88aae4e75a4094331c3c0923359d6b54d; migration 052 and its disabled alpha-research worker are not deployed, production remains unchanged, and any rollout requires a fresh separately authorized production-ops checkpoint
+task: optimize useful evidence collection through bounded provider failure handling and truthful future-checkpoint timing; local implementation and disposable tests, production read-only
+last_safe_checkpoint: final current-source 509 tests, typecheck, lint and build passed; populated 053 upgrade and capacity plans verified; temporary PG16 stopped and port54329 closed; ready to commit local source/tests/docs; no production changes
 ---
 
 # Walletscaner Work In Progress
@@ -12,6 +12,90 @@ This is the durable resume point for the current storage incident. It contains n
 does not grant authority beyond the user's current request. On resume, compare this record with Git,
 the production ledger, backup files, archive manifests, containers and database state before
 repeating any step.
+
+## Active objective — collection integrity and bounded work, 2026-08-30
+
+- Scope: local Pyth authentication/failure budgets and observable missing-price state; fix tape
+  checkpoint dependency races, stale-horizon admission and provider/SQL budgets. No live capital,
+  paper/Telegram enablement, production deployment, migration, restart, archive retirement or
+  co-tenant change. Do not add a broad history crawler or unbounded raw payload collection.
+- Pre-state: `main` at `2e53d02`, ahead 232; tracked tree clean and four protected untracked deploy
+  remnants unchanged. Prior tape implementation is `64df1ab`; migration 052 SHA-256
+  `8f359e02333caba69c7eda8f4af75a630372c1d08541ee1dcbe295d4f691e2e1` remains unapplied live.
+- Read-only production evidence around 08:53 UTC: ingestion R45, alpha R43, migrations through 051;
+  DB 22,769,409,047 bytes; filesystem available 13,536,448,512 bytes (~12.6 GiB). Canonical trades
+  current; inbox pending 23/processing 1; alpha pending 6,662. No archive dead-letter, one pending
+  verification. Recent disk slope includes dump steps and does not prove storage equilibrium.
+- Pyth historical request/error counts 2,969/2,969; selected credential-presence booleans for Pyth
+  and Jupiter both false. A credential-free public Hermes probe returns HTTP 401. Official Pyth
+  upgrade documentation confirms authentication became required 2026-08-26. No secret was read.
+- Latest server dump ~2.77 GB with sidecar, but offsite acknowledgement missing/mismatched. This is
+  a rollout hard gate, not evidence of data loss. No production mutation authorized or attempted.
+- Acceptance: explicit missing-key state and bounded auth/429/outage calls; no later checkpoint
+  before initial entry is terminal; late measurements excluded, never relabelled as on-time;
+  bounded SQL/HTTP/lease recovery and no provider retry storm; targeted + PostgreSQL 16 + full
+  Linux regression gates. Policy changes need additive migration/new future-only version.
+- Rollback: source revert of this local phase. Disposable test DB only; no live data changes to
+  undo. Resume by inspecting git status/diff and this checkpoint; do not rerun prior migration or
+  deploy. Next action: implement and test the provider fix, then checkpoint scheduling changes.
+
+### Implementation checkpoint — 2026-08-30 09:10 UTC
+
+- Pyth public probe confirmed HTTP 401, not merely an inferred auth failure. Missing-key calls now
+  fail locally; HTTP auth/429/outage circuits have fixed bounds and sanitized telemetry. Operational
+  health reports missing price authentication explicitly; trade raw quantities remain preserved.
+- Additive migration 053 creates v2 (4 decisions/UTC hour, seed/claim one, 10-second timing window)
+  and a scalar timing-status column. 052 and historical v1 are unchanged. Candidate limiting is
+  before expensive enrichment; expired-lease recovery caps at 25; later claims require terminal
+  initial evidence. Missed horizons become stale records, not later reconstructed fills.
+- Collector uses just-in-time claims, a singleton PG session, SQL 5s/client 6s/connection 5s bounds,
+  exact token/pair identity, and no raw response store. Pyth/Jupiter required before activation;
+  Jupiter quoted evidence has 1.05s request spacing and auth/rate-limit backoff.
+- Initial targeted suite 33/33 and typecheck passed before the last rate-limit/health additions.
+  Local Docker Desktop was initially stopped; started hidden for disposable PostgreSQL tests.
+  Its API is still initializing; no test DB exists yet and no production test fallback is allowed.
+- Next: finish PostgreSQL dependency/timing/pacing tests, current-source full gates, capacity
+  verification, then docs/coherent commit. No deployment or migration has occurred.
+
+### Validation checkpoint — 2026-08-30 09:26 UTC
+
+- Docker Desktop could not initialize its inference socket. No reset, Docker data deletion,
+  daemon reconfiguration or production fallback was attempted. The two hanging read-only Docker
+  CLI probes were stopped by their verified PIDs. The Docker application itself was not reset.
+- Instead, official EDB PostgreSQL 16.15 portable binaries were downloaded under
+  `C:/Users/Umut/AppData/Local/Temp/walletscaner-pg16-validation` (ZIP SHA-256
+  `25e6fcdfb8caec38691bf461125e7564508760666f7b8e5dc6a5f0818f58f81e`). Only bin/lib/share were extracted.
+  A disposable, non-service cluster listens only on 127.0.0.1:54329 with 32MB shared buffers and
+  30 connections. It contains generated fixtures only, not production data. Stop this exact data
+  directory after tests; do not target the unrelated locally installed PostgreSQL 18 instance.
+- Test-only zstd 1.5.7 came from the official facebook/zstd release into the same temporary
+  directory. Its path is added only to individual test processes, not the persistent machine PATH.
+- All 509 tests passed with native PG16/zstd (56 DB cases, zero skips). The last addition tests the
+  deadline before waiting on Jupiter's rate limiter, avoiding a request that would start too late;
+  final full suite/typecheck/lint/build are currently being repeated. No Linux/cgroup validation is
+  claimed while Docker is unavailable.
+- Populated 053 rehearsal preserves 100 v1 decision digests, all 600 old checkpoints, the physical
+  checkpoint relation identity and old policy. 052 SHA is unchanged. 053 SHA-256 is
+  `70c08ef99bea9e1df7ecef5e330b5f8d26be3999869f2d7e5c85b782c679bcd1`.
+- Updated capacity benchmark passes with 100 actually due and 100 expired decision candidates:
+  1,531,904 table/index bytes; 1,757,152 insert WAL bytes; 91,914,240 conservative 60-day bytes.
+  Claim/retention use intended indexes and no temp writes. This is not server-wide equilibrium.
+- Final read-only server check 09:23 UTC: same services still running, PG/Redis healthy,
+  13,109,682,176 free bytes. No production mutation. Next: verify final test exit, stop only the
+  temporary PG16 cluster, commit source/tests/docs, and record exact commit plus unresolved gates.
+
+### Final local verification — 2026-08-30 09:28 UTC
+
+- Final current-source run: 101 test files, 509/509 tests, no skips, PostgreSQL16/zstd included;
+  typecheck, ESLint and workspace production build all exited successfully. The populated 053
+  upgrade preserves prior evidence/policy and introduces no historical v2 decisions.
+- The temporary cluster's data directory was checked through its own SQL session, then only that
+  cluster was stopped cleanly. `pg_ctl status` reports no server running and port 54329 has no
+  listener. Downloaded tools/fixtures remain in the named temporary directory for reproducibility;
+  no production or local user database was removed. Existing PostgreSQL18 was untouched.
+- Local code and documentation phase is ready for one coherent commit. Production rollout stays
+  blocked by missing Pyth/Jupiter access and unverified latest backup acknowledgement, and is not
+  authorized by this checkpoint. There is no ongoing migration/upload/cleanup to resume.
 
 ## Active objective — future exact-pool alpha decision tape v1
 

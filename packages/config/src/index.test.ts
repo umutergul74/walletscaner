@@ -42,7 +42,7 @@ describe("loadRuntimeConfig", () => {
     expect(config.solana.webhookManagementEnabled).toBe(false);
     expect(config.solana.wsPingIntervalSeconds).toBe(60);
     expect(config.solana.maxAccountFilters).toBe(50_000);
-    expect(config.quotePrices.pythHermesUrl).toBe("https://hermes.pyth.network");
+    expect(config.quotePrices.pythHermesUrl).toBe("https://pyth.dourolabs.app/hermes");
     expect(config.quotePrices.maxStalenessSeconds).toBe(90);
     expect(config.alerts.outboxPollIntervalMs).toBe(2_000);
     expect(config.alerts.qualifiedPoolDeliveryMode).toBe("notify");

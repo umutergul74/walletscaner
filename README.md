@@ -123,7 +123,7 @@ rejects unprovable or over-60-second source-buy detection, and never substitutes
 price for the entry pool. Its output cannot feed Telegram or paper entry before the future-only
 shadow and fill-realism gates pass.
 
-Migration 052 and `worker:alpha-decision-tape` implement a separate future-only exact-pool research
+Migrations 052/053 and `worker:alpha-decision-tape` implement a separate future-only exact-pool research
 tape. The disabled-by-default worker records fixed 0/15/30/60/120/300-second market checkpoints and
 read-only Jupiter quote evidence at $6/$25/$100, rejects wrong-pool routes and persists no provider
 payload body. It cannot create a signal, Telegram message or paper position. The worker requires an

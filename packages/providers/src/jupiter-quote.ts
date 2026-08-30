@@ -41,6 +41,8 @@ export interface JupiterQuoteResponse {
 }
 
 export interface DirectExactInQuoteRequest {
+  /** Local evidence deadline, never sent to the provider. */
+  deadlineAt?: string;
   inputMint: string;
   outputMint: string;
   rawInputAmount: bigint | string;
@@ -87,13 +89,19 @@ export class JupiterQuoteIntegrityError extends Error {
  * landed; live transaction building/signing remains outside the project.
  */
 export class JupiterQuoteClient {
+  private nextRequestAtMs = 0;
+  private blockedUntilMs = 0;
+  private requestActive = false;
   constructor(
     private readonly apiKey: string,
     private readonly baseUrl = "https://api.jup.ag/swap/v2",
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly requestTimeoutMs = 5_000
+    private readonly requestTimeoutMs = 5_000,
+    private readonly minimumRequestIntervalMs = 0
   ) {
     if (!apiKey.trim()) throw new Error("Jupiter API key is required.");
+    if (!Number.isInteger(minimumRequestIntervalMs) || minimumRequestIntervalMs < 0
+      || minimumRequestIntervalMs > 10_000) throw new Error("Invalid Jupiter request interval.");
   }
 
   async fetchDirectExactInQuote(
@@ -114,21 +122,40 @@ export class JupiterQuoteClient {
     url.searchParams.set("swapMode", "ExactIn");
     url.searchParams.set("slippageBps", slippageBps.toString());
 
-    const requestedAt = Date.now();
-    const response = await this.fetchImpl(url, {
-      headers: { "x-api-key": this.apiKey },
-      signal: AbortSignal.timeout(this.requestTimeoutMs)
-    });
-    if (!response.ok) throw new Error(`Jupiter quote returned HTTP ${response.status}.`);
-    const quote = (await response.json()) as JupiterQuoteResponse;
-    return validateDirectQuote(quote, {
+    if (this.blockedUntilMs > Date.now()) throw new Error("Jupiter quote provider in bounded backoff.");
+    if (this.requestActive) throw new Error("Jupiter quote concurrent request rejected; retry within evidence deadline.");
+    this.requestActive = true;
+    try {
+      const waitMs = Math.max(0, this.nextRequestAtMs - Date.now());
+      const deadlineMs = request.deadlineAt === undefined ? Infinity : Date.parse(request.deadlineAt);
+      if (Number.isNaN(deadlineMs) || Date.now() + waitMs >= deadlineMs) {
+        throw new JupiterQuoteIntegrityError("Jupiter quote evidence is stale: checkpoint deadline.");
+      }
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      const requestedAt = Date.now();
+      if (requestedAt >= deadlineMs) throw new JupiterQuoteIntegrityError("Jupiter quote evidence is stale: checkpoint deadline.");
+      this.nextRequestAtMs = requestedAt + this.minimumRequestIntervalMs;
+      const response = await this.fetchImpl(url, {
+        headers: { "x-api-key": this.apiKey },
+        signal: AbortSignal.timeout(Math.min(this.requestTimeoutMs, deadlineMs - requestedAt))
+      });
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) this.blockedUntilMs = Date.now() + 900_000;
+        if (response.status === 429) this.blockedUntilMs = Date.now() + 60_000;
+        throw new Error(`Jupiter quote returned HTTP ${response.status}.`);
+      }
+      const quote = (await response.json()) as JupiterQuoteResponse;
+      return validateDirectQuote(quote, {
       inputMint,
       outputMint,
       amount,
       slippageBps,
       ...(request.expectedPoolAddress ? { expectedPoolAddress: request.expectedPoolAddress } : {}),
       httpLatencyMs: Math.max(0, Date.now() - requestedAt)
-    });
+      });
+    } finally {
+      this.requestActive = false;
+    }
   }
 }
 

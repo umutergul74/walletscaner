@@ -19,6 +19,7 @@ integrationDescribe("PostgreSQL future alpha decision tape", () => {
   let populatedUpgradeDurationMs = 0;
   let populatedPoolsRelFileBefore = "";
   let populatedPoolsRelFileAfter = "";
+  let populatedTimingUpgradeVerified = false;
 
   beforeAll(async () => {
     await adminPool.query(`CREATE SCHEMA "${schema}"`);
@@ -30,6 +31,35 @@ integrationDescribe("PostgreSQL future alpha decision tape", () => {
       .filter((filename) => /^\d+.*\.sql$/u.test(filename))
       .sort();
     for (const migration of migrations) {
+      if (migration === "053_alpha_collection_timing.sql") {
+        await testPool.query(`INSERT INTO alpha_decision_tape (
+          id, strategy_version, chain, token_address, pool_address, dex, pool_created_at, decided_at,
+          retain_until, source_strategy_version, liquidity_usd, volume_5m_usd, buys_5m, sells_5m,
+          unique_buyers_5m, unique_sellers_5m, trade_coverage_complete, coverage_status,
+          coverage_reason, risk_status, creator_status, identity_independence_status, research_eligible)
+          SELECT 'UpgradeTape' || n, 'survival-execution-tape-v1-20260830', 'solana', 'UpgradeMint' || n,
+          'UpgradePool' || n, 'fixture', NOW() - INTERVAL '2 minutes', NOW(), NOW() + INTERVAL '60 days',
+          'evidence-v1', 0, 0, 0, 0, 0, 0, FALSE, 'unknown', 'fixture', 'unknown', 'unknown', 'unknown', FALSE
+          FROM generate_series(1, 100) n;
+          INSERT INTO alpha_decision_checkpoints(decision_id, horizon_seconds, due_at, available_at)
+          SELECT id, h, NOW() + make_interval(secs => h), NOW() + make_interval(secs => h)
+          FROM alpha_decision_tape CROSS JOIN (VALUES(0),(15),(30),(60),(120),(300)) horizons(h)
+          WHERE id LIKE 'UpgradeTape%';`);
+        const fingerprint = `SELECT
+          pg_relation_filenode('alpha_decision_checkpoints'::regclass)::text AS file,
+          (SELECT md5(string_agg(to_jsonb(d)::text, '' ORDER BY id)) FROM alpha_decision_tape d) AS decisions,
+          (SELECT md5(policy::text) FROM alpha_decision_tape_runs
+           WHERE strategy_version = 'survival-execution-tape-v1-20260830') AS policy`;
+        const before = await testPool.query(fingerprint);
+        await testPool.query(await readFile(`scripts/migrations/${migration}`, "utf8"));
+        expect((await testPool.query(fingerprint)).rows).toEqual(before.rows);
+        expect((await testPool.query(`SELECT COUNT(*)::integer AS n FROM alpha_decision_checkpoints
+          WHERE timing_status = 'unmeasured'`)).rows[0].n).toBe(600);
+        populatedTimingUpgradeVerified = true;
+        // Only generated fixture data in this disposable schema; do not carry it into admission tests.
+        await testPool.query("DELETE FROM alpha_decision_tape WHERE id LIKE 'UpgradeTape%'");
+        continue;
+      }
       if (migration === "052_future_alpha_decision_tape.sql") {
         await seedPopulatedUpgrade();
         const before = await testPool.query<{ relfilenode: string }>(
@@ -63,6 +93,7 @@ integrationDescribe("PostgreSQL future alpha decision tape", () => {
   });
 
   it("applies additively over populated relations without rewriting or importing history", async () => {
+    expect(populatedTimingUpgradeVerified).toBe(true);
     expect(populatedPoolsRelFileAfter).toBe(populatedPoolsRelFileBefore);
     expect(populatedUpgradeDurationMs).toBeLessThan(5_000);
     const result = await testPool.query<{
@@ -117,10 +148,11 @@ integrationDescribe("PostgreSQL future alpha decision tape", () => {
        )`
     );
 
-    await expect(store.seedFutureDecisions()).resolves.toMatchObject({
-      inserted: 4,
-      researchEligible: 1
-    });
+    const seeded = [];
+    for (let i = 0; i < 4; i += 1) seeded.push(await store.seedFutureDecisions());
+    expect(seeded.reduce((sum, row) => sum + row.inserted, 0)).toBe(4);
+    expect(seeded.reduce((sum, row) => sum + row.researchEligible, 0)).toBe(1);
+    expect(seeded[3]?.hourlyCapacityRemaining).toBe(0);
     await expect(store.seedFutureDecisions()).resolves.toMatchObject({ inserted: 0 });
 
     const rows = await testPool.query<{
@@ -251,6 +283,80 @@ integrationDescribe("PostgreSQL future alpha decision tape", () => {
             AND route_pool_address = expected_pool_address)::integer AS quote_rows`
     );
     expect(preserved.rows[0]).toEqual({ risk_rows: 3, quote_rows: 6 });
+  });
+
+  it("does not claim a later checkpoint alongside its unfinished entry", async () => {
+    await testPool.query(`
+      INSERT INTO alpha_decision_tape_runs (strategy_version, hypothesis_key, policy)
+      SELECT 'dependency-test', hypothesis_key, policy FROM alpha_decision_tape_runs
+      WHERE strategy_version = 'survival-execution-tape-v2-20260830';
+      INSERT INTO alpha_decision_tape
+      SELECT (jsonb_populate_record(NULL::alpha_decision_tape, to_jsonb(decision) ||
+        jsonb_build_object('id', 'dependency-decision', 'strategy_version', 'dependency-test',
+          'decided_at', NOW() - INTERVAL '16 seconds'))).*
+      FROM alpha_decision_tape decision WHERE pool_address = 'TapeEligiblePool111';
+      INSERT INTO alpha_decision_checkpoints (decision_id, horizon_seconds, due_at, available_at, created_at)
+      SELECT 'dependency-decision', seconds, NOW() - INTERVAL '16 seconds' + make_interval(secs => seconds), NOW(), NOW() - INTERVAL '16 seconds'
+      FROM (VALUES (0), (15)) h(seconds);
+    `);
+    const [entry, unexpected] = await store.claimDueCheckpoints({ workerId: 'dependency-worker',
+      strategyVersion: 'dependency-test', limit: 2 });
+    expect(entry?.horizonSeconds).toBe(0);
+    expect(entry?.deadlineAt).toBeDefined();
+    expect(unexpected).toBeUndefined();
+    expect(await store.claimDueCheckpoints({ workerId: 'another', strategyVersion: 'dependency-test' })).toEqual([]);
+    if (!entry) throw new Error("missing dependency entry");
+    await store.failCheckpoint(entry, 'dependency-worker', 'missed-entry-deadline', { maximumAttempts: 1 });
+    const [later] = await store.claimDueCheckpoints({ workerId: 'dependency-worker', strategyVersion: 'dependency-test' });
+    expect(later?.horizonSeconds).toBe(15);
+    expect(later?.entryRawAmounts).toEqual({});
+  });
+
+  it("atomically rejects quoted evidence outside the v2 horizon and records stale evidence", async () => {
+    const held = await testPool.query(`SELECT id FROM alpha_decision_checkpoints
+      WHERE decision_id = 'dependency-decision' AND horizon_seconds = 15`);
+    const checkpoint = { checkpointId: Number(held.rows[0].id), horizonSeconds: 15 as const,
+      poolAddress: 'TapeEligiblePool111' };
+    const late = [600, 2500, 10000].map((notional) => ({
+      ...quote({ direction: 'sell', notional: notional as 600 | 2500 | 10000 }),
+      positionSource: 'decision-entry' as const,
+      observedAt: new Date(Date.now() + 60_000).toISOString()
+    }));
+    await expect(store.completeCheckpoint(checkpoint, 'dependency-worker', {
+      exactPairStatus: 'live', priceUsd: 0.001, liquidityUsd: 20000,
+      identityIndependenceStatus: 'unknown', quotes: late
+    })).resolves.toBe(false);
+    await expect(store.completeCheckpoint(checkpoint, 'dependency-worker', {
+      exactPairStatus: 'provider-error', identityIndependenceStatus: 'unknown',
+      marketObservedAt: new Date(Date.now() + 60_000).toISOString(),
+      quotes: late.map((row) => ({ ...row, status: 'stale', failureReason: 'stale-checkpoint-deadline' }))
+    })).resolves.toBe(true);
+    const status = await testPool.query('SELECT timing_status FROM alpha_decision_checkpoints WHERE id = $1', [checkpoint.checkpointId]);
+    expect(status.rows[0].timing_status).toBe('late');
+  });
+
+  it("enforces the frozen entry quantity and the actual quote timestamp at completion", async () => {
+    await testPool.query(`UPDATE alpha_decision_checkpoints SET due_at = NOW() - INTERVAL '1 second',
+      available_at = NOW() WHERE horizon_seconds = 15 AND decision_id IN (
+        SELECT id FROM alpha_decision_tape WHERE strategy_version = $1 AND research_eligible)`,
+    [ALPHA_DECISION_TAPE_VERSION]);
+    const [claim] = await store.claimDueCheckpoints({ workerId: 'entry-parity' });
+    if (!claim) throw new Error('missing sell checkpoint');
+    expect(claim.horizonSeconds).toBe(15);
+    expect(claim.entryRawAmounts).toEqual({ 600: '1152000000', 2500: '1152000000', 10000: '1152000000' });
+    const quotes = ([600, 2500, 10000] as const).map((notional) => ({
+      ...quote({ direction: 'sell', notional }), positionSource: 'decision-entry' as const
+    }));
+    const observation = { exactPairStatus: 'live' as const, priceUsd: 0.001, liquidityUsd: 20000,
+      identityIndependenceStatus: 'unknown' as const, marketObservedAt: new Date().toISOString(), quotes };
+    await expect(store.completeCheckpoint(claim, 'entry-parity', { ...observation,
+      quotes: quotes.map((row) => ({ ...row, rawInputAmount: '999' })) })).resolves.toBe(false);
+    await expect(store.completeCheckpoint(claim, 'entry-parity', { ...observation,
+      quotes: quotes.map((row) => ({ ...row, observedAt: new Date(Date.now() + 60_000).toISOString() }))
+    })).resolves.toBe(false);
+    await expect(store.completeCheckpoint(claim, 'entry-parity', observation)).resolves.toBe(true);
+    const status = await testPool.query('SELECT timing_status FROM alpha_decision_checkpoints WHERE id = $1', [claim.checkpointId]);
+    expect(status.rows[0].timing_status).toBe('on-time');
   });
 
   async function seedPool(input: {
@@ -387,7 +493,7 @@ function quote(input: {
     status: "quoted-not-filled",
     inputMint: input.direction === "buy" ? usdcMint : "TapeEligibleMint111",
     outputMint: input.direction === "buy" ? "TapeEligibleMint111" : usdcMint,
-    rawInputAmount: "6000000",
+    rawInputAmount: input.direction === "buy" ? "6000000" : "1152000000",
     rawExpectedOutputAmount: "1200000000",
     rawMinimumOutputAmount: "1152000000",
     slippageBps: 400,

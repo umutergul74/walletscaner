@@ -44,19 +44,29 @@ export async function collectAlphaDecisionCheckpoint(
 ): Promise<AlphaDecisionCheckpointCompletion> {
   const now = dependencies.now ?? (() => new Date());
   const slippageBps = boundedSlippage(dependencies.slippageBps ?? 400);
+  if (outsideWindow(claim, now())) return lateCompletion(claim, slippageBps, now);
   const marketStartedAt = Date.now();
   let pair: DexScreenerPair | undefined;
   let marketError: string | undefined;
   try {
     const pairs = await dependencies.marketClient.fetchPair("solana", claim.poolAddress);
+    const exactAddress = pairs.find((candidate) => candidate.chainId === "solana"
+      && candidate.pairAddress === claim.poolAddress);
+    if (exactAddress && (exactAddress.baseToken?.address !== claim.tokenAddress
+      || exactAddress.quoteToken?.address !== claim.quoteTokenAddress)) {
+      marketError = "exact-pair-token-identity-mismatch";
+    }
     pair = pairs.find(
       (candidate) => candidate.chainId === "solana" && candidate.pairAddress === claim.poolAddress
+        && candidate.baseToken?.address === claim.tokenAddress
+        && candidate.quoteToken?.address === claim.quoteTokenAddress
     );
   } catch (error) {
     marketError = safeError(error);
   }
   const marketProviderLatencyMs = Math.max(0, Date.now() - marketStartedAt);
   const marketObservedAt = now().toISOString();
+  if (outsideWindow(claim, now())) return lateCompletion(claim, slippageBps, now);
   const flow = await dependencies.measureFlow(claim.decisionId, marketObservedAt);
   const liquidityUsd = finiteNonnegative(pair?.liquidity?.usd);
   const priceUsd = finiteNonnegative(Number(pair?.priceUsd));
@@ -100,6 +110,9 @@ async function collectQuotes(
   now: () => Date
 ): Promise<AlphaExecutionQuoteEvidence[]> {
   const quoteMint = claim.quoteTokenAddress;
+  if (outsideWindow(claim, now())) {
+    return missingQuoteRows(claim, slippageBps, now, "stale-checkpoint-deadline");
+  }
   if (!quoteMint) {
     return missingQuoteRows(claim, slippageBps, now, "quote-mint-unknown");
   }
@@ -223,13 +236,18 @@ async function requestQuote(input: {
   now: () => Date;
 }): Promise<AlphaExecutionQuoteEvidence> {
   try {
+    if (outsideWindow(input.claim, input.now())) throw new Error("stale-checkpoint-deadline");
     const quote = await input.quoteClient.fetchDirectExactInQuote({
       inputMint: input.inputMint,
       outputMint: input.outputMint,
       rawInputAmount: input.rawInputAmount,
       slippageBps: input.slippageBps,
-      expectedPoolAddress: input.claim.poolAddress
+      expectedPoolAddress: input.claim.poolAddress,
+      ...(input.claim.deadlineAt ? { deadlineAt: input.claim.deadlineAt } : {})
     });
+    if (outsideWindow(input.claim, input.now()) || outsideWindow(input.claim, new Date(quote.observedAt))) {
+      throw new Error("stale-checkpoint-deadline");
+    }
     return {
       direction: input.direction,
       notionalUsdCents: input.size,
@@ -273,6 +291,28 @@ async function requestQuote(input: {
       reason
     });
   }
+}
+
+function outsideWindow(claim: AlphaDecisionCheckpointClaim, at: Date): boolean {
+  if (!claim.deadlineAt) {
+    // Legacy v1 may be inspected without asserting a timing contract; v2 fails closed.
+    return claim.strategyVersion !== "survival-execution-tape-v1-20260830";
+  }
+  const start = Date.parse(claim.dueAt);
+  const end = Date.parse(claim.deadlineAt);
+  return !Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(at.getTime())
+    || end < start || at.getTime() < start || at.getTime() > end;
+}
+
+function lateCompletion(claim: AlphaDecisionCheckpointClaim, slippageBps: number,
+  now: () => Date): AlphaDecisionCheckpointCompletion {
+  return {
+    exactPairStatus: "provider-error",
+    identityIndependenceStatus: "unknown",
+    marketObservedAt: now().toISOString(),
+    marketProvider: "checkpoint-deadline-missed",
+    quotes: missingQuoteRows(claim, slippageBps, now, "stale-checkpoint-deadline")
+  };
 }
 
 function missingQuoteRows(

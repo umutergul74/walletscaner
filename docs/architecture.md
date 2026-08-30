@@ -274,9 +274,12 @@ future eligible exact pool -> immutable decision snapshot -> six leased checkpoi
   -> retained research evidence only
 ```
 
-Admission is oldest-first, at most 25 candidates per seed pass and 100 decisions per UTC day. A
+Migration 053 adds future-only v2 without rewriting v1. Admission is oldest-first, one decision per
+seed pass, at most four per UTC hour and below the 100-decision daily ceiling. Cheap pool limiting
+precedes expensive evidence joins. A
 research-eligible decision receives exactly six checkpoints at 0/15/30/60/120/300 seconds. Claims
-use `SKIP LOCKED`, at most two rows, a lease and six-attempt terminal dead-letter budget. Each
+use `SKIP LOCKED`, one just-in-time row, a lease and six-attempt terminal dead-letter budget. A later
+checkpoint cannot run before entry evidence is terminal; late measurements never become fills. Each
 checkpoint writes its bounded market/flow fields and no more than six quote rows atomically. The
 collector uses at most two PostgreSQL connections and makes quote calls serially; its isolated
 `alpha-research` Compose profile is capped at 0.03 CPU and 80 MiB.

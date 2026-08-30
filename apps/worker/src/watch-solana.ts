@@ -1069,6 +1069,7 @@ const healthTimer = setInterval(() => {
       poolDiscoveryCoverage: poolDiscoveryCoverageHealth(),
       historicalSolUsd: {
         ...historicalSolUsdDiagnostics,
+        provider: pythPrices.diagnostics(),
         cacheEntries: historicalSolUsdCache.size,
         failureEntries: historicalSolUsdFailures.size,
         cacheLimit: historicalSolUsdCacheMaxEntries,
@@ -2129,7 +2130,7 @@ async function loadHistoricalSolUsd(bucketStart: number): Promise<PythUsdQuote> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     historicalSolUsdDiagnostics.providerErrorCount += 1;
-    const rateLimited = message.includes("429");
+    const rateLimited = message.includes("429") || message.includes("rate-limited");
     if (rateLimited) {
       historicalSolUsdDiagnostics.providerRateLimitedCount += 1;
       historicalSolUsdRateLimitStreak += 1;
@@ -2142,7 +2143,9 @@ async function loadHistoricalSolUsd(bucketStart: number): Promise<PythUsdQuote> 
         Date.now() + backoffMs
       );
     }
-    const retryAtMs = Math.max(Date.now() + 30_000, historicalSolUsdProviderBlockedUntilMs);
+    const provider = pythPrices.diagnostics();
+    const retryAtMs = Math.max(Date.now() + 30_000, historicalSolUsdProviderBlockedUntilMs,
+      Date.now() + (provider.status === "missing-api-key" ? 15 * 60_000 : provider.backoffRemainingMs));
     historicalSolUsdFailures.set(
       String(bucketStart),
       `Historical SOL/USD lookup is temporarily unavailable: ${message}`,
@@ -2169,9 +2172,11 @@ async function requestHistoricalSolUsd(bucketStart: number): Promise<PythUsdQuot
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     historicalSolUsdDiagnostics.providerRequestCount += 1;
-    const quote = await pythPrices.historical(solUsdFeedId, bucketStart, 60);
-    historicalSolUsdProviderNextRequestAtMs = Date.now() + historicalSolUsdProviderMinIntervalMs;
-    return quote;
+    try {
+      return await pythPrices.historical(solUsdFeedId, bucketStart, 60);
+    } finally {
+      historicalSolUsdProviderNextRequestAtMs = Date.now() + historicalSolUsdProviderMinIntervalMs;
+    }
   } finally {
     release?.();
   }

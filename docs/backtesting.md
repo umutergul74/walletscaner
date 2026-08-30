@@ -38,6 +38,14 @@ counts differ. This generated benchmark is an anti-regression gate, not live-pro
 
 ## Future survival/execution decision tape
 
+The current local collection version is `survival-execution-tape-v2-20260830` (migration 053).
+It preserves v1 outcomes and risk gates but freezes a four-per-hour sample, one-at-a-time collection
+and a 10-second maximum measurement lateness. Initial entry must become terminal before a later
+sell checkpoint can be claimed. Late/missing evidence remains in the denominator; it is not
+retrospectively quoted or silently dropped. `timing_status=on-time` is necessary, not sufficient:
+provider/risk/coverage/identity evidence must also pass. The hourly cap is not random sampling or
+independent chain coverage, and the sample must not be presented as the full Solana market.
+
 `survival-execution-tape-v1-20260830` is an evidence-collection contract, not a strategy or a
 positive alpha claim. It freezes one exact-pool decision before any later outcome and records fixed
 short-horizon path, liquidity and two-way executable quote evidence. The entry quantity for every

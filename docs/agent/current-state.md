@@ -3,6 +3,47 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 collection integrity, authentication and future tape v2
+
+- **Local implementation, not deployed:** Pyth now fails fast without `PYTH_API_KEY`, performs one
+  bounded HTTP attempt and shares sanitized auth/429/outage backoff across latest/historical calls.
+  Operational health explicitly exposes absent price authentication. A credential-free Hermes
+  probe returned HTTP 401; official documentation confirms the 26-Aug authentication change.
+- **Production read-only preflight at 08:53 UTC:** ingestion R45 and alpha R43 are running,
+  migrations remain through 051. Canonical trades are current; inbox pending 23/processing 1,
+  alpha pending 6,662. Pyth historical requests/errors were 2,969/2,969 and both Pyth/Jupiter key
+  presence checks were false. No credential value was read. Missing price evidence is not repaired
+  by this local code; raw canonical amounts remain the source for separately verified enrichment.
+- **Storage is not at demonstrated equilibrium:** DB 22,769,409,047 bytes (~21.2 GiB), root free
+  13,536,448,512 (~12.6 GiB); archive dead-letter zero, one segment awaiting verification. The latest
+  ~2.77 GB server dump has a sidecar but its offsite acknowledgement is missing/mismatched. Do not
+  deploy or retire data on this evidence. No production or co-tenant mutation was performed.
+  A final read-only check at 09:23 UTC found the same running service set, PostgreSQL/Redis healthy,
+  and root free space 13,109,682,176 bytes (~12.2 GiB).
+- **New future-only v2:** migration 053 preserves 052 and freezes one seed/claim at a time, four
+  decisions/UTC hour and a ten-second measurement window. Later sells wait for terminal entry
+  evidence. Atomic completion verifies quote timing, mints and entry minimum-output quantity;
+  missed observations retain stale evidence. Exact-pair token mismatch is a provider failure,
+  not proof of a rug. Unknown funder/cluster/bundle and landing costs still block promotion.
+- **Bounded ownership:** one PG advisory-session writer; two connections total; SQL/client/connect
+  timeouts 5/6/5 seconds; 25 expired leases recovered per pass; Jupiter spacing 1,050ms with auth/429
+  backoff; no raw quote JSON; 60-day terminal-only retention unchanged. Hourly sampling is not
+  randomized or a full-chain denominator and does not establish alpha.
+- **Verification:** all 509 tests passed on Node 24 with real native PostgreSQL 16.15 and zstd
+  (56 database tests included, none skipped). An additional populated 053 upgrade preserves 100 v1
+  decision digests, 600 checkpoint rows, physical relation identity and the v1 policy; 7/7 tape
+  integration tests pass after this addition. Typecheck/lint/build pass. Docker Desktop's Linux
+  engine could not start due to its inference socket error; no Docker reset or host change was
+  attempted. A Linux image/cgroup canary is still a deployment gate, not supplied by native tests.
+- **Capacity:** 100 generated decisions/600 checkpoints/2,100 quotes use 1,531,904 bytes;
+  60-day conservative envelope 91,914,240 bytes; insert WAL 1,757,152 bytes. Real due/expired plan
+  candidates use their indexes without temp writes. This does not solve general server growth.
+- **Next exact gate:** configure authorized Pyth API access and a Jupiter read-only quote key
+  outside the repository; independently validate the current offsite backup acknowledgement;
+  obtain a worker-only rollout authorization, validate the immutable Linux artifact, then apply
+  052/053 and canary only the named research worker. Live execution, paper and Telegram alpha
+  remain disabled. No live provider quality or profit claim has been validated.
+
 ## 2026-08-30 future exact-pool alpha decision tape
 
 - **Implemented and locally validated, not deployed:** migration 052 freezes

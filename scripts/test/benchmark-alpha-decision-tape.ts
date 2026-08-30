@@ -18,6 +18,7 @@ try {
   );
   const migrationStartedAt = Date.now();
   await admin.query(migrationSql);
+  await admin.query(await readFile("scripts/migrations/053_alpha_collection_timing.sql", "utf8"));
   const migrationDurationMs = Date.now() - migrationStartedAt;
   const beforeWal = await currentWal();
 
@@ -36,7 +37,7 @@ try {
     )
     SELECT
       md5('decision-' || value::text),
-      'survival-execution-tape-v1-20260830', 'solana',
+      'survival-execution-tape-v2-20260830', 'solana',
       'BenchmarkMint' || value::text,
       'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       'BenchmarkPool' || value::text, 'BenchmarkProgram111',
@@ -108,18 +109,24 @@ try {
     ]) relation
     ORDER BY relation
   `);
+  // Exercise real due/expired rows, not empty partial indexes.
+  await admin.query(`UPDATE alpha_decision_checkpoints SET status = 'pending', completed_at = NULL
+    WHERE horizon_seconds = 0`);
   const claimPlan = await explain(`
     SELECT checkpoint.id
     FROM alpha_decision_checkpoints checkpoint
     JOIN alpha_decision_tape decision ON decision.id = checkpoint.decision_id
-    WHERE decision.strategy_version = 'survival-execution-tape-v1-20260830'
+    WHERE decision.strategy_version = 'survival-execution-tape-v2-20260830'
       AND decision.research_eligible
       AND checkpoint.status IN ('pending', 'retry')
       AND checkpoint.available_at <= NOW()
       AND checkpoint.due_at <= NOW()
     ORDER BY checkpoint.due_at, checkpoint.id
-    LIMIT 2
+    LIMIT 1
   `);
+  await admin.query(`UPDATE alpha_decision_checkpoints SET status = 'completed', completed_at = NOW();
+    UPDATE alpha_decision_tape SET pool_created_at = pool_created_at - INTERVAL '61 days',
+      decided_at = decided_at - INTERVAL '61 days', retain_until = NOW() - INTERVAL '1 second'`);
   const retentionPlan = await explain(`
     SELECT decision.id
     FROM alpha_decision_tape decision
@@ -136,7 +143,7 @@ try {
   console.log(
     JSON.stringify(
       {
-        benchmark: "alpha-decision-tape-worst-case-daily-v1",
+        benchmark: "alpha-decision-tape-hard-daily-ceiling-v2",
         migrationDurationMs,
         rows: { decisions: 100, checkpoints: 600, quotes: 2100 },
         relationBytes: Object.fromEntries(
