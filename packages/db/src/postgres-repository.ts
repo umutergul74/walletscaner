@@ -1431,6 +1431,64 @@ export class PostgresRepository
     });
   }
 
+  async completeWalletAlphaWorkCandidates(
+    candidates: WalletAlphaWorkCandidate[]
+  ): Promise<number> {
+    if (candidates.length === 0) return 0;
+    if (candidates.length > 100) {
+      throw new Error("Wallet-alpha candidate completion exceeds the 100-wallet ceiling.");
+    }
+    const uniqueKeys = new Set<string>();
+    const records = candidates.map((candidate) => {
+      const key = walletAlphaWorkRevisionKey(candidate);
+      if (uniqueKeys.has(key)) {
+        throw new Error(`Duplicate wallet-alpha completion candidate: ${key}`);
+      }
+      uniqueKeys.add(key);
+      return {
+        chain: candidate.chain,
+        wallet_address: candidate.walletAddress,
+        strategy_version: candidate.strategyVersion,
+        revision: candidate.revision
+      };
+    });
+    const result = await this.pool.query(
+      `WITH input AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS candidate(
+           chain text,
+           wallet_address text,
+           strategy_version text,
+           revision bigint
+         )
+       ), completed AS (
+         UPDATE wallet_alpha_work_queue AS work
+         SET completed_revision = input.revision,
+             priority = 0,
+             priority_reason = NULL,
+             pending_since = NULL,
+             locked_by = NULL,
+             locked_at = NULL,
+             lock_expires_at = NULL,
+             attempt_count = 0,
+             last_error = NULL,
+             quarantine_reason = NULL
+         FROM input
+         WHERE work.chain = input.chain
+           AND work.wallet_address = input.wallet_address
+           AND work.strategy_version = input.strategy_version
+           AND work.revision = input.revision
+           AND work.completed_revision < input.revision
+           AND work.not_before <= NOW()
+           AND (work.lock_expires_at IS NULL OR work.lock_expires_at <= NOW())
+         RETURNING 1
+       )
+       SELECT COUNT(*)::integer AS completed_count FROM completed`,
+      [JSON.stringify(records)]
+    );
+    return Number(result.rows[0]?.completed_count ?? 0);
+  }
+
   async completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE wallet_alpha_work_queue
@@ -2675,6 +2733,36 @@ export class PostgresRepository
        ORDER BY wallet_address, observed_at, slot, idempotency_key
        LIMIT $4`,
       [walletAddresses, strategyVersion, minObservedAt ?? null, maxRows ?? null]
+    );
+    return result.rows.map((row) => rowToWalletTradeEvent(row));
+  }
+
+  async listWalletTradeLedgerInputsForWallets(
+    walletAddresses: string[],
+    strategyVersion: string,
+    minObservedAt?: string,
+    maxRows?: number
+  ): Promise<WalletTradeEvidence[]> {
+    if (walletAddresses.length === 0) return [];
+    const where =
+      walletAddresses.length === 1
+        ? "wallet_address = $1"
+        : "wallet_address = ANY($1::text[])";
+    const walletParameter =
+      walletAddresses.length === 1 ? walletAddresses[0] : walletAddresses;
+    const result = await this.pool.query(
+      `SELECT
+         idempotency_key, chain, wallet_address, token_address, quote_token_address,
+         pool_address, side, base_amount, quote_amount, execution_price_usd,
+         quote_value_usd, pool_created_at, pool_age_minutes, data_quality,
+         signature, slot, provider, observed_at, strategy_version, '{}'::jsonb AS raw
+       FROM wallet_trade_events
+       WHERE ${where}
+         AND strategy_version = $2
+         AND ($3::timestamptz IS NULL OR observed_at >= $3)
+       ORDER BY wallet_address, observed_at, slot, idempotency_key
+       LIMIT $4`,
+      [walletParameter, strategyVersion, minObservedAt ?? null, maxRows ?? null]
     );
     return result.rows.map((row) => rowToWalletTradeEvent(row));
   }

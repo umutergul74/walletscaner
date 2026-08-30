@@ -729,6 +729,7 @@ export interface EvidenceRepository {
     minimumTradeEvents: number,
     minimumEntries: number
   ): Promise<WalletAlphaAdmissionProbe[]>;
+  completeWalletAlphaWorkCandidates(candidates: WalletAlphaWorkCandidate[]): Promise<number>;
   probeWalletAlphaEvidenceBounds(
     item: WalletAlphaWorkItem,
     minObservedAt: string,
@@ -783,6 +784,13 @@ export interface EvidenceRepository {
     minObservedAt?: string
   ): Promise<WalletTradeEvidence[]>;
   listWalletTradeEventsForWallets(
+    walletAddresses: string[],
+    strategyVersion: string,
+    minObservedAt?: string,
+    maxRows?: number
+  ): Promise<WalletTradeEvidence[]>;
+  /** Scorer/FIFO projection without provider payload JSON; canonical evidence remains unchanged. */
+  listWalletTradeLedgerInputsForWallets(
     walletAddresses: string[],
     strategyVersion: string,
     minObservedAt?: string,

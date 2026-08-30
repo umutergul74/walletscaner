@@ -250,6 +250,14 @@ export async function processWalletAlphaQueue(
       minimumTradeEvents,
       minimumEntries
     );
+    const lowEvidenceCandidates = probes.filter(
+      (probe) =>
+        probe.tradeEventCount < minimumTradeEvents && probe.entryCount < minimumEntries
+    );
+    const completedLowEvidence = await repository.completeWalletAlphaWorkCandidates(
+      lowEvidenceCandidates
+    );
+    skippedLowEvidenceWallets += completedLowEvidence;
     for (const probe of probes) {
       admissionCache.set(walletAlphaWorkRevisionKey(probe), {
         tradeEventCount: probe.tradeEventCount,
@@ -260,7 +268,8 @@ export async function processWalletAlphaQueue(
       candidateWallets: candidates.length,
       admittedWallets: probes.filter(
         (probe) => probe.tradeEventCount >= minimumTradeEvents || probe.entryCount >= minimumEntries
-      ).length
+      ).length,
+      completedLowEvidenceWallets: completedLowEvidence
     });
   } catch (error) {
     // Admission prefetch is only an optimization. The one-wallet bounded probes
@@ -360,7 +369,7 @@ export async function processWalletAlphaQueue(
       }
 
       const [ledgerTrades, entries, outcomes, matchingCreators] = await Promise.all([
-        repository.listWalletTradeEventsForWallets(
+        repository.listWalletTradeLedgerInputsForWallets(
           walletAddresses,
           strategyVersion,
           undefined,

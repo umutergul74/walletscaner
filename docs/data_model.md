@@ -221,6 +221,12 @@ selection purposes.
   an alpha score. `NOTIFY wallet_alpha_work` is only a commit-bound wake hint; this table is the
   durable source of truth.
 
+The bounded admission prefetch can complete multiple below-threshold queue revisions in one
+statement, but only when each row still has the exact measured revision and no active lease. A
+concurrent producer revision therefore remains pending. This is queue-state compaction, not evidence
+deletion. The FIFO scorer reads a scalar trade projection without `raw` provider JSON; archive and
+general evidence readers retain the complete canonical row.
+
 Price enrichment applies the same configured admission floor as the consumer: at least the bounded
 trade count or the bounded recent-entry count. This gates only its redundant derived revision; the
 price provenance is always persisted. Trade, entry and outcome writes remain unconditional

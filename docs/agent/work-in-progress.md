@@ -212,6 +212,81 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   verifies500+500+0 expired-completed retirement while preserving50fresh-completed and50pending
   signatures. Next: commit the coherent follow-up, build an immutable copy-only derivative of the
   exact runningR47b image, repeat exactLinux/read-only gates, then recreate ONLYdata-maintenance.
+- Follow-up committed089d1ae69f83409dcc6609008ed00e470c17b990. Exact overlay tar119808bytes,
+  SHA8eb88e086669da1df13e07aa1b2d05f92a812eebfc85d68d81fd3668dbb62576.
+  Preflight22:18UTC:runningmaintenanceexactR47b/restart0/OOMfalse;free14,546,493,440bytes,
+  availableRAM986MiB,WAL486,547,456bytes,temp49152bytes;currentbackupSHA/offsiteACKtrue;
+  protectedco-tenantempty. Workspace build is still running; artifact may stage/test but no named
+  service recreate until it passes. R47b remains rollback/stable current image.
+- Workspace build passed. R48 copy-only image is
+  sha256:fb863a2940e172ebe502c0fa46509dd04ecaecc4fcae95ccdc91ba1f00e2bbf2,
+  exactR47b layers+2copy layers; exactLinux31tests passed,1PG test intentionally skipped there and
+  passed in nativePG16 full539suite. Ledgerrevision22 in_progress. Next: schema051 read-only dry-run,
+  then guarded R47b->R48 operations key and recreate ONLYdata-maintenance if it passes.
+- R48 read-only schema051 canary passed83ms with zero inventory timeouts/deferred/mutations. Guarded
+  operations image key R47b->R48 applied (envSHA5e5f1a8c...b35f94); ONLYdata-maintenance recreated
+  at22:20:53UTC:container486754e5ead692441e206b2572cf97d87d5e3cadb1504fd0c8b21c1b7841b666,
+  exactR48/restart0/OOMfalse/64MiB/0.04CPU. Monitor and other10services unchanged. Ledgerrevision25
+  in_progress.
+- Bounded R48 pass22:22:17UTC completed44.983s:4250verified payloads,1173swaps,
+  22288expired completed Solana signatures and129superseded scores retired;zero prices and zero
+  canonical wallet trades/entries/outcomes/episodes retired. All100protected fresh prices remain.
+  Completed-signature timeout is cleared; inventory timeout/deferred are zero; restart0/OOMfalse.
+  Report remains honestly partial only because the separate ingestion-gap-repair-signatures stage
+  timed out. Disk free14,518,800,384bytes after the pass. Alpha cycle still processes only45wallets
+  in246.603s while20384jobs remain (18360background/2024elevated), so neither queue nor global
+  storage equilibrium is proven. Next exact production action: mark activate-r48 completed in the
+  revision ledger with the residual gap-repair timeout explicit; do not recreate or rerun R48.
+- After the ledger closes, stop the exact local127.0.0.1:54329 PG16 validation cluster and pivot to
+  the bounded incremental wallet reader/CAS design. Gap-repair retention optimization remains a
+  separate non-blocking follow-up; do not hide it by increasing timeouts or lowering safety gates.
+- R48 activation ledger closed at revision26, SHA
+  24ae4d864f9ebe8530da7a51a1ae7d9a67ec7b286e4b20fd927837fb72e258c0; phaseactivate-r48 is
+  completed with rollbackR47b and residual gap-repair/global-equilibrium caveats recorded. The
+  local PG16 validation cluster127.0.0.1:54329 was cleanly stopped. No R48 operation is pending.
+
+## Phase3: incremental wallet materialization (active, local design only)
+
+- Objective: replace each alpha job's unbounded full wallet-history reload/rebuild with a bounded,
+  deterministic continuation while preserving exact scorer/FIFO parity, correction invalidation,
+  temporal ordering and fail-closed coverage. No queue clearing, threshold relaxation, canonical
+  deletion, production migration or service restart is authorized by this design checkpoint.
+- Verified baseline at22:22UTC: latest cycle processed45wallets in246.603s with20384pending jobs
+  (18360background/2024elevated), zero failures/signals and64.87MiBRSS. The existing continuation
+  core commit7c6a3da proves calculation parity locally but has no database adapter, CAS revision,
+  correction replay boundary, per-sale facts or populated dual-read proof.
+- Next exact read-only action: map the current alpha worker repository calls, ordered evidence keys,
+  migrations051+ and scorer inputs; define the smallest additive schema/adapter contract and its
+  invalidation/rollback gates before editing any migration or production configuration.
+- Mapping found a lower-risk Phase3a before any continuation schema: every cycle already performs
+  a bounded100-wallet admission probe, but then claims/completes each below-threshold revision one
+  at a time. A live indexed sample found68/100background candidates below the configured6-trade or
+  3-entry threshold;100/100elevated candidates were admitted. A3000-candidate diagnostic correctly
+  hit its12s bound and made no mutation; the100-per-lane probe completed in4.279s.
+- The active scorer never reads WalletTradeEvidence.raw, yet its hot PostgreSQL method selects and
+  transports full provider JSON. One live admitted sample had540trades/423929raw bytes/696425row
+  bytes; scalar projection reduces planned row width1208->500 and sort memory1105KiB->355KiB.
+  Cache order prevents treating the413ms-vs2ms run as a clean latency ratio, so only byte/width
+  reduction is accepted as evidence.
+- Phase3a local change: (1) bulk-complete only exact, currently unlocked low-evidence candidate
+  revisions already measured by the existing admission probe; a concurrent revision mismatch must
+  remain pending, and (2) add an alpha-ledger scalar trade projection returning raw={} without
+  changing the general evidence reader. No threshold, strategy, schema, retention, worker resource
+  limit or producer is changed. Acceptance: memory/PostgreSQL concurrent-revision tests, score and
+  FIFO parity, full native PG16 gate, bounded benchmark, immutable Linux artifact and named alpha-
+  worker-only canary. Do not deploy if useful-wallet throughput or queue slope is not improved.
+- Phase3a implementation/typecheck/lint passed. PostgreSQL integration36/36passed, including exact
+  revision-CAS preservation and full-reader raw versus scorer-reader raw={} separation. Initial
+  full run was invalid because zstd was absent from PATH:535tests passed and6archive tests failed
+  with explicit spawn zstd ENOENT/timeouts. After adding only the existing local zstd1.5.7 binary to
+  the test-process PATH, the isolated archive set passed9/9 and the full serial nativePG16 gate
+  passed541/541 across106files with no skips. No timeout or product gate was relaxed.
+- Workspace production build passed. Generated one-oversized+99-useful-wallet benchmark processed
+  all99 useful wallets and quarantined only the10001-trade wallet in412.22ms at38.41MiBheap and
+  119.75MiBRSS (limits30s/100MiBheap/160MiBRSS). This is anti-regression evidence, not live queue
+  slope. Next: stop localPG16, inspect/commit the coherent source+tests+docs, then stage a copy-only
+  Linux artifact from the exact running wallet-alpha image. Production activation must be ledgered,
+  alpha-service-only and accepted only by useful throughput plus net lane slopes; R48 is untouched.
 
 ## Completion conditions
 

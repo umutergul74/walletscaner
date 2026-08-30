@@ -418,6 +418,97 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     });
   });
 
+  it("bulk-completes only the exact measured wallet-alpha revision", async () => {
+    const strategyVersion = "batch-complete-cas-v1";
+    await testPool.query(
+      `INSERT INTO wallet_alpha_work_queue (
+         chain, wallet_address, strategy_version, revision, completed_revision,
+         priority, priority_reason, pending_since
+       ) VALUES
+         ('solana', 'BatchStableWallet', $1, 1, 0, 0, 'test', NOW()),
+         ('solana', 'BatchAdvancedWallet', $1, 1, 0, 0, 'test', NOW())`,
+      [strategyVersion]
+    );
+    const measured = await repository.listWalletAlphaWorkCandidates(strategyVersion, 2);
+    expect(measured).toHaveLength(2);
+    await testPool.query(
+      `UPDATE wallet_alpha_work_queue
+       SET revision = revision + 1,
+           priority = 1,
+           priority_reason = 'new-evidence'
+       WHERE wallet_address = 'BatchAdvancedWallet'
+         AND strategy_version = $1`,
+      [strategyVersion]
+    );
+
+    expect(await repository.completeWalletAlphaWorkCandidates(measured)).toBe(1);
+    const result = await testPool.query(
+      `SELECT wallet_address, revision, completed_revision, priority
+       FROM wallet_alpha_work_queue
+       WHERE strategy_version = $1
+       ORDER BY wallet_address`,
+      [strategyVersion]
+    );
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        wallet_address: "BatchAdvancedWallet",
+        revision: "2",
+        completed_revision: "0",
+        priority: 1
+      }),
+      expect.objectContaining({
+        wallet_address: "BatchStableWallet",
+        revision: "1",
+        completed_revision: "1",
+        priority: 0
+      })
+    ]);
+  });
+
+  it("uses a payload-free scalar projection for the FIFO scorer hot path", async () => {
+    const strategyVersion = "ledger-scalar-projection-v1";
+    const walletAddress = "LedgerScalarWallet111";
+    await repository.saveWalletTradeEvent({
+      idempotencyKey: "ledger-scalar-trade-1",
+      chain: "solana",
+      walletAddress,
+      tokenAddress: "LedgerScalarMint111",
+      poolAddress: "LedgerScalarPool111",
+      side: "buy",
+      baseAmount: 12.5,
+      executionPriceUsd: 2,
+      quoteValueUsd: 25,
+      poolCreatedAt: "2026-08-29T00:00:00.000Z",
+      poolAgeMinutes: 1,
+      dataQuality: "observed-execution",
+      signature: "ledger-scalar-signature-1",
+      slot: 99_001,
+      provider: "integration-test",
+      observedAt: "2026-08-29T00:01:00.000Z",
+      strategyVersion,
+      raw: { providerPayload: "must-not-enter-alpha-hot-reader" }
+    });
+
+    const [canonical] = await repository.listWalletTradeEventsForWallets(
+      [walletAddress],
+      strategyVersion
+    );
+    const [ledgerInput] = await repository.listWalletTradeLedgerInputsForWallets(
+      [walletAddress],
+      strategyVersion
+    );
+    expect(canonical?.raw).toEqual({ providerPayload: "must-not-enter-alpha-hot-reader" });
+    expect(ledgerInput).toMatchObject({
+      idempotencyKey: canonical?.idempotencyKey,
+      walletAddress,
+      tokenAddress: "LedgerScalarMint111",
+      baseAmount: 12.5,
+      executionPriceUsd: 2,
+      quoteValueUsd: 25,
+      raw: {}
+    });
+  });
+
   it("orders ready wallet-alpha work by the indexed retry boundary", async () => {
     await testPool.query(
       `INSERT INTO wallet_alpha_work_queue (

@@ -3,6 +3,26 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 22:44 UTC R48 maintenance closure and local alpha Phase3a
+
+- Maintenance R48 is operational only for `data-maintenance`: exact image
+  `sha256:fb863a2940e172ebe502c0fa46509dd04ecaecc4fcae95ccdc91ba1f00e2bbf2`,
+  restart/OOM zero. Its bounded pass retired22,288expired completed signatures plus4,250verified
+  payloads/1,173swaps/129superseded scores;100/100protected fresh prices remained and no canonical
+  wallet trade/entry/outcome/episode was retired. Release ledgerrevision26 is completed. The
+  separate gap-repair-signature stage still times out and global storage equilibrium is unproven.
+- Alpha still has a full-history capacity failure: the measured cycle processed45wallets in246.6s
+  while20,384revisions remained. A live bounded sample found68/100background revisions below the
+  configured6-trade/3-entry admission floor, while100/100elevated revisions were admitted. One
+  540-trade candidate carried423,929bytes of unused provider JSON into the scorer hot read.
+- **Implemented locally, not deployed:** Phase3a reuses the existing100-wallet admission probe to
+  bulk-complete only exact/unlocked below-threshold revisions and uses a payload-free scalar trade
+  projection only for FIFO/scoring. Concurrent revision advancement is CAS-protected; canonical
+  rows, thresholds, lanes, strategy, resources and retention are unchanged. Full nativePG16 gate
+  541/541passed across106files; typecheck/lint/build passed; generated99-useful-plus1-oversized
+  benchmark completed412.22ms at38.41MiBheap/119.75MiBRSS. Linux artifact and live alpha-only
+  canary remain required; queue/storage equilibrium is not yet claimed.
+
 ## 2026-08-30 21:44 UTC maintenance safety containment
 
 - Only data-maintenance is stopped after confirming its R36 price-retention query uses ctid alone

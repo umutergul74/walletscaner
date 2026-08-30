@@ -876,6 +876,41 @@ export class MemoryRepository
     }));
   }
 
+  async completeWalletAlphaWorkCandidates(
+    candidates: WalletAlphaWorkCandidate[]
+  ): Promise<number> {
+    if (candidates.length > 100) {
+      throw new Error("Wallet-alpha candidate completion exceeds the 100-wallet ceiling.");
+    }
+    const now = Date.now();
+    let completed = 0;
+    for (const candidate of candidates) {
+      const work = this.walletAlphaWork.get(
+        `${candidate.chain}:${candidate.walletAddress}:${candidate.strategyVersion}`
+      );
+      if (
+        !work ||
+        work.revision !== candidate.revision ||
+        work.completedRevision >= candidate.revision ||
+        new Date(work.notBefore).getTime() > now ||
+        (work.lockExpiresAt && new Date(work.lockExpiresAt).getTime() > now)
+      ) {
+        continue;
+      }
+      work.completedRevision = candidate.revision;
+      work.priority = 0;
+      work.priorityReason = "completed";
+      work.pendingSince = nowIso();
+      work.attemptCount = 0;
+      delete work.lockedBy;
+      delete work.lockExpiresAt;
+      delete work.lastError;
+      delete work.quarantineReason;
+      completed += 1;
+    }
+    return completed;
+  }
+
   async completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean> {
     const work = this.walletAlphaWork.get(
       `${item.chain}:${item.walletAddress}:${item.strategyVersion}`
@@ -1266,6 +1301,21 @@ export class MemoryRepository
       )
       .sort(compareObservedAt)
       .slice(0, maxRows ?? Number.POSITIVE_INFINITY);
+  }
+
+  async listWalletTradeLedgerInputsForWallets(
+    walletAddresses: string[],
+    strategyVersion: string,
+    minObservedAt?: string,
+    maxRows?: number
+  ): Promise<WalletTradeEvidence[]> {
+    const trades = await this.listWalletTradeEventsForWallets(
+      walletAddresses,
+      strategyVersion,
+      minObservedAt,
+      maxRows
+    );
+    return trades.map((trade) => ({ ...trade, raw: {} }));
   }
 
   async listWalletAlphaScores(

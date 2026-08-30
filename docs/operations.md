@@ -415,10 +415,18 @@ without leasing them and runs one five-second-timeout admission prefetch. Each w
 index probes stop after at most six trade rows and three entry rows. The cached result is keyed by
 the exact queue revision; if evidence advances the revision before the one-wallet claim, the worker
 ignores the stale result and falls back to fresh one-wallet probes. If both thresholds are unmet, it
-completes only the claimed revision without materializing a ledger or score; canonical evidence
-remains and a later write requeues the wallet. The ordered claim SQL itself remains evidence-free.
+bulk-completes only those exact measured revisions in one bounded update before claiming useful
+work. The update requires `work.revision = measured.revision`, skips any active lease and cannot
+overtake evidence arriving concurrently; a changed revision remains pending. The one-wallet path
+keeps the same fresh-probe fallback. Neither path materializes a ledger/score for below-threshold
+work; canonical evidence remains and a later write requeues the wallet. The ordered claim SQL itself
+remains evidence-free.
 A correlated evidence predicate inside that claim query caused a 56+ second production disk scan
 under backup I/O and is prohibited.
+The admitted FIFO/scorer load uses a dedicated scalar projection that omits the `raw` provider JSON
+column while retaining the same persisted accounting, price, identity and event-order columns.
+General evidence/archive readers still return the complete raw payload. This reduces hot-query wire,
+parse and sort memory without changing canonical storage or granting source-retirement authority.
 Live price enrichment therefore applies admission at its already-changed wallet scope, not in the
 ordered claim. It passes `WALLET_ALPHA_MIN_TRADE_EVENTS`, `WALLET_ALPHA_MIN_ENTRIES` and
 `WALLET_ALPHA_WINDOW_DAYS` explicitly. The two probes stop at their small configured limits on the

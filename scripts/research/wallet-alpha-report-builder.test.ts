@@ -161,7 +161,9 @@ describe("wallet alpha report", () => {
     const repository = new MemoryRepository();
     const candidatePrefetch = vi.spyOn(repository, "listWalletAlphaWorkCandidates");
     const admissionPrefetch = vi.spyOn(repository, "probeWalletAlphaAdmission");
+    const batchCompletion = vi.spyOn(repository, "completeWalletAlphaWorkCandidates");
     const scopedTradeLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
+    const ledgerTradeLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsForWallets");
     await repository.saveWalletTradeEvent(walletTrade("SingleTradeWallet", "single", 1));
     for (let index = 0; index < 3; index += 1) {
       await repository.saveWalletEntrySignal({
@@ -199,15 +201,22 @@ describe("wallet alpha report", () => {
     expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({ pending: 0 });
     expect(candidatePrefetch).toHaveBeenCalledTimes(1);
     expect(admissionPrefetch).toHaveBeenCalledTimes(1);
+    expect(batchCompletion).toHaveBeenCalledWith([
+      expect.objectContaining({ walletAddress: "SingleTradeWallet", revision: 1 })
+    ]);
     // Only the admitted wallet reaches the full evidence load. The low-evidence
     // wallet is completed from the revision-bound batch probe.
     expect(scopedTradeLoads.mock.calls.map(([wallets]) => wallets)).toEqual([["ThreeEntryWallet"]]);
+    expect(ledgerTradeLoads.mock.calls.map(([wallets]) => wallets)).toEqual([
+      ["ThreeEntryWallet"]
+    ]);
   });
 
   it("falls back to a fresh probe when evidence advances the queued revision", async () => {
     const repository = new MemoryRepository();
     await repository.saveWalletTradeEvent(walletTrade("RevisionWallet", "revision-1", 1));
     const originalProbe = repository.probeWalletAlphaAdmission.bind(repository);
+    const batchCompletion = vi.spyOn(repository, "completeWalletAlphaWorkCandidates");
     vi.spyOn(repository, "probeWalletAlphaAdmission").mockImplementation(async (...args) => {
       const probes = await originalProbe(...args);
       await repository.saveWalletTradeEvent(walletTrade("RevisionWallet", "revision-2", 2));
@@ -230,6 +239,7 @@ describe("wallet alpha report", () => {
     );
 
     expect(result.skippedLowEvidenceWallets).toBe(1);
+    await expect(batchCompletion.mock.results[0]?.value).resolves.toBe(0);
     expect(scopedTradeLoads).toHaveBeenCalledTimes(1);
   });
 
