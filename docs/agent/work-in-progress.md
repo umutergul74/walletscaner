@@ -1,12 +1,56 @@
 ---
 status: complete
-updated_at_utc: 2026-08-30T11:01:00Z
+updated_at_utc: 2026-08-30T20:34:00Z
 owner: codex
-task: persist user-supplied Pyth and Jupiter free API credentials in Walletscaner's production secret configuration, verify provider authentication without exposing values, and leave restart/deploy gated
-last_safe_checkpoint: credential persistence and provider verification complete; Pyth latest/legacy Hermes/Benchmarks and Jupiter quote-only probes passed; machine ledger revision3 complete; no restart/deploy occurred because current offsite backup acknowledgement is missing
+task: read-only live runtime, data-quality, storage, signal and paper-performance audit
+last_safe_checkpoint: read-only audit complete; dated report records verified no-signal/no-profitable-strategy verdict, key/queue/decision-tape/storage gaps and next authorized rollout gates; production unchanged
 ---
 
 # Walletscaner Work In Progress
+
+## Completed objective — read-only live alpha/performance audit, 2026-08-30
+
+- User requests current data collection/performance, new signals and evidence of a profitable
+  strategy, then asks to continue. Scope is diagnosis/report only: no service recreation, deploy,
+  migration, data retirement, B2 write, provider change, paper/Telegram enablement or co-tenant action.
+- Git pre-state: main at `9a72447`, ahead 237; only the four previously documented transfer partials
+  are untracked. Preserve them. This checkpoint/report is the only authorized local writing.
+- Live inventory at 20:12-20:27 UTC: 12 Walletscaner services running; PG/Redis healthy; all running
+  containers restart0/OOMfalse. Ingestion R45 retains its 29-Aug 06:50 UTC start, alpha R43 is running,
+  paper is stopped, migrations end at 051, live execution false. Protected co-tenant has no running
+  Compose project. Root free 14,743,478,272 bytes, about 80% used.
+- Exact signal queries: both canonical signal tables empty; latest watch/candidate/validated-paper
+  query returned zero. V4 outbox has 65 `shadow` candidates (15 in last 24h), not delivered signals.
+  All 15 recent candidates are older than 22m, but only 5 retain an exact-pool 20-22m mark; 2 of those
+  are marked rugged. This is a completeness diagnostic, not a strategy replay or fill claim.
+- Existing paper results: V1 91 closed/-96.9612 USD; V2 3 closed/-3.8678 USD; V3 3 closed/-14.1623
+  USD, including two terminal rugs; no open positions. No recent paper execution.
+- Alpha 870 cycle sample spans approximately 24h: pending 10,788 -> 18,265 despite 42,150 processed
+  wallet revisions and 25,223 low-evidence skips; signals0. Current errors are one evidence-limit
+  quarantine, not a general crash. R46 producer-admission fix remains local, not deployed.
+- Running ingestion still has neither Pyth nor Jupiter key. Deployed Pyth adapter supports auth;
+  latest SOL/USD persisted oracle observation is 26-Aug 16:16 UTC. Historical Pyth requests/errors
+  3,435/3,435. One-hour trade sample: 5,419 price-proxy and 186 unpriced observed-balance, zero HQ.
+- B2 manifests: 29 raw + 36 wallet-evidence verified, zero pending/dead-letter; compact days36
+  verified. Canonical wallet retirement is still not implemented by compact shadow. DB24.10GB;
+  monitor 24h DB slope +1.237GB/day and conservative reserve runway4.07d. Latest dump offsite
+  acknowledgement is NOW true, superseding the prior 11:01 UTC missing-ack blocker.
+- Discovery currently has zero open transport incidents, but 569 closed/unreconciled historical
+  intervals remain excluded. Latest incident30-Aug19:27 UTC recovered transport19:29 without proof
+  of complete gap repair. Never call these 569 concurrent outages.
+- Audit limitations: full latest-score aggregates exceeded bounded SQL timeouts; do not rerun
+  unbounded ranking scans. Narrow status/top-observed indexed queries succeeded. No full fresh
+  restore or independent chain-wide denominator check was run; old research files are dated evidence.
+- Completed bounded2,000-event latency sample: discovery receive p95=2.252s; mixed-origin swaps
+  p95=121.950s. Durable origin metadata is absent, so this is not a live-only swap latency claim.
+  Last post-state20:28:40 UTC: inbox7/dead0, finality22/unresolved24h0, DB24,136,621,079 bytes,
+  free14,728,196,096 bytes, runway4.02d above8GiB reserve. Same service set, co-tenant untouched.
+- Local offsite task success30-Aug19:21 UTC independently confirms the latest dump's SHA and
+  archive-list check; latest-generation full restore is NOT verified. No backup action was run here.
+- Final report: `reports/live-alpha-status-audit-20260830.md`. No-go for live capital; waiting
+  unchanged is not enough. Next task requires explicit named-rollout authority: fix deployed
+  auth/admission, finish compact reader/retirement gates, then deploy052/053 tape and measure a
+  genuinely future-only cohort. No production operation is in progress or needs blind retry.
 
 This is the durable resume point for the current storage incident. It contains no credentials and
 does not grant authority beyond the user's current request. On resume, compare this record with Git,

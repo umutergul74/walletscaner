@@ -3,6 +3,33 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 20:29 UTC read-only live alpha audit
+
+- No canonical wallet-alpha signals; no latest watch/candidate/validated-paper wallets. V4 has65
+  non-deliverable shadow candidates (15/24h), not alpha signals. Only5/15 recent candidates retain
+  a same-pool +20–22m price mark;2 are marked rugged. No executable-fill inference is permitted.
+- Latest complete contextual-survival backtest remains the29-Aug reject. Paper has no open
+  positions and no running worker: V1/V2/V3 cash is$3.04/$96.13/$85.84 from separate$100 starts.
+- Live ingestionR45/alphaR43 remain unchanged; all running services restart0/OOMfalse, PG/Redis
+  healthy. Last inbox7/dead0; newest wallet trade15s; finality unresolved24h0. Trade coverage remains
+  focused on one active pool, not full-network wallet coverage. Zero current transport incidents
+  coexists with569 closed/unreconciled historical intervals that remain excluded.
+- Pyth/Jupiter keys are still absent from running ingestion, though safely saved earlier. Latest
+  persisted SOL/USD oracle is26-Aug16:16 UTC; historical requests/errors3,435/3,435. Recent1h trades:
+  5,419price-proxy,186unpriced,0HQ. R46 admission and052/053 decision-tape rollout remain undeployed.
+- Alpha pending10,788 ->18,265 across approximately24h/870cycles despite42,150 revision evaluations;
+  most pending work is price enrichment. No transient failure in the current queue; one evidence
+  quarantine. Do not describe this as healthy waiting or mature alpha.
+- B2 raw29/wallet36 segments and compact36days verified; no archive backlog/dead-letter. Canonical
+  wallet reader/retirement cutover is still absent, so source plus compact shadow coexist. DB24.14GB,
+  free14.73GB, +1.245GB/day24h DB slope, conservative4.02d above8GiB reserve. Not equilibrium.
+- **Previous backup-ack blocker cleared:** scheduled local offsite task succeeded30-Aug19:21 UTC;
+  newest2.77GB dump SHA/archive-list verified and server acknowledgement true. Full restore of this
+  generation remains unverified. No backup/service/B2/data mutation occurred during this audit.
+- Detailed evidence, limitations and the smallest next rollout sequence:
+  `reports/live-alpha-status-audit-20260830.md`. Do not resume a deploy from this read-only report;
+  obtain current named-action authority and refresh hard gates first.
+
 ## 2026-08-30 collection integrity, authentication and future tape v2
 
 - **Provider credentials persisted and verified at 11:01 UTC:** the user-supplied Pyth and Jupiter
