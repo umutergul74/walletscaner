@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-30T10:54:00Z
+updated_at_utc: 2026-08-30T10:56:00Z
 owner: codex
 task: persist user-supplied Pyth and Jupiter free API credentials in Walletscaner's production secret configuration, verify provider authentication without exposing values, and leave restart/deploy gated
-last_safe_checkpoint: read-only preflight complete; both keys absent, env mode0600 root-owned, live execution false, ingestion R45 healthy; latest dump exists but offsite acknowledgement is missing/mismatched, so next action is credential file update plus provider verification only, no service restart
+last_safe_checkpoint: credential file atomically updated and locally verified; both names present exactly once, root-owned mode0600, rollback file created; services still unchanged; next action is bounded provider auth verification, rollback on failure
 ---
 
 # Walletscaner Work In Progress
@@ -36,6 +36,21 @@ repeating any step.
   Jupiter quote-only response is authenticated without taker/transaction submission. Provider
   failure rolls the file back. Next separately gated step is offsite-backup verification followed
   by an explicitly authorized named-service restart/deploy.
+
+### Credential write checkpoint — 2026-08-30 10:56 UTC
+
+- Machine ledger `reports/deploy/provider-credentials-20260830.json` moved planned revision 1 to
+  in-progress revision 2 before mutation. It contains no key or fingerprint.
+- `/opt/walletscaner/.env.server` was replaced atomically after fsync. `PYTH_API_KEY` and
+  `JUPITER_API_KEY` each exist exactly once and match the supplied values inside the verifier;
+  output exposed presence only. Ownership remains root and mode 0600.
+- Byte-for-byte rollback is `/opt/walletscaner/.env.server.credential-rollback-20260830T105526Z`,
+  also root-owned mode0600. Running containers were not recreated/restarted and therefore have not
+  consumed the new values yet. No database/B2/co-tenant state changed.
+- Next exact action: one no-dependency, temporary, bounded provider-auth probe using the existing
+  R45 ingestion image and env file. It performs Pyth latest SOL/USD and Jupiter quote-only `/order`
+  with no taker/signing/submission, prints booleans/status only, then removes itself. Failure rolls
+  the secret file back; success completes credential persistence but does not authorize restart.
 
 ## Active objective — collection integrity and bounded work, 2026-08-30
 
