@@ -287,6 +287,17 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   slope. Next: stop localPG16, inspect/commit the coherent source+tests+docs, then stage a copy-only
   Linux artifact from the exact running wallet-alpha image. Production activation must be ledgered,
   alpha-service-only and accepted only by useful throughput plus net lane slopes; R48 is untouched.
+- Local source committed3cf1a4e. Preflight22:46UTC: alpha container1b7df492... exactR43 image
+  sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b,
+  restart0/OOMfalse,160MiB/0.10CPU; disk free14,346,936,320bytes, availableRAM1,028,472KiB,
+  WAL620,765,184bytes. Current2,770,884,949byte dump SHA sidecar/offsiteACKtrue, age~26.4h;
+  latest full restore remains unproven, so no schema/source retirement is permitted. Protected
+  co-tenant inventory empty; all other Walletscaner identities captured and unchanged.
+- New docker/alpha-hotfix.Dockerfile is copy-only (noRUN/install/network) and includes only the
+  alpha repository/report sources plus their exact tests. Next: commit this artifact recipe, create
+  a content-addressed overlay tar, hash locally/server-side, then build from exactR43. Do not update
+  Compose or recreate a named service before exact Linux tests and a schema051 read-only/run-once
+  canary pass.
 
 ## Completion conditions
 
