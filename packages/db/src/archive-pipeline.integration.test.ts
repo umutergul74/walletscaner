@@ -686,7 +686,10 @@ integrationDescribe("PostgreSQL cold archive pipeline", () => {
     await expect(
       testPool.query("SELECT COUNT(*)::int AS rows FROM wallet_open_lot_facts")
     ).resolves.toMatchObject({ rows: [{ rows: 0 }] });
-  });
+    // This end-to-end fixture launches several separately bounded materializers
+    // and includes lock/retry checks. The generic 5s unit-test deadline can abort
+    // it while a child is still running on Windows; SQL/child limits stay intact.
+  }, 30_000);
 
   it("invalidates an in-flight revision when its source window changes", async () => {
     const rangeStart = utcDayOffset(-2);

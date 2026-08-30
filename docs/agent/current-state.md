@@ -3,6 +3,35 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-30 21:18 UTC queue/storage remediation checkpoint
+
+- R46 ingestion now runs: containerb524cc46b48840767325b9c3746b9308f1ee2664de58c8f31637fec0c2b1eaa3,
+  imagee376cfd6704cd5a0ad799e338b9a3d57ef9c4204eccba81a5efdd439fdf2380b,
+  source53b5949dce301f6f20dc9f6d0fea0831a23b80d4, start20:58:31UTC. Only ingestion was recreated;
+  CPU0.20/memory160MiB unchanged. PG/Redis/alpha identities and protected co-tenant unchanged.
+- Pyth/Jupiter saved auth is loaded (no values exposed). New sample1113oracle-converted and19
+  observed-execution trades versus79proxy; latest/historical Pyth successful, no historical errors.
+  Live execution remains false; no paper/tape/alpha delivery activation or schema change.
+- **Capacity acceptance failed:** at21:13UTC alpha pending19,446, still growing. R46 suppresses
+  sub-threshold enrichment revisions but does not solve expensive full-history/elevated work.
+  Further rollout halted; ledgerrevision3 records failure, not a falsely successful capacity gate.
+  SafeR46 remains operational; exactR45 rollback retained. Inbox0/dead0/unresolvedfinality0 and
+  openincidents0 in canary. Do not advise an unattended week on this capacity evidence.
+- Server ledger reports/deploy/queue-storage-r46-20260830.json revision6 completes only a separate
+  exact transfer-file retirement. Rehashes matched;463454208allocated bytes returned to filesystem.
+  Free space14,651,949,056bytes. Loaded images/local artifact and all canonical/B2 evidence remain.
+  There is no active production mutation to repeat. Wallet storage equilibrium is still unproven.
+- Storage audit found a missing accounting invariant:051 round-trip facts do not preserve every
+  partial-sale sample, and scalar lots omit exact remaining cost/quality continuation state.
+  No reader cutover or canonical retirement is safe based only on those existing parity receipts.
+- Local-only `fifo-continuation-v1` shares the existing ledger evaluator, carries bounded open state,
+  emits per-sale deltas and rejects late/corrected/precision-changing history. Prebuilt ledgers can
+  feed scoring without historical trade rows. Generated9000+120trade test: exactparity,
+  5511bytecheckpoint,296msfull vs5msdelta; NOT production/total-size proof. Database CAS/invalidation,
+  durable sale facts/followability read, full restore, populated dual-read and retirement remain.
+- Current backup independently rehashed on server/local at2,770,884,949bytes; exactSHA and PG16
+  archive-list passed, offsite acknowledged. Latest generation full restore still not verified.
+
 ## 2026-08-30 20:29 UTC read-only live alpha audit
 
 - No canonical wallet-alpha signals; no latest watch/candidate/validated-paper wallets. V4 has65

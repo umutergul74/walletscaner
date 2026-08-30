@@ -156,7 +156,7 @@ export interface BuildWalletAlphaInput {
   calculatedAt?: string;
   creatorWallets?: Set<string>;
   roundTripCostPct?: number;
-  /** Optional per-wallet ledgers prevent a bounded worker batch from rebuilding FIFO state twice. */
+  /** Verified per-wallet ledgers can supply profitability without rereading archived trades. */
   prebuiltLedgers?: ReadonlyMap<string, WalletLedger>;
 }
 
@@ -190,7 +190,11 @@ export function buildWalletAlphaScores(input: BuildWalletAlphaInput): WalletAlph
   const tradesByWallet = groupByWallet(strategyTrades);
   const entriesByWallet = groupByWallet(strategyEntries);
   const matureOutcomeByEntry = indexMatureOutcomes(strategyOutcomes, followabilityExitStrategy);
-  const wallets = new Set([...tradesByWallet.keys(), ...entriesByWallet.keys()]);
+  const wallets = new Set([
+    ...tradesByWallet.keys(),
+    ...entriesByWallet.keys(),
+    ...(input.prebuiltLedgers?.keys() ?? [])
+  ]);
 
   return [...wallets]
     .map((walletAddress) => {
@@ -423,11 +427,157 @@ interface NormalizedTradeQuantity {
   decimals: number;
 }
 
+type LedgerOrder = Pick<
+  WalletTradeEvidence,
+  | "slot"
+  | "observedAt"
+  | "signature"
+  | "idempotencyKey"
+  | "transactionIndex"
+  | "instructionIndex"
+  | "innerInstructionIndex"
+>;
+type LedgerFirstBuy = Pick<
+  WalletTradeEvidence,
+  "walletAddress" | "tokenAddress" | "observedAt" | "poolAgeMinutes"
+>;
+type SerializedInventoryLot = Omit<WalletInventoryLot, "originalUnits" | "units"> & {
+  originalUnits: string;
+  units: string;
+};
+interface LedgerMarketContinuation {
+  key: string;
+  decimals: number;
+  firstBuy?: LedgerFirstBuy;
+  roundTripIndex: number;
+  lotSequence: number;
+  lastTrackedAt: string;
+  activeEpisode?: WalletEpisodeAccumulator;
+  lots: SerializedInventoryLot[];
+}
+
+/** Local-only continuation format. NOT an archive receipt or source-retirement permission. */
+export interface WalletLedgerCheckpoint {
+  version: "fifo-continuation-v1";
+  payload: string;
+  sha256: string;
+}
+interface LedgerContinuationPayload {
+  scope: string;
+  roundTripCostPct: number;
+  lastOrder: LedgerOrder;
+  markets: LedgerMarketContinuation[];
+}
+
+/**
+ * Returns new realizations/closed episodes and the complete current open inventory.
+ * Consumers must persist those deltas and the checkpoint atomically. Old/changed input at or
+ * before the boundary requires an archive-backed rebuild; it must never be silently skipped.
+ * No production reader uses this until database CAS, archive and full dual-read gates pass.
+ */
+export function advanceWalletLedger(
+  trades: WalletTradeEvidence[],
+  checkpoint?: WalletLedgerCheckpoint,
+  roundTripCostPct = 3
+): { ledger: WalletLedger; checkpoint: WalletLedgerCheckpoint } {
+  const maximumBytes = 4 * 1024 * 1024;
+  if (trades.length > 10_000) throw new Error("FIFO continuation trade budget exceeded");
+  if (!Number.isFinite(roundTripCostPct) || roundTripCostPct < 0) {
+    throw new Error("Invalid FIFO continuation cost model");
+  }
+  let prior: LedgerContinuationPayload | undefined;
+  if (checkpoint) {
+    if (
+      checkpoint.version !== "fifo-continuation-v1" ||
+      Buffer.byteLength(checkpoint.payload) > maximumBytes ||
+      createHash("sha256").update(checkpoint.payload).digest("hex") !== checkpoint.sha256
+    ) {
+      throw new Error("Invalid FIFO continuation checkpoint integrity");
+    }
+    prior = JSON.parse(checkpoint.payload) as LedgerContinuationPayload;
+    if (
+      prior.roundTripCostPct !== roundTripCostPct ||
+      !Array.isArray(prior.markets) ||
+      prior.markets.length > 2_000 ||
+      !prior.lastOrder ||
+      typeof prior.scope !== "string"
+    ) {
+      throw new Error("FIFO continuation policy mismatch");
+    }
+  }
+  const ordered = deduplicateTrades(trades);
+  const first = ordered[0];
+  const scope = first
+    ? `${first.chain}:${first.strategyVersion}:${first.walletAddress}`
+    : prior?.scope;
+  if (!scope || (prior && prior.scope !== scope))
+    throw new Error("FIFO continuation scope mismatch");
+  for (const trade of ordered) {
+    if (
+      `${trade.chain}:${trade.strategyVersion}:${trade.walletAddress}` !== scope ||
+      !Number.isSafeInteger(trade.slot) ||
+      !Number.isFinite(Date.parse(trade.observedAt))
+    ) {
+      throw new Error("Invalid FIFO continuation evidence scope/order");
+    }
+    if (prior && compareEvidenceOrder(trade, prior.lastOrder) <= 0) {
+      throw new Error("FIFO continuation requires rebuild for late or overlapping evidence");
+    }
+  }
+  const markets: LedgerMarketContinuation[] = [];
+  const ledger = buildWalletLedgerBatch(ordered, roundTripCostPct, prior?.markets, markets);
+  if (markets.length > 2_000 || markets.reduce((n, item) => n + item.lots.length, 0) > 10_000) {
+    throw new Error("FIFO continuation inventory budget exceeded");
+  }
+  const last = ordered.at(-1);
+  const payload = JSON.stringify({
+    scope,
+    roundTripCostPct,
+    lastOrder: last ? ledgerOrder(last) : prior!.lastOrder,
+    markets: markets.sort((a, b) => a.key.localeCompare(b.key))
+  } satisfies LedgerContinuationPayload);
+  if (Buffer.byteLength(payload) > maximumBytes)
+    throw new Error("FIFO continuation byte budget exceeded");
+  return {
+    ledger,
+    checkpoint: {
+      version: "fifo-continuation-v1",
+      payload,
+      sha256: createHash("sha256").update(payload).digest("hex")
+    }
+  };
+}
+
+function ledgerOrder(trade: WalletTradeEvidence): LedgerOrder {
+  return {
+    slot: trade.slot,
+    observedAt: trade.observedAt,
+    signature: trade.signature,
+    idempotencyKey: trade.idempotencyKey,
+    ...(trade.transactionIndex !== undefined ? { transactionIndex: trade.transactionIndex } : {}),
+    ...(trade.instructionIndex !== undefined ? { instructionIndex: trade.instructionIndex } : {}),
+    ...(trade.innerInstructionIndex !== undefined
+      ? { innerInstructionIndex: trade.innerInstructionIndex }
+      : {})
+  };
+}
+
 export function buildWalletLedger(
   trades: WalletTradeEvidence[],
   roundTripCostPct = 3
 ): WalletLedger {
+  return buildWalletLedgerBatch(trades, roundTripCostPct);
+}
+
+function buildWalletLedgerBatch(
+  trades: WalletTradeEvidence[],
+  roundTripCostPct: number,
+  previous: LedgerMarketContinuation[] = [],
+  next?: LedgerMarketContinuation[]
+): WalletLedger {
   const byWalletToken = new Map<string, WalletTradeEvidence[]>();
+  const previousByKey = new Map(previous.map((item) => [item.key, item]));
+  for (const item of previous) byWalletToken.set(item.key, []);
   const deterministicTrades = deduplicateTrades(trades);
   for (const trade of deterministicTrades) {
     const key = `${trade.chain}:${trade.strategyVersion}:${trade.walletAddress}:${trade.tokenAddress}`;
@@ -441,16 +591,56 @@ export function buildWalletLedger(
   const positionEpisodes: WalletLedgerPositionEpisode[] = [];
   const positionLots: WalletLedgerPositionLot[] = [];
 
-  for (const walletTrades of byWalletToken.values()) {
+  for (const [key, walletTrades] of byWalletToken) {
+    const prior = previousByKey.get(key);
     const ordered = [...walletTrades].sort(compareEvidenceOrder);
-    const firstBuy = ordered.find((trade) => trade.side === "buy");
-    if (!firstBuy || !isNewTokenEntry(firstBuy.poolAgeMinutes)) continue;
-    const decimals = commonBaseDecimals(ordered);
-    const lots: WalletInventoryLot[] = [];
-    let roundTripIndex = 0;
-    let lotSequence = 0;
-    let activeEpisode: WalletEpisodeAccumulator | undefined;
-    let lastTrackedAt = firstBuy.observedAt;
+    const firstBuy = prior?.firstBuy ?? ordered.find((trade) => trade.side === "buy");
+    const decimals = prior?.decimals ?? commonBaseDecimals(ordered);
+    if (prior && ordered.length > 0 && commonBaseDecimals(ordered) > prior.decimals) {
+      throw new Error("FIFO continuation requires rebuild for changed token precision");
+    }
+    const lots: WalletInventoryLot[] = (prior?.lots ?? []).map((lot) => ({
+      ...lot,
+      originalUnits: BigInt(lot.originalUnits),
+      units: BigInt(lot.units)
+    }));
+    let roundTripIndex = prior?.roundTripIndex ?? 0;
+    let lotSequence = prior?.lotSequence ?? 0;
+    let activeEpisode = prior?.activeEpisode;
+    let lastTrackedAt = prior?.lastTrackedAt ?? firstBuy?.observedAt ?? ordered[0]!.observedAt;
+    const capture = () =>
+      next?.push({
+        key,
+        decimals,
+        roundTripIndex,
+        lotSequence,
+        lastTrackedAt,
+        ...(firstBuy
+          ? {
+              firstBuy: {
+                walletAddress: firstBuy.walletAddress,
+                tokenAddress: firstBuy.tokenAddress,
+                observedAt: firstBuy.observedAt,
+                ...(firstBuy.poolAgeMinutes !== undefined
+                  ? { poolAgeMinutes: firstBuy.poolAgeMinutes }
+                  : {})
+              }
+            }
+          : {}),
+        ...(activeEpisode ? { activeEpisode } : {}),
+        // Fully consumed lots are emitted as deltas, never retained in continuation state.
+        lots: lots
+          .filter((lot) => lot.units > 0n)
+          .map((lot) => ({
+            ...lot,
+            originalUnits: lot.originalUnits.toString(),
+            units: lot.units.toString()
+          }))
+      });
+    if (!firstBuy || !isNewTokenEntry(firstBuy.poolAgeMinutes)) {
+      capture();
+      continue;
+    }
 
     for (const trade of ordered) {
       const quantity = normalizedTradeQuantity(trade, decimals);
@@ -609,6 +799,7 @@ export function buildWalletLedger(
       }
     }
 
+    capture();
     const remainingUnits = inventoryUnits(lots);
     const activeLots = lots.filter((lot) => lot.units > 0n);
     if (remainingUnits > 0n && activeLots.length > 0 && activeEpisode) {

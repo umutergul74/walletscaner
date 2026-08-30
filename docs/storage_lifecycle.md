@@ -220,6 +220,36 @@ remain undeployed.
 
 ## Required rollout gates
 
+### Continuation gap found and local core repair — 2026-08-30
+
+Migration051 is not a sufficient scorer checkpoint. It retains one aggregate per round trip,
+whereas the active scorer treats each matched partial sale as a separate return sample. Its lot
+facts also omit remaining after-cost basis and quality/event counters needed to resume the exact
+FIFO computation. Aggregate source/fact parity cannot prove those omitted fields. Do not retire
+source evidence or claim the earlier size model is a complete reader implementation.
+
+The additive `advanceWalletLedger` core API shares the original evaluator, emits individual sale
+deltas and updated episode/lot projections, and retains only open lot state and market ordinals in
+an integrity-hashed `fifo-continuation-v1` checkpoint. Exact raw units serialize as decimal strings.
+Provider JSON and consumed lots do not enter the checkpoint; prior sale facts must be persisted
+separately, not discarded. A prebuilt ledger can now supply scorer identity as well as profitability
+without synthetic historical trades. Strategy thresholds and the existing cost model are unchanged.
+
+The local bounds are one wallet/strategy,10000 input events,2000 markets,10000 open lots and4MiB of
+checkpoint text. Replaying a batch against the same starting checkpoint is deterministic; overlap,
+late correction, changed policy/scope/integrity or increased token precision requires a full rebuild
+instead of silently skipping evidence. These rejection cases must become durable recovery states.
+
+Generated9000-history/120-new-trade validation preserved all partial-sale and episode values with a
+5511-byte checkpoint: full replay296ms versus incremental5ms at130.35MiB peak process RSS. These are
+local generated measurements, not shared-host performance or total storage size. They exclude the
+separately retained sale facts and do not prove95-day equilibrium.
+
+Still required before use: transactionally persist sale deltas/checkpoint with revision CAS, source
+correction invalidation, compact followability reader, rolling fact/dimension retention, populated
+dual-read score/hash comparison, fresh full restore and Linux/shared-host canary. No production
+caller or migration uses this API yet. The source-retirement gates below remain unchanged.
+
 1. Additive PostgreSQL 16 migration and exact source-kind archive contract; no existing table is
    rewritten or dropped.
 2. Populated-clone archive/export/restore test for every historical evidence day, including late

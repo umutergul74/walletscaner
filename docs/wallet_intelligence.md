@@ -34,6 +34,12 @@ For each `(wallet, token)` pair:
 
 The default research round-trip cost is 3%, split across buy and sell sides. Exact paper fills have their own fee/slippage model.
 
+`advanceWalletLedger` is a local-only bounded continuation API for the hot/cold cutover. It preserves
+each partial-sale sample, open-lot remaining cost and episode ordinals through serialized restarts.
+Prebuilt verified ledgers can feed the scorer without historical trade rows. Late/overlapping or
+precision-changing input requires rebuild; no production reader or retirement path is enabled by
+this API. See `docs/storage_lifecycle.md` for the uncompleted transactional/parity gates.
+
 ## Profitability metrics
 
 The scorer calculates, over rolling 30- and 90-day windows:
