@@ -1,9 +1,9 @@
 ---
-status: blocked
-updated_at_utc: 2026-08-30T09:29:00Z
+status: active
+updated_at_utc: 2026-08-30T10:54:00Z
 owner: codex
-task: optimize useful evidence collection through bounded provider failure handling and truthful future-checkpoint timing; local implementation and disposable tests, production read-only
-last_safe_checkpoint: local implementation complete and committed as a7875e9; 509 tests plus typecheck/lint/build and populated053 upgrade pass; temporary PG16 stopped; production activation blocked on missing Pyth/Jupiter access, backup acknowledgement and explicit worker-only rollout authority; no pending mutation to resume
+task: persist user-supplied Pyth and Jupiter free API credentials in Walletscaner's production secret configuration, verify provider authentication without exposing values, and leave restart/deploy gated
+last_safe_checkpoint: read-only preflight complete; both keys absent, env mode0600 root-owned, live execution false, ingestion R45 healthy; latest dump exists but offsite acknowledgement is missing/mismatched, so next action is credential file update plus provider verification only, no service restart
 ---
 
 # Walletscaner Work In Progress
@@ -12,6 +12,30 @@ This is the durable resume point for the current storage incident. It contains n
 does not grant authority beyond the user's current request. On resume, compare this record with Git,
 the production ledger, backup files, archive manifests, containers and database state before
 repeating any step.
+
+## Active objective — provider credential persistence, 2026-08-30
+
+- User explicitly supplied free Pyth/Jupiter keys and authorized saving them so they are not
+  requested again. Values must never appear in source, Git, command output, logs, checkpoints or
+  reports. Store only in `/opt/walletscaner/.env.server`, preserving root ownership and mode 0600.
+- Scope is exact and reversible: atomically add/replace only `PYTH_API_KEY` and `JUPITER_API_KEY`,
+  retain a mode-0600 rollback copy outside the repository, validate exact key names/presence and
+  make one bounded authenticated request to each provider. No schema migration, image deploy,
+  archive/B2 write/delete, paper/Telegram/live execution or co-tenant action.
+- Pre-state at 2026-08-30 10:51 UTC: root disk 13,365,546,304 bytes available (81.6% used), DB
+  22,980,443,159 bytes; PostgreSQL/Redis healthy; ingestion R45 restart0/OOMfalse. Both credential
+  names absent, `ENABLE_LIVE_EXECUTION=false`, `.env.server` root:root mode0600 size8630.
+- Backup exists (latest dump 2,770,884,949 bytes) but current operational report says offsite
+  acknowledgement missing/mismatched. Archive pending/verify/dead-letter are 0/0/0. Therefore
+  do not restart ingestion or activate/deploy the alpha-tape worker in this phase.
+- Rollback is byte-for-byte restoration of the pre-change secret file followed by permission check;
+  because services are not restarted, running container environments remain unchanged. A
+  non-secret revision-checked release ledger records planned/in-progress/completed states.
+- Acceptance: atomic update; only one line per required key; root:root 0600; live execution false;
+  no value in output; Pyth authenticated SOL/USD response has expected feed/positive price and
+  Jupiter quote-only response is authenticated without taker/transaction submission. Provider
+  failure rolls the file back. Next separately gated step is offsite-backup verification followed
+  by an explicitly authorized named-service restart/deploy.
 
 ## Active objective — collection integrity and bounded work, 2026-08-30
 
