@@ -533,6 +533,13 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   not contain environment or credential files. Next: wait for the active31-August backup to become
   a final list-readable SHA sidecar generation, then create R50 release ledger revision1 `planned`
   before uploading this exact artifact. No production mutation has occurred at this checkpoint.
+- Backup progress was rechecked: the31-August temp generation grew from929,815,600 to930,506,276
+  bytes in three seconds; its `pg_dump` process is alive and isolated from the deployment artifact.
+  It need only gate schema/service activation, not a content-addressed upload or an unused image
+  build. Revised next exact action: create the R50 release ledger as `planned`, upload/hash/build/test
+  the unused copy-only image with network disabled while the backup continues, but do not run any
+  migration, edit the active Compose/env files or recreate wallet-alpha until the backup finalizes
+  and is independently list/SHA verified.
 
 ## Completion conditions
 
