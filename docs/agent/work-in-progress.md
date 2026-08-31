@@ -438,6 +438,12 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   `postgres` and templates. Next exact action is one `--exit-on-error --no-owner --no-privileges`
   restore from the verified immutable dump. If the PG18 client emits any PG16-incompatible command,
   record failure, discard only this isolated clone and obtain matching PG16 restore tooling.
+- The guarded PG18 restore stopped before schema/data at its first command because PG16 correctly
+  rejects PG18's `SET transaction_timeout`; the isolated database remains empty-sized and this is
+  not accepted as a restore. PostgreSQL.org routes Windows binary archives to EDB; the current
+  matching 16.15 Windows x64 archive is EDB file id `1260468` (HTTP 200, 332,445,137 bytes). Next:
+  download it only to the local temp validation directory, extract it separately, verify
+  `pg_restore --version` is 16.15, then rerun the same exit-on-error restore. No production action.
 
 ## Completion conditions
 
