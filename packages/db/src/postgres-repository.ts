@@ -766,17 +766,7 @@ export class PostgresRepository
            OR ((SELECT execution_price_usd FROM existing) IS NULL AND $12::numeric IS NOT NULL)
            OR ((SELECT quote_value_usd FROM existing) IS NULL AND $13::numeric IS NOT NULL)
       ), revised AS MATERIALIZED (
-        SELECT
-          changed.*,
-          record_wallet_trade_revision(
-            chain,
-            wallet_address,
-            strategy_version,
-            slot,
-            observed_at,
-            signature,
-            idempotency_key
-          ) AS trade_revision
+        SELECT changed.*
         FROM ledger_changed AS changed
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(
@@ -873,17 +863,7 @@ export class PostgresRepository
           signature COLLATE "C",
           idempotency_key COLLATE "C"
       ), revised AS MATERIALIZED (
-        SELECT
-          changed_wallets.*,
-          record_wallet_trade_revision(
-            chain,
-            wallet_address,
-            strategy_version,
-            slot,
-            observed_at,
-            signature,
-            idempotency_key
-          ) AS trade_revision
+        SELECT changed_wallets.*
         FROM changed_wallets
       ), eligible_wallets AS MATERIALIZED (
         SELECT revised.*
@@ -1035,17 +1015,7 @@ export class PostgresRepository
           signature COLLATE "C",
           idempotency_key COLLATE "C"
       ), revised AS MATERIALIZED (
-        SELECT
-          changed_wallets.*,
-          record_wallet_trade_revision(
-            chain,
-            wallet_address,
-            strategy_version,
-            slot,
-            observed_at,
-            signature,
-            idempotency_key
-          ) AS trade_revision
+        SELECT changed_wallets.*
         FROM changed_wallets
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(

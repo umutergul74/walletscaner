@@ -215,6 +215,12 @@ replaces current lot state. Entry/outcome-only wakeups verify the same source re
 rewrite an unchanged checkpoint or ledger. These tables are derived continuation evidence, not an
 archive receipt and not permission to delete canonical wallet history.
 
+Migration 055 makes source invalidation independent of producer release age. Statement-level
+transition-table triggers coalesce canonical inserts, accounting/order updates and deletes to one
+revision per affected wallet per SQL statement. Raw/provider-only diagnostic updates are excluded;
+they cannot change the FIFO result. This preserves CAS when immutable older producer images and the
+new continuation reader overlap during a staged rollout without adding a per-row trigger amplifier.
+
 ## Wallet-alpha
 
 Migration 050 adds `wallet-evidence-daily-v1` cold artifacts over complete trade, entry and outcome

@@ -439,6 +439,11 @@ The staged Compose setting retains 112MiB old-space and the160MiB container ceil
 semi-space cap. On the17GB local PG16 clone, the11,857-trade wallet seeded in12pages at108.8MiB
 peakRSS; a trades-empty follow-up used100.6MiB and kept checkpoint ctid/generation unchanged.
 These local measurements do not replace immutable Linux artifact and shared-host capacity gates.
+Migration 055 is required before activating that reader while any older producer image remains.
+Its statement-level transition tables cover the canonical table boundary, coalesce each wallet once
+per producer statement and ignore raw/provider-only updates. Do not substitute reader-only rollout:
+without producer-independent revision invalidation, a concurrent or historical correction could be
+missed by the checkpoint CAS.
 Live price enrichment therefore applies admission at its already-changed wallet scope, not in the
 ordered claim. It passes `WALLET_ALPHA_MIN_TRADE_EVENTS`, `WALLET_ALPHA_MIN_ENTRIES` and
 `WALLET_ALPHA_WINDOW_DAYS` explicitly. The two probes stop at their small configured limits on the

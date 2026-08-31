@@ -23,4 +23,24 @@ describe("wallet FIFO continuation migration", () => {
     expect(sql).not.toMatch(/\b(?:DELETE|TRUNCATE|DROP)\b/i);
     expect(sql).not.toMatch(/\bFROM\s+wallet_trade_events\b/i);
   });
+
+  it("invalidates legacy producer statements once per wallet without raw-only churn", async () => {
+    const sql = await readFile(
+      new URL(
+        "../../../scripts/migrations/055_wallet_fifo_producer_invalidation.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    expect(sql).toContain("REFERENCING NEW TABLE AS wallet_fifo_new_rows");
+    expect(sql).toContain(
+      "REFERENCING OLD TABLE AS wallet_fifo_old_rows NEW TABLE AS wallet_fifo_new_rows"
+    );
+    expect(sql).toContain("REFERENCING OLD TABLE AS wallet_fifo_old_rows");
+    expect(sql).toContain("chain COLLATE \"C\", wallet_address COLLATE \"C\"");
+    expect(sql).toContain("to_jsonb(new_row) - 'raw' - 'provider'");
+    expect(sql).toContain("record_wallet_trade_revision(");
+    expect(sql).not.toMatch(/\b(?:TRUNCATE|DELETE\s+FROM)\b/i);
+  });
 });

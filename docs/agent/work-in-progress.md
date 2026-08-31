@@ -551,6 +551,17 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   statement (including legacy producer paths), remove duplicate explicit revision calls from the
   new repository path, and prove insert/accounting-update/delete plus raw-only no-op behavior in
   PostgreSQL16. Do not mutate production while this gate is open; active alpha remains exactR43.
+- Migration055 now implements three statement-level transition-table triggers. Inserts, non-
+  diagnostic updates and deletes call the054 revision primitive once per affected wallet in stable
+  C order; raw/provider-only updates are ignored. New repository code no longer makes duplicate
+  explicit calls. Targeted legacy/repository tests pass4/4 and the entire PostgreSQL evidence file
+  passes41/41 (one prior run had two unrelated timing/state failures; an immediate full rerun passed
+  without threshold changes). Populated054->055 normal-runner upgrade took2,089ms/98,984WAL bytes,
+  retained relfilenode172701 and4,917,100,544-byte wallet table, four total non-internal wallet-table
+  triggers and zero invalid indexes. A rolled-back1,000-row/100-wallet insert executed in210.483ms;
+  migration055's coalesced trigger used35.226ms/one call, versus79.702ms/1,000calls in the existing
+  archive trigger. Next: full native gate/type/lint/build, commit R51 source, create a new immutable
+  artifact and Linux gate. Production remains exactR43; the active backup still gates migration.
 
 ## Completion conditions
 

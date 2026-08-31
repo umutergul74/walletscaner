@@ -453,6 +453,102 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(afterNoop.rows).toEqual(beforeNoop.rows);
   });
 
+  it("invalidates direct legacy trade statements and ignores raw/provider-only updates", async () => {
+    const walletAddress = "LegacyFifoProducerWallet111";
+    const strategyVersion = "legacy-fifo-producer-v1";
+    await testPool.query(
+      `INSERT INTO wallet_trade_events (
+         idempotency_key, chain, wallet_address, token_address, side, base_amount,
+         data_quality, signature, slot, provider, observed_at, strategy_version, raw
+       ) VALUES
+         ('legacy-fifo-trade-1', 'solana', $1, 'LegacyFifoMint111', 'buy', 10,
+          'observed-balance', 'legacy-fifo-signature-1', 45001, 'legacy-v1',
+          '2026-08-30T02:01:00.000Z', $2, '{}'),
+         ('legacy-fifo-trade-2', 'solana', $1, 'LegacyFifoMint111', 'sell', 10,
+          'observed-balance', 'legacy-fifo-signature-2', 45002, 'legacy-v1',
+          '2026-08-30T02:02:00.000Z', $2, '{}')`,
+      [walletAddress, strategyVersion]
+    );
+    expect(
+      await testPool.query(
+        `SELECT revision, dirty_order_known, dirty_min_slot
+         FROM wallet_trade_revisions
+         WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({
+      rows: [{ revision: "1", dirty_order_known: true, dirty_min_slot: "45001" }]
+    });
+
+    const payload = JSON.stringify({ legacyProducer: true });
+    expect(
+      await repository.commitWalletFifoContinuation({
+        chain: "solana",
+        walletAddress,
+        strategyVersion,
+        expectedTradeRevision: 1,
+        mode: "full-rebuild",
+        checkpoint: {
+          version: "fifo-continuation-v1",
+          payload,
+          sha256: createHash("sha256").update(payload).digest("hex"),
+          lastOrder: {
+            slot: 45_002,
+            observedAt: "2026-08-30T02:02:00.000Z",
+            signature: "legacy-fifo-signature-2",
+            idempotencyKey: "legacy-fifo-trade-2"
+          }
+        },
+        calculatedAt: "2026-08-30T03:00:00.000Z",
+        realizations: []
+      })
+    ).toBe(true);
+
+    await testPool.query(
+      `UPDATE wallet_trade_events
+       SET raw = raw || '{"diagnostic":true}'::jsonb,
+           provider = 'legacy-v2'
+       WHERE wallet_address=$1 AND strategy_version=$2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(
+      await testPool.query(
+        `SELECT revision, dirty_order_known FROM wallet_trade_revisions
+         WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ revision: "1", dirty_order_known: false }] });
+
+    await testPool.query(
+      `UPDATE wallet_trade_events
+       SET execution_price_usd = 2, quote_value_usd = base_amount * 2
+       WHERE wallet_address=$1 AND strategy_version=$2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(
+      await testPool.query(
+        `SELECT revision, dirty_order_known, dirty_min_slot
+         FROM wallet_trade_revisions
+         WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({
+      rows: [{ revision: "2", dirty_order_known: true, dirty_min_slot: "45001" }]
+    });
+
+    await testPool.query(
+      `DELETE FROM wallet_trade_events WHERE wallet_address=$1 AND strategy_version=$2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(
+      await testPool.query(
+        `SELECT revision, dirty_min_slot FROM wallet_trade_revisions
+         WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ revision: "3", dirty_min_slot: "45001" }] });
+  });
+
   it("pages same-slot FIFO evidence in C order and bounds only the remaining suffix", async () => {
     const strategyVersion = "fifo-page-order-integration-v1";
     const walletAddress = "FifoPageOrderWallet111";

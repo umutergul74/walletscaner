@@ -24,6 +24,14 @@ before every operational claim or mutation.
   read0trade rows and left the2,674,026-byte checkpoint at ctid(0,2)/generation1. This prevents
   repeated wide checkpoint WAL/bloat. Production migration/image/canary and live queue/storage
   equilibrium remain unproven; no canonical wallet history was retired.
+- R50 immutable Linux staging passed45/45 targeted tests and a3.71s/107.97MiB bounded benchmark but
+  was deliberately not activated: live producer images predate migration054's explicit revision
+  calls. Local migration055 now enforces producer-independent statement-level invalidation, while
+  excluding raw/provider-only changes. PostgreSQL integration passes41/41. On the populated17GB
+  clone,054->055 took2.089s/98,984WAL bytes, retained wallet trade relfilenode172701/size4,917,100,544
+  and left zero invalid indexes. A rolled-back1,000-row/100-wallet batch measured35.226ms for the new
+  one-call-per-statement trigger versus79.702ms in the pre-existing per-row archive trigger. R51 full
+  gate/artifact and production activation remain pending; alpha stays exactR43.
 
 ## 2026-08-30 22:44 UTC R48 maintenance closure and local alpha Phase3a
 
