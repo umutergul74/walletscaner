@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-31T22:39:06Z
+updated_at_utc: 2026-08-31T22:43:00Z
 owner: codex
 task: bounded alpha producer and sustainable wallet evidence storage
 last_safe_checkpoint: R51 staged and current backup verified; live exactR43/migration051 unchanged; production rollout preflight passed and no mutation is in progress
@@ -614,6 +614,12 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   revision3 to a new migration phase planned, then in_progress; stop only wallet-alpha, run the
   exact R51 one-shot migration with explicit5s lock/60s statement limits, and independently verify
   migrations052-055/checksums/triggers/relfilenode/indexes before any config or service activation.
+- The server rollout ledger is now revision4, phase `migrate-fifo-schema`, status `planned`, SHA-256
+  `a7037697be0864fecc7d6886573e8b4d2fb2a8d543f437a56232669660fba224`. Its dry-run and atomic apply
+  both passed; an independent JSON readback confirmed the revision/phase/status. No service, schema,
+  Compose or environment value changed in this phase. A trailing CRLF-only shell diagnostic occurred
+  after the readback and has no state ambiguity. Next: re-read revision4, transition this same phase
+  to `in_progress`, stop only wallet-alpha, apply the bounded exact-image migration once, then verify.
 
 ## Completion conditions
 
