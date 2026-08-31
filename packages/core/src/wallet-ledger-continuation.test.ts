@@ -4,6 +4,7 @@ import {
   advanceWalletLedger,
   buildWalletLedger,
   buildWalletAlphaScores,
+  walletLedgerCheckpointOrder,
   type WalletLedger
 } from "./wallet-alpha-engine";
 
@@ -202,6 +203,20 @@ describe("bounded FIFO continuation (not yet a production reader)", () => {
     expect(next.checkpoint).toEqual(first.checkpoint);
     expect(next.ledger.realizedEpisodes).toEqual([]);
     expect(next.ledger.openInventory).toEqual(first.ledger.openInventory);
+  });
+
+  it("exposes only an integrity-checked continuation boundary", () => {
+    const first = advanceWalletLedger(fixture().slice(0, 5));
+    expect(walletLedgerCheckpointOrder(first.checkpoint)).toMatchObject({
+      slot: 105,
+      idempotencyKey: "trade-5"
+    });
+    expect(() =>
+      walletLedgerCheckpointOrder({
+        ...first.checkpoint,
+        payload: first.checkpoint.payload.replace("trade-5", "trade-X")
+      })
+    ).toThrow(/integrity/);
   });
 
   it("omits provider payloads and consumed lots from the retained state", () => {

@@ -102,7 +102,9 @@ CREATE TABLE IF NOT EXISTS wallet_fifo_realization_facts (
   net_return_pct NUMERIC NOT NULL,
   high_quality BOOLEAN NOT NULL,
   price_quality TEXT NOT NULL CHECK (
-    price_quality IN ('observed-execution', 'oracle-converted', 'market-proxy', 'unknown')
+    price_quality IN (
+      'observed-execution', 'oracle-converted', 'market-proxy', 'historical-estimate'
+    )
   ),
   exact BOOLEAN NOT NULL,
   source_trade_revision BIGINT NOT NULL CHECK (source_trade_revision >= 0),

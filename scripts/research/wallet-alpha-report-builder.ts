@@ -2,17 +2,26 @@ import type {
   CanonicalRepository,
   EvidenceRepository,
   IntelligenceRepository,
+  WalletFifoContinuationCommit,
+  WalletFifoContinuationState,
+  WalletFifoRealizationFact,
   WalletAlphaWorkItem,
   WalletAlphaWorkPriority,
   WalletAlphaWorkSummary,
   WalletPositionLedgerSnapshot
 } from "@memecoin-alpha/db";
 import {
+  advanceWalletLedger,
   buildWalletLedger,
   buildWalletAlphaScores,
-  buildWalletAlphaSignals
+  buildWalletAlphaSignals,
+  walletLedgerCheckpointOrder
 } from "@memecoin-alpha/core";
-import type { WalletLedger } from "@memecoin-alpha/core";
+import type {
+  WalletClosedPosition,
+  WalletLedger,
+  WalletLedgerCheckpoint
+} from "@memecoin-alpha/core";
 import type { WalletAlphaScoreSnapshot, WalletAlphaSignalEvidence } from "@memecoin-alpha/shared";
 
 export type WalletAlphaMode = "observe-only" | "paper-watch" | "paper-validate candidate";
@@ -368,13 +377,28 @@ export async function processWalletAlphaQueue(
         throw evidenceLimitError(item.walletAddress, "outcomes", maximumOutcomesPerWallet);
       }
 
+      const fifoState = await repository.getWalletFifoContinuationState(
+        item.chain,
+        item.walletAddress,
+        strategyVersion,
+        maximumTradeEventsPerWallet
+      );
+      const fifoMode = walletFifoMode(fifoState);
       const [ledgerTrades, entries, outcomes, matchingCreators] = await Promise.all([
-        repository.listWalletTradeLedgerInputsForWallets(
-          walletAddresses,
-          strategyVersion,
-          undefined,
-          maximumTradeEventsPerWallet + 1
-        ),
+        fifoMode === "append"
+          ? repository.listWalletTradeLedgerInputsAfter(
+              item.chain,
+              item.walletAddress,
+              strategyVersion,
+              fifoState.continuation!.lastOrder,
+              maximumTradeEventsPerWallet
+            )
+          : repository.listWalletTradeLedgerInputsForWallets(
+              walletAddresses,
+              strategyVersion,
+              undefined,
+              maximumTradeEventsPerWallet + 1
+            ),
         repository.listWalletEntrySignalsForWallets(
           walletAddresses,
           strategyVersion,
@@ -410,7 +434,24 @@ export async function processWalletAlphaQueue(
       const trades = ledgerTrades.filter(
         (trade) => new Date(trade.observedAt).getTime() >= minimumObservedAtMs
       );
-      const ledger = buildWalletLedger(ledgerTrades);
+      const continuationResult =
+        ledgerTrades.length === 0 && fifoMode === "full-rebuild"
+          ? undefined
+          : advanceWalletLedger(
+              ledgerTrades,
+              fifoMode === "append" && fifoState.continuation
+                ? {
+                    version: fifoState.continuation.version,
+                    payload: fifoState.continuation.payload,
+                    sha256: fifoState.continuation.sha256
+                  }
+                : undefined
+            );
+      const ledger = continuationResult
+        ? fifoMode === "append"
+          ? combineWalletFifoLedger(fifoState, continuationResult.ledger)
+          : continuationResult.ledger
+        : buildWalletLedger(ledgerTrades);
       const prebuiltLedgers = partitionWalletLedger(ledger, walletAddresses);
       if (
         ledgerTrades.length >= maximumTradeEventsPerWallet / 2 ||
@@ -423,14 +464,42 @@ export async function processWalletAlphaQueue(
           ledgerTrades: ledgerTrades.length,
           entries: entries.length,
           outcomes: outcomes.length,
+          fifoMode,
           episodes: ledger.positionEpisodes.length,
           lots: ledger.positionLots.length
         });
       }
 
-      await repository.replaceWalletPositionLedger(
-        ledgerSnapshot(ledger, item.chain, strategyVersion, now, walletAddresses)
-      );
+      if (fifoMode === "full-rebuild") {
+        await repository.replaceWalletPositionLedger(
+          ledgerSnapshot(ledger, item.chain, strategyVersion, now, walletAddresses)
+        );
+      } else {
+        await repository.mergeWalletPositionLedger(
+          ledgerSnapshot(
+            continuationResult!.ledger,
+            item.chain,
+            strategyVersion,
+            now,
+            walletAddresses
+          )
+        );
+      }
+      if (continuationResult) {
+        const committed = await repository.commitWalletFifoContinuation(
+          walletFifoCommit(
+            item,
+            fifoState.tradeRevision,
+            fifoMode,
+            continuationResult.checkpoint,
+            continuationResult.ledger,
+            now
+          )
+        );
+        if (!committed) {
+          throw new Error(`Wallet FIFO revision changed for ${item.walletAddress}.`);
+        }
+      }
 
       const scores = buildWalletAlphaScores({
         trades,
@@ -518,6 +587,154 @@ function walletAlphaWorkRevisionKey(input: {
   revision: number;
 }): string {
   return [input.chain, input.walletAddress, input.strategyVersion, input.revision].join(":");
+}
+
+function walletFifoMode(
+  state: WalletFifoContinuationState
+): WalletFifoContinuationCommit["mode"] {
+  const continuation = state.continuation;
+  if (!continuation || continuation.tradeRevision > state.tradeRevision) return "full-rebuild";
+  if (continuation.tradeRevision === state.tradeRevision) {
+    return state.dirtyOrder ? "full-rebuild" : "append";
+  }
+  if (!state.dirtyOrder) return "full-rebuild";
+  return compareWalletTradeOrder(state.dirtyOrder, continuation.lastOrder) > 0
+    ? "append"
+    : "full-rebuild";
+}
+
+function compareWalletTradeOrder(
+  a: { slot: number; observedAt: string; signature: string; idempotencyKey: string },
+  b: { slot: number; observedAt: string; signature: string; idempotencyKey: string }
+): number {
+  return (
+    a.slot - b.slot ||
+    new Date(a.observedAt).getTime() - new Date(b.observedAt).getTime() ||
+    compareCodeUnits(a.signature, b.signature) ||
+    compareCodeUnits(a.idempotencyKey, b.idempotencyKey)
+  );
+}
+
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function combineWalletFifoLedger(
+  state: WalletFifoContinuationState,
+  delta: WalletLedger
+): WalletLedger {
+  const realized = new Map<string, WalletClosedPosition>();
+  for (const fact of state.realizations) {
+    realized.set(fact.realizationId, walletClosedPositionFromFact(fact));
+  }
+  for (const position of delta.realizedEpisodes) realized.set(position.episodeId, position);
+  return {
+    realizedEpisodes: [...realized.values()].sort(
+      (a, b) =>
+        new Date(a.closedAt).getTime() - new Date(b.closedAt).getTime() ||
+        compareCodeUnits(a.episodeId, b.episodeId)
+    ),
+    openInventory: delta.openInventory,
+    positionEpisodes: delta.positionEpisodes,
+    positionLots: delta.positionLots
+  };
+}
+
+function walletClosedPositionFromFact(fact: WalletFifoRealizationFact): WalletClosedPosition {
+  return {
+    episodeId: fact.realizationId,
+    walletAddress: fact.walletAddress,
+    tokenAddress: fact.tokenAddress,
+    roundTripIndex: fact.roundTripIndex,
+    sellIdempotencyKey: fact.sellEventIdempotencyKey,
+    openedAt: fact.openedAt,
+    closedAt: fact.closedAt,
+    realizedBaseAmount: {
+      rawAmount: fact.realizedRawAmount,
+      decimals: fact.tokenDecimals
+    },
+    remainingBaseAmount: {
+      rawAmount: fact.remainingRawAmount,
+      decimals: fact.tokenDecimals
+    },
+    investedUsd: fact.investedUsd,
+    proceedsUsd: fact.proceedsUsd,
+    netPnlUsd: fact.netPnlUsd,
+    netReturnPct: fact.netReturnPct,
+    highQuality: fact.highQuality,
+    priceQuality: fact.priceQuality,
+    exact: fact.exact
+  };
+}
+
+function walletFifoCommit(
+  item: WalletAlphaWorkItem,
+  expectedTradeRevision: number,
+  mode: WalletFifoContinuationCommit["mode"],
+  checkpoint: WalletLedgerCheckpoint,
+  delta: WalletLedger,
+  calculatedAt: string
+): WalletFifoContinuationCommit {
+  const lastOrder = walletLedgerCheckpointOrder(checkpoint);
+  const parentEpisodeByRealization = new Map<string, string>();
+  for (const episode of delta.positionEpisodes) {
+    const realizations = episode.metadata.realizations;
+    if (!Array.isArray(realizations)) continue;
+    for (const value of realizations) {
+      if (value && typeof value === "object" && typeof value.id === "string") {
+        parentEpisodeByRealization.set(value.id, episode.episodeId);
+      }
+    }
+  }
+  const realizations = delta.realizedEpisodes.map((position) => {
+    const episodeId = parentEpisodeByRealization.get(position.episodeId);
+    if (!episodeId) {
+      throw new Error(`FIFO realization ${position.episodeId} has no durable parent episode.`);
+    }
+    return {
+      realizationId: position.episodeId,
+      episodeId,
+      chain: item.chain,
+      walletAddress: item.walletAddress,
+      tokenAddress: position.tokenAddress,
+      strategyVersion: item.strategyVersion,
+      roundTripIndex: position.roundTripIndex,
+      sellEventIdempotencyKey: position.sellIdempotencyKey,
+      openedAt: position.openedAt,
+      closedAt: position.closedAt,
+      realizedRawAmount: position.realizedBaseAmount.rawAmount,
+      remainingRawAmount: position.remainingBaseAmount.rawAmount,
+      tokenDecimals: position.realizedBaseAmount.decimals,
+      investedUsd: position.investedUsd,
+      proceedsUsd: position.proceedsUsd,
+      netPnlUsd: position.netPnlUsd,
+      netReturnPct: position.netReturnPct,
+      highQuality: position.highQuality,
+      priceQuality: position.priceQuality,
+      exact: position.exact,
+      sourceTradeRevision: expectedTradeRevision
+    } satisfies WalletFifoRealizationFact;
+  });
+  return {
+    chain: item.chain,
+    walletAddress: item.walletAddress,
+    strategyVersion: item.strategyVersion,
+    expectedTradeRevision,
+    mode,
+    checkpoint: {
+      version: checkpoint.version,
+      payload: checkpoint.payload,
+      sha256: checkpoint.sha256,
+      lastOrder: {
+        slot: lastOrder.slot,
+        observedAt: lastOrder.observedAt,
+        signature: lastOrder.signature,
+        idempotencyKey: lastOrder.idempotencyKey
+      }
+    },
+    calculatedAt,
+    realizations
+  };
 }
 
 export async function refreshWalletAlphaSignals(

@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateWalletSignalOutcome, recordFirstWalletEntry } from "@memecoin-alpha/core";
@@ -96,6 +97,20 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
       raw: {}
     });
 
+    expect(
+      await repository.getWalletFifoContinuationState(
+        "solana",
+        walletAddress,
+        strategyVersion
+      )
+    ).toEqual({
+      chain: "solana",
+      walletAddress,
+      strategyVersion,
+      tradeRevision: 0,
+      realizations: []
+    });
+
     expect(await repository.saveWalletTradeEvent(baseTrade(1))).toBe(true);
     expect(await repository.saveWalletTradeEvent(baseTrade(2))).toBe(true);
     expect(await repository.saveWalletTradeEvent(baseTrade(2))).toBe(false);
@@ -123,21 +138,72 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
       (await repository.listWalletTradeLedgerInputsForWallets([walletAddress], strategyVersion))[0]
         ?.baseTokenAmount
     ).toEqual({ rawAmount: "10000001", decimals: 6 });
+    expect(
+      await repository.listWalletTradeLedgerInputsAfter(
+        "solana",
+        walletAddress,
+        strategyVersion,
+        {
+          slot: 40_001,
+          observedAt: "2026-08-30T00:01:00.000Z",
+          signature: "fifo-continuation-signature-1",
+          idempotencyKey: "fifo-continuation-trade-1"
+        }
+      )
+    ).toEqual([
+      expect.objectContaining({
+        idempotencyKey: "fifo-continuation-trade-2",
+        baseTokenAmount: { rawAmount: "10000002", decimals: 6 },
+        raw: {}
+      })
+    ]);
 
     const initialPayload = JSON.stringify({ checkpoint: "initial" });
     expect(
-      (
-        await testPool.query<{ committed: boolean }>(
-          `SELECT commit_wallet_fifo_continuation(
-             'solana', $1, $2, 2, 'fifo-continuation-v1', $3,
-             digest($3, 'sha256'), 40002, '2026-08-30T00:02:00.000Z',
-             'fifo-continuation-signature-2', 'fifo-continuation-trade-2',
-             '2026-08-30T01:00:00.000Z'
-           ) AS committed`,
-          [walletAddress, strategyVersion, initialPayload]
-        )
-      ).rows[0]?.committed
+      await repository.commitWalletFifoContinuation({
+        chain: "solana",
+        walletAddress,
+        strategyVersion,
+        expectedTradeRevision: 2,
+        mode: "full-rebuild",
+        checkpoint: {
+          version: "fifo-continuation-v1",
+          payload: initialPayload,
+          sha256: createHash("sha256").update(initialPayload).digest("hex"),
+          lastOrder: {
+            slot: 40_002,
+            observedAt: "2026-08-30T00:02:00.000Z",
+            signature: "fifo-continuation-signature-2",
+            idempotencyKey: "fifo-continuation-trade-2"
+          }
+        },
+        calculatedAt: "2026-08-30T01:00:00.000Z",
+        realizations: []
+      })
     ).toBe(true);
+    expect(
+      await repository.getWalletFifoContinuationState(
+        "solana",
+        walletAddress,
+        strategyVersion
+      )
+    ).toMatchObject({
+      tradeRevision: 2,
+      realizations: [],
+      continuation: {
+        version: "fifo-continuation-v1",
+        payload: initialPayload,
+        sha256: createHash("sha256").update(initialPayload).digest("hex"),
+        tradeRevision: 2,
+        generation: 1,
+        lastOrder: {
+          slot: 40_002,
+          observedAt: "2026-08-30T00:02:00.000Z",
+          signature: "fifo-continuation-signature-2",
+          idempotencyKey: "fifo-continuation-trade-2"
+        }
+      }
+    });
 
     expect(
       await repository.enrichWalletTradePrices({
@@ -175,17 +241,26 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
 
     const stalePayload = JSON.stringify({ checkpoint: "stale" });
     expect(
-      (
-        await testPool.query<{ committed: boolean }>(
-          `SELECT commit_wallet_fifo_continuation(
-             'solana', $1, $2, 2, 'fifo-continuation-v1', $3,
-             digest($3, 'sha256'), 40002, '2026-08-30T00:02:00.000Z',
-             'fifo-continuation-signature-2', 'fifo-continuation-trade-2',
-             '2026-08-30T01:01:00.000Z'
-           ) AS committed`,
-          [walletAddress, strategyVersion, stalePayload]
-        )
-      ).rows[0]?.committed
+      await repository.commitWalletFifoContinuation({
+        chain: "solana",
+        walletAddress,
+        strategyVersion,
+        expectedTradeRevision: 2,
+        mode: "append",
+        checkpoint: {
+          version: "fifo-continuation-v1",
+          payload: stalePayload,
+          sha256: createHash("sha256").update(stalePayload).digest("hex"),
+          lastOrder: {
+            slot: 40_002,
+            observedAt: "2026-08-30T00:02:00.000Z",
+            signature: "fifo-continuation-signature-2",
+            idempotencyKey: "fifo-continuation-trade-2"
+          }
+        },
+        calculatedAt: "2026-08-30T01:01:00.000Z",
+        realizations: []
+      })
     ).toBe(false);
 
     const lockClient = await testPool.connect();
@@ -263,6 +338,80 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
         )
       ).rows[0]
     ).toMatchObject({ trade_revision: "3", generation: "2" });
+
+    const finalPayload = JSON.stringify({ checkpoint: "final" });
+    expect(
+      await repository.commitWalletFifoContinuation({
+        chain: "solana",
+        walletAddress,
+        strategyVersion,
+        expectedTradeRevision: 4,
+        mode: "append",
+        checkpoint: {
+          version: "fifo-continuation-v1",
+          payload: finalPayload,
+          sha256: createHash("sha256").update(finalPayload).digest("hex"),
+          lastOrder: {
+            slot: 40_003,
+            observedAt: "2026-08-30T00:03:00.000Z",
+            signature: "fifo-continuation-signature-3",
+            idempotencyKey: "fifo-continuation-trade-3"
+          }
+        },
+        calculatedAt: "2026-08-30T01:03:00.000Z",
+        realizations: [
+          {
+            realizationId: "fifo-realization-1",
+            episodeId: "fifo-episode-1",
+            chain: "solana",
+            walletAddress,
+            tokenAddress: "FifoContinuationMint111",
+            strategyVersion,
+            roundTripIndex: 1,
+            sellEventIdempotencyKey: "fifo-continuation-trade-3",
+            openedAt: "2026-08-30T00:01:00.000Z",
+            closedAt: "2026-08-30T00:03:00.000Z",
+            realizedRawAmount: "1000000",
+            remainingRawAmount: "9000000",
+            tokenDecimals: 6,
+            investedUsd: 2,
+            proceedsUsd: 3,
+            netPnlUsd: 1,
+            netReturnPct: 50,
+            highQuality: true,
+            priceQuality: "observed-execution",
+            exact: true,
+            sourceTradeRevision: 4
+          }
+        ]
+      })
+    ).toBe(true);
+    expect(
+      (
+        await repository.getWalletFifoContinuationState(
+          "solana",
+          walletAddress,
+          strategyVersion
+        )
+      ).realizations
+    ).toEqual([
+      expect.objectContaining({
+        realizationId: "fifo-realization-1",
+        episodeId: "fifo-episode-1",
+        realizedRawAmount: "1000000",
+        remainingRawAmount: "9000000",
+        tokenDecimals: 6,
+        sourceTradeRevision: 4,
+        exact: true
+      })
+    ]);
+    expect(
+      await testPool.query(
+        `SELECT dirty_order_known FROM wallet_trade_revisions
+         WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ dirty_order_known: false }] });
   });
 
   it("coalesces historical materialization changes into one wallet source revision", async () => {
@@ -400,6 +549,137 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
          WHERE episode_id IN ('episode-old', 'episode-new')`
       )
     ).toMatchObject({ rows: [{ id: "lot-new", episode_id: "episode-new" }] });
+  });
+
+  it("merges one FIFO suffix without deleting prior closed episodes", async () => {
+    const strategyVersion = "ledger-suffix-merge-v1";
+    const walletAddress = "LedgerSuffixWallet111";
+    const tokenAddress = "LedgerSuffixMint111";
+    const episode = (
+      id: string,
+      episodeIndex: number,
+      status: "open" | "realized",
+      openedAt: string,
+      closedAt?: string
+    ) => ({
+      id,
+      chain: "solana" as const,
+      walletAddress,
+      tokenAddress,
+      strategyVersion,
+      episodeIndex,
+      status,
+      openedAt,
+      ...(closedAt ? { closedAt } : {}),
+      costBasisUsd: 10,
+      proceedsUsd: status === "realized" ? 12 : 0,
+      realizedPnlUsd: status === "realized" ? 2 : 0,
+      ...(status === "realized" ? { returnPct: 20 } : {}),
+      remainingRawAmount: status === "open" ? "1000" : "0",
+      tokenDecimals: 6,
+      realizedLotCount: status === "realized" ? 1 : 0,
+      highQualityPriceCoverage: 1,
+      metadata: {}
+    });
+    const lot = (
+      id: string,
+      episodeId: string,
+      openedAt: string,
+      status: "open" | "realized" = "open",
+      closedAt?: string
+    ) => ({
+      id,
+      episodeId,
+      sourceEventIdempotencyKey: `${id}-source`,
+      lotSequence: 1,
+      rawAmount: "1000",
+      remainingRawAmount: status === "realized" ? "0" : "1000",
+      tokenDecimals: 6,
+      quoteCostUsd: 10,
+      feesUsd: 0,
+      slippageUsd: 0,
+      openedAt,
+      ...(closedAt ? { closedAt } : {}),
+      status,
+      metadata: {}
+    });
+    await repository.replaceWalletPositionLedger({
+      chain: "solana",
+      strategyVersion,
+      generatedAt: "2026-08-30T03:00:00.000Z",
+      walletAddresses: [walletAddress],
+      episodes: [
+        episode(
+          "ledger-suffix-closed",
+          1,
+          "realized",
+          "2026-08-30T02:00:00.000Z",
+          "2026-08-30T02:10:00.000Z"
+        ),
+        episode("ledger-suffix-open", 2, "open", "2026-08-30T02:20:00.000Z")
+      ],
+      lots: [
+        lot(
+          "ledger-suffix-closed-lot",
+          "ledger-suffix-closed",
+          "2026-08-30T02:00:00.000Z",
+          "realized",
+          "2026-08-30T02:10:00.000Z"
+        ),
+        lot("ledger-suffix-old-lot", "ledger-suffix-open", "2026-08-30T02:20:00.000Z")
+      ]
+    });
+
+    await expect(
+      repository.mergeWalletPositionLedger({
+        chain: "solana",
+        strategyVersion,
+        generatedAt: "2026-08-30T03:05:00.000Z",
+        walletAddresses: [walletAddress],
+        episodes: [
+          episode(
+            "ledger-suffix-open",
+            2,
+            "realized",
+            "2026-08-30T02:20:00.000Z",
+            "2026-08-30T02:30:00.000Z"
+          ),
+          episode("ledger-suffix-new", 3, "open", "2026-08-30T02:40:00.000Z")
+        ],
+        lots: [
+          lot(
+            "ledger-suffix-old-lot",
+            "ledger-suffix-open",
+            "2026-08-30T02:20:00.000Z",
+            "realized",
+            "2026-08-30T02:30:00.000Z"
+          ),
+          lot("ledger-suffix-new-lot", "ledger-suffix-new", "2026-08-30T02:40:00.000Z")
+        ]
+      })
+    ).resolves.toEqual({ episodeCount: 2, lotCount: 1 });
+
+    expect(
+      await testPool.query(
+        `SELECT id, status FROM wallet_position_episodes
+         WHERE wallet_address = $1 AND strategy_version = $2 ORDER BY id`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({
+      rows: [
+        { id: "ledger-suffix-closed", status: "realized" },
+        { id: "ledger-suffix-new", status: "open" },
+        { id: "ledger-suffix-open", status: "realized" }
+      ]
+    });
+    expect(
+      await testPool.query(
+        `SELECT id, episode_id FROM wallet_position_lots
+         WHERE episode_id LIKE 'ledger-suffix-%' ORDER BY id`
+      )
+    ).toMatchObject({
+      rows: [{ id: "ledger-suffix-new-lot", episode_id: "ledger-suffix-new" }]
+    });
   });
 
   it("creates a missing payload partition without inverting the canonical inbox lock order", async () => {

@@ -462,11 +462,36 @@ export interface WalletLedgerCheckpoint {
   payload: string;
   sha256: string;
 }
+export type WalletLedgerCheckpointOrder = LedgerOrder;
 interface LedgerContinuationPayload {
   scope: string;
   roundTripCostPct: number;
   lastOrder: LedgerOrder;
   markets: LedgerMarketContinuation[];
+}
+
+export function walletLedgerCheckpointOrder(
+  checkpoint: WalletLedgerCheckpoint
+): WalletLedgerCheckpointOrder {
+  if (
+    checkpoint.version !== "fifo-continuation-v1" ||
+    Buffer.byteLength(checkpoint.payload) > 4 * 1024 * 1024 ||
+    createHash("sha256").update(checkpoint.payload).digest("hex") !== checkpoint.sha256
+  ) {
+    throw new Error("Invalid FIFO continuation checkpoint integrity");
+  }
+  const parsed = JSON.parse(checkpoint.payload) as Partial<LedgerContinuationPayload>;
+  const order = parsed.lastOrder;
+  if (
+    !order ||
+    !Number.isSafeInteger(order.slot) ||
+    !Number.isFinite(Date.parse(order.observedAt)) ||
+    typeof order.signature !== "string" ||
+    typeof order.idempotencyKey !== "string"
+  ) {
+    throw new Error("Invalid FIFO continuation checkpoint order");
+  }
+  return { ...order };
 }
 
 /**

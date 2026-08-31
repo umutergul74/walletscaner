@@ -19,6 +19,7 @@ import type {
   WalletAlphaSignalEvidence,
   WalletSignalOutcomeEvidence,
   WalletTradeEvidence,
+  WalletTradePriceQuality,
   WalletScore
 } from "@memecoin-alpha/shared";
 import type {
@@ -61,6 +62,9 @@ import type {
   WalletAlphaWorkItem,
   WalletAlphaWorkPriority,
   WalletAlphaWorkSummary,
+  WalletFifoContinuationState,
+  WalletFifoContinuationCommit,
+  WalletTradeOrderBoundary,
   WalletPositionEpisode,
   WalletPositionLedgerSnapshot,
   WalletPositionLedgerWriteResult,
@@ -81,6 +85,8 @@ interface TransactionClient {
 }
 
 const POSTGRES_JSON_NUL_MARKER = "_walletscanerPayloadEncoding";
+
+class WalletFifoContinuationCasMismatch extends Error {}
 
 function encodePostgresJsonPayload(payload: Record<string, unknown>): Record<string, unknown> {
   if (!containsPostgresJsonNul(payload)) return payload;
@@ -1148,49 +1154,12 @@ export class PostgresRepository
   ): Promise<WalletPositionLedgerWriteResult> {
     assertWalletPositionLedgerSnapshot(snapshot);
     const walletScope = snapshot.walletAddresses ?? null;
-    const episodeRows = snapshot.episodes.map((episode) => ({
-      id: episode.id,
-      chain: episode.chain,
-      wallet_address: episode.walletAddress,
-      token_address: episode.tokenAddress,
-      strategy_version: episode.strategyVersion,
-      episode_index: episode.episodeIndex,
-      status: episode.status,
-      opened_at: episode.openedAt,
-      closed_at: episode.closedAt ?? null,
-      cost_basis_usd: episode.costBasisUsd,
-      proceeds_usd: episode.proceedsUsd,
-      realized_pnl_usd: episode.realizedPnlUsd,
-      return_pct: episode.returnPct ?? null,
-      remaining_raw_amount: episode.remainingRawAmount,
-      token_decimals: episode.tokenDecimals,
-      realized_lot_count: episode.realizedLotCount,
-      high_quality_price_coverage: episode.highQualityPriceCoverage,
-      terminal_reason: episode.terminalReason ?? null,
-      metadata: episode.metadata
-    }));
+    const episodeRows = walletPositionEpisodeRows(snapshot);
     // Closed-lot detail is deterministic from canonical trades and contributes
     // nothing to the next FIFO continuation. Persist only the compact open
     // inventory working set; realized-lot audit detail belongs in the verified
     // wallet-evidence archive and the episode scalar.
-    const lotRows = snapshot.lots
-      .filter((lot) => lot.status !== "realized")
-      .map((lot) => ({
-        id: lot.id,
-        episode_id: lot.episodeId,
-        source_event_idempotency_key: lot.sourceEventIdempotencyKey,
-        lot_sequence: lot.lotSequence,
-        raw_amount: lot.rawAmount,
-        remaining_raw_amount: lot.remainingRawAmount,
-        token_decimals: lot.tokenDecimals,
-        quote_cost_usd: lot.quoteCostUsd,
-        fees_usd: lot.feesUsd,
-        slippage_usd: lot.slippageUsd,
-        opened_at: lot.openedAt,
-        closed_at: lot.closedAt ?? null,
-        status: lot.status,
-        metadata: lot.metadata
-      }));
+    const lotRows = walletPositionLotRows(snapshot);
 
     return this.withTransaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
@@ -1336,6 +1305,109 @@ export class PostgresRepository
             EXCLUDED.status,
             EXCLUDED.metadata
           )`,
+          [JSON.stringify(lotRows)]
+        );
+      }
+      return { episodeCount: episodeRows.length, lotCount: lotRows.length };
+    });
+  }
+
+  async mergeWalletPositionLedger(
+    snapshot: WalletPositionLedgerSnapshot
+  ): Promise<WalletPositionLedgerWriteResult> {
+    assertWalletPositionLedgerSnapshot(snapshot);
+    if (!snapshot.walletAddresses || snapshot.walletAddresses.length !== 1) {
+      throw new Error("Incremental wallet ledger merge requires exactly one wallet scope.");
+    }
+    const walletAddress = snapshot.walletAddresses[0]!;
+    const episodeRows = walletPositionEpisodeRows(snapshot);
+    const lotRows = walletPositionLotRows(snapshot);
+    return this.withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+        `${snapshot.chain}:${snapshot.strategyVersion}`,
+        walletAddress
+      ]);
+
+      // The continuation checkpoint contains the complete current open inventory. Replace only
+      // that bounded working set; prior closed episodes remain durable profitability evidence.
+      await client.query(
+        `DELETE FROM wallet_position_lots AS lot
+         USING wallet_position_episodes AS episode
+         WHERE lot.episode_id = episode.id
+           AND episode.chain = $1
+           AND episode.strategy_version = $2
+           AND episode.wallet_address = $3`,
+        [snapshot.chain, snapshot.strategyVersion, walletAddress]
+      );
+
+      if (episodeRows.length > 0) {
+        await client.query(
+          `INSERT INTO wallet_position_episodes (
+             id, chain, wallet_address, token_address, strategy_version, episode_index,
+             status, opened_at, closed_at, cost_basis_usd, proceeds_usd, realized_pnl_usd,
+             return_pct, remaining_raw_amount, token_decimals, realized_lot_count,
+             high_quality_price_coverage, terminal_reason, metadata
+           )
+           SELECT
+             input.id, input.chain, input.wallet_address, input.token_address,
+             input.strategy_version, input.episode_index, input.status, input.opened_at,
+             input.closed_at, input.cost_basis_usd, input.proceeds_usd,
+             input.realized_pnl_usd, input.return_pct, input.remaining_raw_amount,
+             input.token_decimals, input.realized_lot_count,
+             input.high_quality_price_coverage, input.terminal_reason, input.metadata
+           FROM jsonb_to_recordset($1::jsonb) AS input(
+             id text, chain text, wallet_address text, token_address text,
+             strategy_version text, episode_index integer, status text,
+             opened_at timestamptz, closed_at timestamptz, cost_basis_usd numeric,
+             proceeds_usd numeric, realized_pnl_usd numeric, return_pct numeric,
+             remaining_raw_amount numeric, token_decimals smallint,
+             realized_lot_count integer, high_quality_price_coverage numeric,
+             terminal_reason text, metadata jsonb
+           )
+           ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             closed_at = EXCLUDED.closed_at,
+             cost_basis_usd = EXCLUDED.cost_basis_usd,
+             proceeds_usd = EXCLUDED.proceeds_usd,
+             realized_pnl_usd = EXCLUDED.realized_pnl_usd,
+             return_pct = EXCLUDED.return_pct,
+             remaining_raw_amount = EXCLUDED.remaining_raw_amount,
+             token_decimals = EXCLUDED.token_decimals,
+             realized_lot_count = EXCLUDED.realized_lot_count,
+             high_quality_price_coverage = EXCLUDED.high_quality_price_coverage,
+             terminal_reason = EXCLUDED.terminal_reason,
+             metadata = EXCLUDED.metadata`,
+          [JSON.stringify(episodeRows)]
+        );
+      }
+      if (lotRows.length > 0) {
+        await client.query(
+          `INSERT INTO wallet_position_lots (
+             id, episode_id, source_event_idempotency_key, lot_sequence, raw_amount,
+             remaining_raw_amount, token_decimals, quote_cost_usd, fees_usd,
+             slippage_usd, opened_at, closed_at, status, metadata
+           )
+           SELECT
+             input.id, input.episode_id, input.source_event_idempotency_key,
+             input.lot_sequence, input.raw_amount, input.remaining_raw_amount,
+             input.token_decimals, input.quote_cost_usd, input.fees_usd,
+             input.slippage_usd, input.opened_at, input.closed_at, input.status,
+             input.metadata
+           FROM jsonb_to_recordset($1::jsonb) AS input(
+             id text, episode_id text, source_event_idempotency_key text,
+             lot_sequence integer, raw_amount numeric, remaining_raw_amount numeric,
+             token_decimals smallint, quote_cost_usd numeric, fees_usd numeric,
+             slippage_usd numeric, opened_at timestamptz, closed_at timestamptz,
+             status text, metadata jsonb
+           )
+           ON CONFLICT (id) DO UPDATE SET
+             remaining_raw_amount = EXCLUDED.remaining_raw_amount,
+             quote_cost_usd = EXCLUDED.quote_cost_usd,
+             fees_usd = EXCLUDED.fees_usd,
+             slippage_usd = EXCLUDED.slippage_usd,
+             closed_at = EXCLUDED.closed_at,
+             status = EXCLUDED.status,
+             metadata = EXCLUDED.metadata`,
           [JSON.stringify(lotRows)]
         );
       }
@@ -2860,6 +2932,292 @@ export class PostgresRepository
       [walletParameter, strategyVersion, minObservedAt ?? null, maxRows ?? null]
     );
     return result.rows.map((row) => rowToWalletTradeEvent(row));
+  }
+
+  async getWalletFifoContinuationState(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    maximumRealizations = 10_000
+  ): Promise<WalletFifoContinuationState> {
+    const boundedMaximum = clampLimit(maximumRealizations, 10_000, 100_000);
+    const [stateResult, realizationResult] = await Promise.all([
+      this.pool.query(
+        `SELECT
+           revision.revision,
+           revision.dirty_order_known,
+           revision.dirty_min_slot,
+           revision.dirty_min_observed_at,
+           revision.dirty_min_signature,
+           revision.dirty_min_idempotency_key,
+           continuation.checkpoint_version,
+           continuation.checkpoint_payload,
+           encode(continuation.checkpoint_sha256, 'hex') AS checkpoint_sha256,
+           continuation.trade_revision AS checkpoint_trade_revision,
+           continuation.generation,
+           continuation.last_slot,
+           continuation.last_observed_at,
+           continuation.last_signature,
+           continuation.last_idempotency_key,
+           continuation.calculated_at
+         FROM (VALUES (1)) AS seed(value)
+         LEFT JOIN wallet_trade_revisions AS revision
+           ON revision.chain = $1
+          AND revision.wallet_address = $2
+          AND revision.strategy_version = $3
+         LEFT JOIN wallet_fifo_continuations AS continuation
+           ON continuation.chain = $1
+          AND continuation.wallet_address = $2
+          AND continuation.strategy_version = $3`,
+        [chain, walletAddress, strategyVersion]
+      ),
+      this.pool.query(
+        `SELECT *
+         FROM wallet_fifo_realization_facts
+         WHERE chain = $1
+           AND wallet_address = $2
+           AND strategy_version = $3
+         ORDER BY closed_at, realization_id
+         LIMIT $4`,
+        [chain, walletAddress, strategyVersion, boundedMaximum + 1]
+      )
+    ]);
+    if (realizationResult.rows.length > boundedMaximum) {
+      throw new Error(
+        `Wallet ${walletAddress} exceeded FIFO realization safety limit ${boundedMaximum}.`
+      );
+    }
+    const row = stateResult.rows[0] ?? {};
+    const dirtyOrder = row.dirty_order_known
+      ? walletTradeOrderBoundary(row, "dirty_min_")
+      : undefined;
+    const continuation = row.checkpoint_version
+      ? {
+          version: row.checkpoint_version as "fifo-continuation-v1",
+          payload: String(row.checkpoint_payload),
+          sha256: String(row.checkpoint_sha256),
+          tradeRevision: Number(row.checkpoint_trade_revision),
+          generation: Number(row.generation),
+          lastOrder: walletTradeOrderBoundary(row, "last_"),
+          calculatedAt: new Date(String(row.calculated_at)).toISOString()
+        }
+      : undefined;
+    return {
+      chain,
+      walletAddress,
+      strategyVersion,
+      tradeRevision: Number(row.revision ?? 0),
+      ...(dirtyOrder ? { dirtyOrder } : {}),
+      ...(continuation ? { continuation } : {}),
+      realizations: realizationResult.rows.map((fact) => ({
+        realizationId: String(fact.realization_id),
+        episodeId: String(fact.episode_id),
+        chain: fact.chain as ChainId,
+        walletAddress: String(fact.wallet_address),
+        tokenAddress: String(fact.token_address),
+        strategyVersion: String(fact.strategy_version),
+        roundTripIndex: Number(fact.round_trip_index),
+        sellEventIdempotencyKey: String(fact.sell_event_idempotency_key),
+        openedAt: new Date(String(fact.opened_at)).toISOString(),
+        closedAt: new Date(String(fact.closed_at)).toISOString(),
+        realizedRawAmount: String(fact.realized_raw_amount),
+        remainingRawAmount: String(fact.remaining_raw_amount),
+        tokenDecimals: Number(fact.token_decimals),
+        investedUsd: Number(fact.invested_usd),
+        proceedsUsd: Number(fact.proceeds_usd),
+        netPnlUsd: Number(fact.net_pnl_usd),
+        netReturnPct: Number(fact.net_return_pct),
+        highQuality: Boolean(fact.high_quality),
+        priceQuality: fact.price_quality as WalletTradePriceQuality,
+        exact: Boolean(fact.exact),
+        sourceTradeRevision: Number(fact.source_trade_revision)
+      }))
+    };
+  }
+
+  async listWalletTradeLedgerInputsAfter(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary: WalletTradeOrderBoundary,
+    maxRows = 10_000
+  ): Promise<WalletTradeEvidence[]> {
+    const boundedMaximum = clampLimit(maxRows, 10_000, 100_000);
+    const result = await this.pool.query(
+      `SELECT
+         idempotency_key, chain, wallet_address, token_address, quote_token_address,
+         pool_address, side, base_amount, base_raw_amount, base_token_decimals,
+         quote_amount, execution_price_usd, quote_value_usd, pool_created_at,
+         pool_age_minutes, data_quality, signature, slot, provider, observed_at,
+         strategy_version, '{}'::jsonb AS raw
+       FROM wallet_trade_events
+       WHERE chain = $1
+         AND wallet_address = $2
+         AND strategy_version = $3
+         AND ROW(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C") >
+             ROW($4::bigint, $5::timestamptz, $6::text COLLATE "C", $7::text COLLATE "C")
+       ORDER BY slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C"
+       LIMIT $8`,
+      [
+        chain,
+        walletAddress,
+        strategyVersion,
+        boundary.slot,
+        boundary.observedAt,
+        boundary.signature,
+        boundary.idempotencyKey,
+        boundedMaximum + 1
+      ]
+    );
+    if (result.rows.length > boundedMaximum) {
+      throw new Error(`Wallet ${walletAddress} exceeded FIFO suffix safety limit ${boundedMaximum}.`);
+    }
+    return result.rows.map((row) => rowToWalletTradeEvent(row));
+  }
+
+  async commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean> {
+    if (
+      !Number.isSafeInteger(input.expectedTradeRevision) ||
+      input.expectedTradeRevision < 0 ||
+      Buffer.byteLength(input.checkpoint.payload) === 0 ||
+      Buffer.byteLength(input.checkpoint.payload) > 4 * 1024 * 1024 ||
+      !/^[a-f0-9]{64}$/.test(input.checkpoint.sha256) ||
+      input.realizations.length > 10_000
+    ) {
+      throw new Error("Invalid or unbounded wallet FIFO continuation commit.");
+    }
+    const factRows = input.realizations.map((fact) => {
+      if (
+        fact.chain !== input.chain ||
+        fact.walletAddress !== input.walletAddress ||
+        fact.strategyVersion !== input.strategyVersion ||
+        fact.sourceTradeRevision !== input.expectedTradeRevision
+      ) {
+        throw new Error(`Wallet FIFO realization ${fact.realizationId} is outside commit scope.`);
+      }
+      return {
+        realization_id: fact.realizationId,
+        episode_id: fact.episodeId,
+        chain: fact.chain,
+        wallet_address: fact.walletAddress,
+        token_address: fact.tokenAddress,
+        strategy_version: fact.strategyVersion,
+        round_trip_index: fact.roundTripIndex,
+        sell_event_idempotency_key: fact.sellEventIdempotencyKey,
+        opened_at: fact.openedAt,
+        closed_at: fact.closedAt,
+        realized_raw_amount: fact.realizedRawAmount,
+        remaining_raw_amount: fact.remainingRawAmount,
+        token_decimals: fact.tokenDecimals,
+        invested_usd: fact.investedUsd,
+        proceeds_usd: fact.proceedsUsd,
+        net_pnl_usd: fact.netPnlUsd,
+        net_return_pct: fact.netReturnPct,
+        high_quality: fact.highQuality,
+        price_quality: fact.priceQuality,
+        exact: fact.exact,
+        source_trade_revision: fact.sourceTradeRevision
+      };
+    });
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const committed = await client.query(
+          `SELECT commit_wallet_fifo_continuation(
+             $1, $2, $3, $4, $5, $6, decode($7, 'hex'), $8, $9, $10, $11, $12
+           ) AS committed`,
+          [
+            input.chain,
+            input.walletAddress,
+            input.strategyVersion,
+            input.expectedTradeRevision,
+            input.checkpoint.version,
+            input.checkpoint.payload,
+            input.checkpoint.sha256,
+            input.checkpoint.lastOrder.slot,
+            input.checkpoint.lastOrder.observedAt,
+            input.checkpoint.lastOrder.signature,
+            input.checkpoint.lastOrder.idempotencyKey,
+            input.calculatedAt
+          ]
+        );
+        if (!committed.rows[0]?.committed) {
+          throw new WalletFifoContinuationCasMismatch();
+        }
+
+        if (input.mode === "full-rebuild") {
+          await client.query(
+            `DELETE FROM wallet_fifo_realization_facts
+             WHERE chain = $1 AND wallet_address = $2 AND strategy_version = $3`,
+            [input.chain, input.walletAddress, input.strategyVersion]
+          );
+        }
+        if (factRows.length > 0) {
+          await client.query(
+            `INSERT INTO wallet_fifo_realization_facts (
+               realization_id, episode_id, chain, wallet_address, token_address,
+               strategy_version, round_trip_index, sell_event_idempotency_key,
+               opened_at, closed_at, realized_raw_amount, remaining_raw_amount,
+               token_decimals, invested_usd, proceeds_usd, net_pnl_usd,
+               net_return_pct, high_quality, price_quality, exact, source_trade_revision
+             )
+             SELECT
+               input.realization_id, input.episode_id, input.chain, input.wallet_address,
+               input.token_address, input.strategy_version, input.round_trip_index,
+               input.sell_event_idempotency_key, input.opened_at, input.closed_at,
+               input.realized_raw_amount, input.remaining_raw_amount, input.token_decimals,
+               input.invested_usd, input.proceeds_usd, input.net_pnl_usd,
+               input.net_return_pct, input.high_quality, input.price_quality, input.exact,
+               input.source_trade_revision
+             FROM jsonb_to_recordset($1::jsonb) AS input(
+               realization_id text, episode_id text, chain text, wallet_address text,
+               token_address text, strategy_version text, round_trip_index integer,
+               sell_event_idempotency_key text, opened_at timestamptz, closed_at timestamptz,
+               realized_raw_amount numeric, remaining_raw_amount numeric,
+               token_decimals smallint, invested_usd numeric, proceeds_usd numeric,
+               net_pnl_usd numeric, net_return_pct numeric, high_quality boolean,
+               price_quality text, exact boolean, source_trade_revision bigint
+             )
+             ON CONFLICT (realization_id) DO UPDATE SET
+               remaining_raw_amount = EXCLUDED.remaining_raw_amount,
+               invested_usd = EXCLUDED.invested_usd,
+               proceeds_usd = EXCLUDED.proceeds_usd,
+               net_pnl_usd = EXCLUDED.net_pnl_usd,
+               net_return_pct = EXCLUDED.net_return_pct,
+               high_quality = EXCLUDED.high_quality,
+               price_quality = EXCLUDED.price_quality,
+               exact = EXCLUDED.exact,
+               source_trade_revision = EXCLUDED.source_trade_revision
+             WHERE ROW(
+               wallet_fifo_realization_facts.remaining_raw_amount,
+               wallet_fifo_realization_facts.invested_usd,
+               wallet_fifo_realization_facts.proceeds_usd,
+               wallet_fifo_realization_facts.net_pnl_usd,
+               wallet_fifo_realization_facts.net_return_pct,
+               wallet_fifo_realization_facts.high_quality,
+               wallet_fifo_realization_facts.price_quality,
+               wallet_fifo_realization_facts.exact,
+               wallet_fifo_realization_facts.source_trade_revision
+             ) IS DISTINCT FROM ROW(
+               EXCLUDED.remaining_raw_amount,
+               EXCLUDED.invested_usd,
+               EXCLUDED.proceeds_usd,
+               EXCLUDED.net_pnl_usd,
+               EXCLUDED.net_return_pct,
+               EXCLUDED.high_quality,
+               EXCLUDED.price_quality,
+               EXCLUDED.exact,
+               EXCLUDED.source_trade_revision
+             )`,
+            [JSON.stringify(factRows)]
+          );
+        }
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof WalletFifoContinuationCasMismatch) return false;
+      throw error;
+    }
   }
 
   async listWalletAlphaScores(
@@ -4610,6 +4968,63 @@ function rowToWalletTradeEvent(row: Record<string, unknown>): WalletTradeEvidenc
     ...(row.pool_age_minutes !== null ? { poolAgeMinutes: Number(row.pool_age_minutes) } : {}),
     dataQuality: row.data_quality as WalletTradeEvidence["dataQuality"],
     raw: (row.raw as Record<string, unknown>) ?? {}
+  };
+}
+
+function walletPositionEpisodeRows(snapshot: WalletPositionLedgerSnapshot) {
+  return snapshot.episodes.map((episode) => ({
+    id: episode.id,
+    chain: episode.chain,
+    wallet_address: episode.walletAddress,
+    token_address: episode.tokenAddress,
+    strategy_version: episode.strategyVersion,
+    episode_index: episode.episodeIndex,
+    status: episode.status,
+    opened_at: episode.openedAt,
+    closed_at: episode.closedAt ?? null,
+    cost_basis_usd: episode.costBasisUsd,
+    proceeds_usd: episode.proceedsUsd,
+    realized_pnl_usd: episode.realizedPnlUsd,
+    return_pct: episode.returnPct ?? null,
+    remaining_raw_amount: episode.remainingRawAmount,
+    token_decimals: episode.tokenDecimals,
+    realized_lot_count: episode.realizedLotCount,
+    high_quality_price_coverage: episode.highQualityPriceCoverage,
+    terminal_reason: episode.terminalReason ?? null,
+    metadata: episode.metadata
+  }));
+}
+
+function walletPositionLotRows(snapshot: WalletPositionLedgerSnapshot) {
+  return snapshot.lots
+    .filter((lot) => lot.status !== "realized")
+    .map((lot) => ({
+      id: lot.id,
+      episode_id: lot.episodeId,
+      source_event_idempotency_key: lot.sourceEventIdempotencyKey,
+      lot_sequence: lot.lotSequence,
+      raw_amount: lot.rawAmount,
+      remaining_raw_amount: lot.remainingRawAmount,
+      token_decimals: lot.tokenDecimals,
+      quote_cost_usd: lot.quoteCostUsd,
+      fees_usd: lot.feesUsd,
+      slippage_usd: lot.slippageUsd,
+      opened_at: lot.openedAt,
+      closed_at: lot.closedAt ?? null,
+      status: lot.status,
+      metadata: lot.metadata
+    }));
+}
+
+function walletTradeOrderBoundary(
+  row: Record<string, unknown>,
+  prefix: "dirty_min_" | "last_"
+): WalletTradeOrderBoundary {
+  return {
+    slot: Number(row[`${prefix}slot`]),
+    observedAt: new Date(String(row[`${prefix}observed_at`])).toISOString(),
+    signature: String(row[`${prefix}signature`]),
+    idempotencyKey: String(row[`${prefix}idempotency_key`])
   };
 }
 

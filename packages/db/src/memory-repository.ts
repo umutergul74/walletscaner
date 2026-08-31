@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   SAMPLE_POOL,
   SAMPLE_TOKEN,
@@ -75,6 +76,10 @@ import type {
   WalletAlphaWorkPriority,
   WalletAlphaWorkFailureClass,
   WalletAlphaWorkSummary,
+  WalletFifoContinuationState,
+  WalletFifoContinuationCommit,
+  WalletFifoRealizationFact,
+  WalletTradeOrderBoundary,
   WalletPositionEpisode,
   WalletPositionLedgerSnapshot,
   WalletPositionLedgerWriteResult,
@@ -190,6 +195,15 @@ export class MemoryRepository
   >();
   private readonly walletPositionEpisodes = new Map<string, WalletPositionEpisode>();
   private readonly walletPositionLots = new Map<string, WalletPositionLot>();
+  private readonly walletTradeRevisions = new Map<
+    string,
+    { revision: number; dirtyOrder?: WalletTradeOrderBoundary }
+  >();
+  private readonly walletFifoContinuations = new Map<
+    string,
+    NonNullable<WalletFifoContinuationState["continuation"]>
+  >();
+  private readonly walletFifoRealizations = new Map<string, WalletFifoRealizationFact>();
   private readonly signalOutbox = new Map<string, SignalOutboxMessage>();
   private readonly walletAlphaWork = new Map<string, MemoryWalletAlphaWork>();
   private readonly processingResults: Array<"succeeded" | "retry" | "dead_letter"> = [];
@@ -232,6 +246,24 @@ export class MemoryRepository
       ...(existing?.lockExpiresAt ? { lockExpiresAt: existing.lockExpiresAt } : {}),
       ...(existing?.lastError ? { lastError: existing.lastError } : {}),
       ...(quarantineActive ? { quarantineReason: existing!.quarantineReason } : {})
+    });
+  }
+
+  private recordWalletTradeRevision(trade: WalletTradeEvidence): void {
+    const key = `${trade.chain}:${trade.walletAddress}:${trade.strategyVersion}`;
+    const order: WalletTradeOrderBoundary = {
+      slot: trade.slot,
+      observedAt: trade.observedAt,
+      signature: trade.signature,
+      idempotencyKey: trade.idempotencyKey
+    };
+    const current = this.walletTradeRevisions.get(key);
+    this.walletTradeRevisions.set(key, {
+      revision: (current?.revision ?? 0) + 1,
+      dirtyOrder:
+        !current || !current.dirtyOrder || compareWalletTradeOrder(order, current.dirtyOrder) < 0
+          ? order
+          : current.dirtyOrder
     });
   }
 
@@ -610,8 +642,12 @@ export class MemoryRepository
   async saveWalletTradeEvent(trade: WalletTradeEvidence): Promise<boolean> {
     const existing = this.walletTradeEvents.get(trade.idempotencyKey);
     if (existing) {
-      if (!existing.executionPriceUsd && trade.executionPriceUsd) {
+      if (
+        (!existing.executionPriceUsd && trade.executionPriceUsd) ||
+        (!existing.baseTokenAmount && trade.baseTokenAmount)
+      ) {
         this.walletTradeEvents.set(trade.idempotencyKey, { ...existing, ...trade });
+        this.recordWalletTradeRevision(trade);
         this.enqueueWalletAlpha(
           trade.chain,
           trade.walletAddress,
@@ -624,6 +660,7 @@ export class MemoryRepository
       return false;
     }
     this.walletTradeEvents.set(trade.idempotencyKey, trade);
+    this.recordWalletTradeRevision(trade);
     this.enqueueWalletAlpha(
       trade.chain,
       trade.walletAddress,
@@ -670,13 +707,15 @@ export class MemoryRepository
           }
         }
       });
-      changedWallets.set(
-        `${trade.chain}:${trade.walletAddress}:${trade.strategyVersion}`,
-        trade
-      );
+      const scope = `${trade.chain}:${trade.walletAddress}:${trade.strategyVersion}`;
+      const current = changedWallets.get(scope);
+      if (!current || compareWalletTradeOrder(trade, current) < 0) {
+        changedWallets.set(scope, trade);
+      }
       updated += 1;
     }
     for (const trade of changedWallets.values()) {
+      this.recordWalletTradeRevision(trade);
       if (!this.hasWalletAlphaAdmissionEvidence(trade, queueAdmission)) continue;
       this.enqueueWalletAlpha(
         trade.chain,
@@ -761,6 +800,35 @@ export class MemoryRepository
     this.walletPositionLots.clear();
     for (const [id, episode] of nextEpisodes) this.walletPositionEpisodes.set(id, episode);
     for (const [id, lot] of nextLots) this.walletPositionLots.set(id, lot);
+    return { episodeCount: snapshot.episodes.length, lotCount: openLots.length };
+  }
+
+  async mergeWalletPositionLedger(
+    snapshot: WalletPositionLedgerSnapshot
+  ): Promise<WalletPositionLedgerWriteResult> {
+    assertWalletPositionLedgerSnapshot(snapshot);
+    if (!snapshot.walletAddresses || snapshot.walletAddresses.length !== 1) {
+      throw new Error("Incremental wallet ledger merge requires exactly one wallet scope.");
+    }
+    const walletAddress = snapshot.walletAddresses[0]!;
+    const scopedEpisodeIds = new Set(
+      [...this.walletPositionEpisodes.values()]
+        .filter(
+          (episode) =>
+            episode.chain === snapshot.chain &&
+            episode.strategyVersion === snapshot.strategyVersion &&
+            episode.walletAddress === walletAddress
+        )
+        .map((episode) => episode.id)
+    );
+    for (const [id, lot] of this.walletPositionLots) {
+      if (scopedEpisodeIds.has(lot.episodeId)) this.walletPositionLots.delete(id);
+    }
+    for (const episode of snapshot.episodes) {
+      this.walletPositionEpisodes.set(episode.id, structuredClone(episode));
+    }
+    const openLots = snapshot.lots.filter((lot) => lot.status !== "realized");
+    for (const lot of openLots) this.walletPositionLots.set(lot.id, structuredClone(lot));
     return { episodeCount: snapshot.episodes.length, lotCount: openLots.length };
   }
 
@@ -1316,6 +1384,116 @@ export class MemoryRepository
       maxRows
     );
     return trades.map((trade) => ({ ...trade, raw: {} }));
+  }
+
+  async getWalletFifoContinuationState(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    maximumRealizations = 10_000
+  ): Promise<WalletFifoContinuationState> {
+    const key = `${chain}:${walletAddress}:${strategyVersion}`;
+    const revision = this.walletTradeRevisions.get(key);
+    const realizations = [...this.walletFifoRealizations.values()]
+      .filter(
+        (fact) =>
+          fact.chain === chain &&
+          fact.walletAddress === walletAddress &&
+          fact.strategyVersion === strategyVersion
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.closedAt).getTime() - new Date(b.closedAt).getTime() ||
+          compareCodeUnits(a.realizationId, b.realizationId)
+      );
+    if (realizations.length > maximumRealizations) {
+      throw new Error(
+        `Wallet ${walletAddress} exceeded FIFO realization safety limit ${maximumRealizations}.`
+      );
+    }
+    const continuation = this.walletFifoContinuations.get(key);
+    return {
+      chain,
+      walletAddress,
+      strategyVersion,
+      tradeRevision: revision?.revision ?? 0,
+      ...(revision?.dirtyOrder ? { dirtyOrder: structuredClone(revision.dirtyOrder) } : {}),
+      ...(continuation ? { continuation: structuredClone(continuation) } : {}),
+      realizations: structuredClone(realizations)
+    };
+  }
+
+  async listWalletTradeLedgerInputsAfter(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary: WalletTradeOrderBoundary,
+    maxRows = 10_000
+  ): Promise<WalletTradeEvidence[]> {
+    const values = [...this.walletTradeEvents.values()]
+      .filter(
+        (trade) =>
+          trade.chain === chain &&
+          trade.walletAddress === walletAddress &&
+          trade.strategyVersion === strategyVersion &&
+          compareWalletTradeOrder(trade, boundary) > 0
+      )
+      .sort(compareWalletTradeOrder);
+    if (values.length > maxRows) {
+      throw new Error(`Wallet ${walletAddress} exceeded FIFO suffix safety limit ${maxRows}.`);
+    }
+    return values.map((trade) => ({ ...trade, raw: {} }));
+  }
+
+  async commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean> {
+    const key = `${input.chain}:${input.walletAddress}:${input.strategyVersion}`;
+    const current = this.walletTradeRevisions.get(key);
+    if ((current?.revision ?? 0) !== input.expectedTradeRevision) return false;
+    if (
+      Buffer.byteLength(input.checkpoint.payload) === 0 ||
+      Buffer.byteLength(input.checkpoint.payload) > 4 * 1024 * 1024 ||
+      createHash("sha256").update(input.checkpoint.payload).digest("hex") !==
+        input.checkpoint.sha256 ||
+      input.realizations.length > 10_000
+    ) {
+      throw new Error("Invalid or unbounded wallet FIFO continuation commit.");
+    }
+    for (const fact of input.realizations) {
+      if (
+        fact.chain !== input.chain ||
+        fact.walletAddress !== input.walletAddress ||
+        fact.strategyVersion !== input.strategyVersion ||
+        fact.sourceTradeRevision !== input.expectedTradeRevision
+      ) {
+        throw new Error(`Wallet FIFO realization ${fact.realizationId} is outside commit scope.`);
+      }
+    }
+    if (input.mode === "full-rebuild") {
+      for (const [id, fact] of this.walletFifoRealizations) {
+        if (
+          fact.chain === input.chain &&
+          fact.walletAddress === input.walletAddress &&
+          fact.strategyVersion === input.strategyVersion
+        ) {
+          this.walletFifoRealizations.delete(id);
+        }
+      }
+    }
+    for (const fact of input.realizations) {
+      this.walletFifoRealizations.set(fact.realizationId, structuredClone(fact));
+    }
+    const priorContinuation = this.walletFifoContinuations.get(key);
+    this.walletFifoContinuations.set(key, {
+      version: input.checkpoint.version,
+      payload: input.checkpoint.payload,
+      sha256: input.checkpoint.sha256,
+      tradeRevision: input.expectedTradeRevision,
+      generation: (priorContinuation?.generation ?? 0) + 1,
+      lastOrder: structuredClone(input.checkpoint.lastOrder),
+      calculatedAt: input.calculatedAt
+    });
+    this.walletTradeRevisions.set(key, { revision: input.expectedTradeRevision });
+    return true;
   }
 
   async listWalletAlphaScores(
@@ -2249,6 +2427,22 @@ function emptyInboxCounts(): Record<CanonicalEventStatus, number> {
 
 function clampLimit(value: number | undefined, defaultValue: number, maximum: number): number {
   return Math.min(maximum, Math.max(1, Math.trunc(value ?? defaultValue)));
+}
+
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareWalletTradeOrder(
+  a: Pick<WalletTradeEvidence, "slot" | "observedAt" | "signature" | "idempotencyKey">,
+  b: WalletTradeOrderBoundary
+): number {
+  return (
+    a.slot - b.slot ||
+    new Date(a.observedAt).getTime() - new Date(b.observedAt).getTime() ||
+    compareCodeUnits(a.signature, b.signature) ||
+    compareCodeUnits(a.idempotencyKey, b.idempotencyKey)
+  );
 }
 
 function compareCanonicalEvents(a: CanonicalChainEvent, b: CanonicalChainEvent): number {

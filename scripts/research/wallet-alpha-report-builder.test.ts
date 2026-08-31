@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRepository } from "@memecoin-alpha/db";
+import { buildWalletAlphaScores } from "@memecoin-alpha/core";
 import type {
   WalletAlphaScoreSnapshot,
   WalletEntrySignalEvidence,
@@ -291,6 +292,105 @@ describe("wallet alpha report", () => {
       signalPending: 0
     });
   });
+
+  it("uses a suffix after the first FIFO seed and rebuilds on an old source correction", async () => {
+    const repository = new MemoryRepository();
+    const walletAddress = "ContinuationWallet";
+    const fullLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsForWallets");
+    const suffixLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsAfter");
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 1, "buy", 100, 100));
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 2, "sell", 100, 150));
+
+    const options = {
+      materializeHistorical: false,
+      workBatchSize: 1,
+      maxWorkBatches: 1,
+      minimumTradeEvents: 1,
+      minimumEntries: 1
+    };
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:00:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
+    expect(
+      await repository.getWalletFifoContinuationState(
+        "solana",
+        walletAddress,
+        "evidence-v1"
+      )
+    ).toMatchObject({
+      tradeRevision: 2,
+      realizations: [expect.objectContaining({ sellEventIdempotencyKey: "fifo-2" })],
+      continuation: { tradeRevision: 2, generation: 1 }
+    });
+
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 3, "buy", 50, 50));
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 4, "sell", 50, 80));
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:01:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
+    expect(fullLoads).toHaveBeenCalledTimes(1);
+    expect(suffixLoads).toHaveBeenCalledTimes(1);
+    expect(
+      await repository.getWalletFifoContinuationState(
+        "solana",
+        walletAddress,
+        "evidence-v1"
+      )
+    ).toMatchObject({
+      tradeRevision: 4,
+      realizations: [
+        expect.objectContaining({ sellEventIdempotencyKey: "fifo-2" }),
+        expect.objectContaining({ sellEventIdempotencyKey: "fifo-4" })
+      ],
+      continuation: { tradeRevision: 4, generation: 2 }
+    });
+    expect(await repository.listWalletAlphaScores("evidence-v1")).toEqual(
+      buildWalletAlphaScores({
+        trades: await repository.listWalletTradeEvents(walletAddress, "evidence-v1"),
+        entries: [],
+        outcomes: [],
+        strategyVersion: "evidence-v1",
+        calculatedAt: "2026-07-10T00:01:00.000Z"
+      })
+    );
+
+    expect(
+      await repository.saveWalletTradeEvent({
+        ...fifoTrade(walletAddress, 1, "buy", 100, 100),
+        baseTokenAmount: { rawAmount: "100000000", decimals: 6 }
+      })
+    ).toBe(true);
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:02:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
+    expect(fullLoads).toHaveBeenCalledTimes(2);
+    expect(suffixLoads).toHaveBeenCalledTimes(1);
+    expect(
+      await repository.getWalletFifoContinuationState(
+        "solana",
+        walletAddress,
+        "evidence-v1"
+      )
+    ).toMatchObject({ tradeRevision: 5, continuation: { tradeRevision: 5, generation: 3 } });
+  });
 });
 
 function qualifiedScore(walletAddress: string): WalletAlphaScoreSnapshot {
@@ -355,6 +455,35 @@ function walletTrade(
     slot,
     provider: "test",
     observedAt: new Date(Date.UTC(2026, 6, 9, 0, 0, slot % 60)).toISOString(),
+    strategyVersion: "evidence-v1",
+    raw: {}
+  };
+}
+
+function fifoTrade(
+  walletAddress: string,
+  slot: number,
+  side: "buy" | "sell",
+  baseAmount: number,
+  quoteValueUsd: number
+): WalletTradeEvidence {
+  return {
+    idempotencyKey: `fifo-${slot}`,
+    chain: "solana",
+    walletAddress,
+    tokenAddress: "ContinuationToken",
+    poolAddress: "ContinuationPool",
+    side,
+    baseAmount,
+    executionPriceUsd: quoteValueUsd / baseAmount,
+    quoteValueUsd,
+    poolCreatedAt: "2026-07-09T00:00:00.000Z",
+    poolAgeMinutes: 1,
+    dataQuality: "observed-execution",
+    signature: `fifo-signature-${slot}`,
+    slot,
+    provider: "test",
+    observedAt: new Date(Date.UTC(2026, 6, 9, 0, 0, slot)).toISOString(),
     strategyVersion: "evidence-v1",
     raw: {}
   };

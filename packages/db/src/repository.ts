@@ -18,6 +18,7 @@ import type {
   WalletAlphaSignalEvidence,
   WalletSignalOutcomeEvidence,
   WalletTradeEvidence,
+  WalletTradePriceQuality,
   WalletScore
 } from "@memecoin-alpha/shared";
 
@@ -342,6 +343,72 @@ export interface WalletPositionLedgerSnapshot {
 export interface WalletPositionLedgerWriteResult {
   episodeCount: number;
   lotCount: number;
+}
+
+export interface WalletTradeOrderBoundary {
+  slot: number;
+  observedAt: string;
+  signature: string;
+  idempotencyKey: string;
+}
+
+export interface WalletFifoRealizationFact {
+  realizationId: string;
+  episodeId: string;
+  chain: ChainId;
+  walletAddress: string;
+  tokenAddress: string;
+  strategyVersion: string;
+  roundTripIndex: number;
+  sellEventIdempotencyKey: string;
+  openedAt: string;
+  closedAt: string;
+  realizedRawAmount: string;
+  remainingRawAmount: string;
+  tokenDecimals: number;
+  investedUsd: number;
+  proceedsUsd: number;
+  netPnlUsd: number;
+  netReturnPct: number;
+  highQuality: boolean;
+  priceQuality: WalletTradePriceQuality;
+  exact: boolean;
+  sourceTradeRevision: number;
+}
+
+export interface WalletFifoContinuationState {
+  chain: ChainId;
+  walletAddress: string;
+  strategyVersion: string;
+  /** Missing pre-migration state is represented as revision zero with no continuation. */
+  tradeRevision: number;
+  dirtyOrder?: WalletTradeOrderBoundary;
+  continuation?: {
+    version: "fifo-continuation-v1";
+    payload: string;
+    sha256: string;
+    tradeRevision: number;
+    generation: number;
+    lastOrder: WalletTradeOrderBoundary;
+    calculatedAt: string;
+  };
+  realizations: WalletFifoRealizationFact[];
+}
+
+export interface WalletFifoContinuationCommit {
+  chain: ChainId;
+  walletAddress: string;
+  strategyVersion: string;
+  expectedTradeRevision: number;
+  mode: "full-rebuild" | "append";
+  checkpoint: {
+    version: "fifo-continuation-v1";
+    payload: string;
+    sha256: string;
+    lastOrder: WalletTradeOrderBoundary;
+  };
+  calculatedAt: string;
+  realizations: WalletFifoRealizationFact[];
 }
 
 export function assertWalletPositionLedgerSnapshot(snapshot: WalletPositionLedgerSnapshot): void {
@@ -717,6 +784,23 @@ export interface EvidenceRepository {
   replaceWalletPositionLedger(
     snapshot: WalletPositionLedgerSnapshot
   ): Promise<WalletPositionLedgerWriteResult>;
+  mergeWalletPositionLedger(
+    snapshot: WalletPositionLedgerSnapshot
+  ): Promise<WalletPositionLedgerWriteResult>;
+  getWalletFifoContinuationState(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    maximumRealizations?: number
+  ): Promise<WalletFifoContinuationState>;
+  listWalletTradeLedgerInputsAfter(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary: WalletTradeOrderBoundary,
+    maxRows?: number
+  ): Promise<WalletTradeEvidence[]>;
+  commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean>;
   claimWalletAlphaWork(options: WalletAlphaWorkClaimOptions): Promise<WalletAlphaWorkItem[]>;
   listWalletAlphaWorkCandidates(
     strategyVersion: string,

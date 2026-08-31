@@ -385,6 +385,43 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   all107files/544tests with zero skips. Next: stop disposablePG16, commit this independently safe
   foundation and record its hash. No production migration/deploy is authorized by this result;
   reader/fact commit integration and populated-clone parity remain required.
+- Foundation is committed as `b15282f` (`feat: add transactional FIFO continuation foundation`);
+  the workspace returned to only the four preserved pre-existing deploy temp/partial files.
+  Phase4b is now active and local-only. Next implementation boundary: typed repository load/commit
+  APIs, exact suffix query using the same `(slot, observed_at, signature C, idempotency_key C)`
+  order, atomic full-vs-incremental projection/fact persistence under migration054 CAS, and a
+  dual-read worker path that fails closed to full rebuild whenever the dirty order is unknown or at
+  /before the checkpoint. It must prove score/ledger hashes against the unchanged full reader and
+  benchmark a populated clone before any migration/image/deploy. Production remains exactR43.
+- Phase4b implementation is present locally and remains undeployed. Repository interfaces and the
+  PostgreSQL/Memory implementations now load the revision/checkpoint/facts, read an exact ordered
+  suffix, persist full-or-append facts through the expected-revision CAS, and merge the current
+  ledger projection without deleting older closed episodes. The worker seeds from full history,
+  uses suffix continuation only when the dirty boundary is strictly after the checkpoint, and
+  fails closed to a full rebuild for old, unknown or inconsistent corrections. Targeted core,
+  Memory and nativePG16 tests prove first-full/second-suffix behavior, byte-for-byte score parity,
+  stale-CAS rollback and old-correction fallback; typecheck and lint pass. The full serial gate and
+  coherent commit are the next exact actions.
+- Resume verification on 2026-08-31 found that the disposable PostgreSQL instance is only about
+  22MiB and has no `public.wallet_trade_events`; the earlier multi-GiB temporary restore is no
+  longer present. This is not production data loss, but populated-clone parity is therefore still
+  unproven and must not be claimed. After the full source gate and Phase4b commit, locate or obtain
+  a hash-verified dump and restore it into an isolated local clone before any production migration,
+  image or service change. Production remains exactR43 throughout this checkpoint.
+- Phase4b source gate completed on Node 24 with the native disposable PostgreSQL 16 instance:
+  typecheck, lint and workspace production build pass; the complete serial suite passes all
+  107 files / 547 tests with zero skips. An initial full run had one Windows-only transient
+  `EPERM` while replacing the materializer's generated latest-report file; its focused 5-test
+  integration suite then passed without deleting/resetting either report, and a second complete
+  547-test run passed. No schema, image, config or service has been changed in production. Next:
+  review/stage only the Phase4b files, commit the coherent local checkpoint, stop the disposable
+  PG, then locate a hash-verified dump and measure populated-clone parity/capacity.
+- Phase4b was committed as `e5d1714` (`perf: continue wallet FIFO ledgers transactionally`). The
+  disposable local PostgreSQL instance was then stopped cleanly and status confirms no server is
+  running. The only remaining workspace files are the four preserved pre-existing deploy
+  temp/partial artifacts. Next exact action is read-only discovery of the named verified dump and
+  local disk headroom; do not start a restore until its SHA/provenance and isolated target are
+  established. Production remains exactR43 and migration054 remains unapplied there.
 
 ## Completion conditions
 
