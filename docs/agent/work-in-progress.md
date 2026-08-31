@@ -526,6 +526,13 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   remain the rollback evidence. While the backup runs, the copy-only Dockerfile was narrowed to the
   exact current core/DB/report/worker tests and migrations052-054 required over exactR43; no image,
   upload, Compose file, environment, database or service has changed yet.
+- Copy-only R50 staging artifact is exactly699,904bytes/SHA-256
+  `4146e62ac63250d6ede3f9efe5ce1dcc33434705b30b394bbb1c0b60b83de906` with19 reviewed entries:
+  the Dockerfile/Compose file, current FIFO core+tests, repository+integration tests, ordered
+  migrations052-054, worker/report+tests/benchmark and the two guarded deployment helpers. It does
+  not contain environment or credential files. Next: wait for the active31-August backup to become
+  a final list-readable SHA sidecar generation, then create R50 release ledger revision1 `planned`
+  before uploading this exact artifact. No production mutation has occurred at this checkpoint.
 
 ## Completion conditions
 
