@@ -568,6 +568,17 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   migration055. Next: create a fresh R51 release ledger, upload/hash/build from exactR43 with network
   disabled, and run Linux tests/benchmark. The image may remain unused while the31-August backup
   runs; no migration/activation is allowed until that generation is final and verified.
+- Immutable R51 server staging is complete: image
+  `sha256:11040e46acec558b3b37fec3103e4367efe0ade8b1ee62c3234dcd22079e0a49`
+  preserves exactR43's31-layer prefix and adds5COPY layers; network-disabled Linux tests pass46/46
+  and the0.20CPU benchmark passes3,311.62ms/108.58MiBRSS. Release ledger revision3 marks staging
+  complete. The live server Compose SHA is
+  `8c57d28c53145bbd7fe5669c53eb1329047c2821e748e8d24553d01937ae3288`; copying the repository
+  Compose would incorrectly add the undeployed alpha-decision-tape service. A server-file-derived
+  one-line candidate instead changes only wallet-alpha NODE_OPTIONS to add4MiB semi-space and hashes
+  `94296952e45819eeed18ad50beaca2238036be6f629d1587473129a041d31270`. It has not been uploaded or
+  applied. Next remains final backup verification, then ledgered migration/config/env/alpha-only
+  canary with exactR43 plus original Compose/env as rollback.
 
 ## Completion conditions
 
