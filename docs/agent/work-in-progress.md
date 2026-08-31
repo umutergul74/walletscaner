@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-31T22:44:00Z
+updated_at_utc: 2026-08-31T22:46:00Z
 owner: codex
 task: bounded alpha producer and sustainable wallet evidence storage
 last_safe_checkpoint: R51 staged and current backup verified; live exactR43/migration051 unchanged; production rollout preflight passed and no mutation is in progress
@@ -637,6 +637,16 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   server-derived one-line Compose candidate, preserve root-only rollback copies of the active
   Compose/env files, dry-run then atomically change only the research image, and recreate only
   wallet-alpha with `--no-deps`. Restore the original Compose/env and exactR43 alpha on any hard gate.
+- Release ledger revision7 opened phase `activate-wallet-alpha-r51` as `planned`. The local
+  server-derived candidate was rehashed before transfer; its server `.partial` hash matched
+  `94296952e45819eeed18ad50beaca2238036be6f629d1587473129a041d31270`. A line-by-line comparison
+  against the still-active SHA8c57d28c server Compose proves exactly one of772lines differs: only
+  wallet-alpha's112MiB old-space setting gains a4MiB semi-space cap. Candidate Compose validation
+  passed with the production project directory/env, it was staged beside the active file and the
+  transfer was atomically renamed for evidence. Active Compose/env and all containers remain
+  unchanged from the migration checkpoint; wallet-alpha remains stopped. Next: transition ledger7
+  to activation `in_progress`, make root-only rollback copies, guarded-update only the research image
+  and active Compose, recreate only wallet-alpha, then independently verify or automatically revert.
 
 ## Completion conditions
 
