@@ -431,6 +431,13 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   verify the custom archive list with local PostgreSQL16, start the disposable cluster, create only
   `walletscaner_populated_20260829`, restore with no owner/ACL, measure the result, then apply 054
   and run full-vs-continuation parity/capacity. Do not alter production or the verified dump.
+- PostgreSQL18 `pg_restore --list` read the PG16.14 custom/zstd archive successfully: 617 TOC
+  entries (628 list lines), with `pg_stat_statements` and `pgcrypto`; exit zero. The disposable
+  PostgreSQL16.15 cluster is running only on local 127.0.0.1:5432 and the isolated empty database
+  `walletscaner_populated_20260829` was created (7,930,383 bytes). No other database exists beyond
+  `postgres` and templates. Next exact action is one `--exit-on-error --no-owner --no-privileges`
+  restore from the verified immutable dump. If the PG18 client emits any PG16-incompatible command,
+  record failure, discard only this isolated clone and obtain matching PG16 restore tooling.
 
 ## Completion conditions
 
