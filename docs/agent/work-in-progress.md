@@ -540,6 +540,17 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   the unused copy-only image with network disabled while the backup continues, but do not run any
   migration, edit the active Compose/env files or recreate wallet-alpha until the backup finalizes
   and is independently list/SHA verified.
+- R50 unused-image staging passed exactR43 rootfs-prefix verification (31base+5COPY layers),45/45
+  network-disabled Linux tests and the bounded benchmark at3,707.16ms/107.97MiBRSS; release ledger
+  revision3 marks staging complete. Pre-activation dependency review then found a hard correctness
+  gate: migration054 exposes `record_wallet_trade_revision`, but live ingestionR46, samplerR29 and
+  materializerR42 predate the repository calls that invoke it. Activating only the new alpha reader
+  would therefore leave post-seed writes/corrections outside CAS and could advance a checkpoint past
+  a concurrent or older change. R50 must remain unused. Next: add a new immutable migration055 with
+  statement-level transition-table invalidation that coalesces each affected wallet once per SQL
+  statement (including legacy producer paths), remove duplicate explicit revision calls from the
+  new repository path, and prove insert/accounting-update/delete plus raw-only no-op behavior in
+  PostgreSQL16. Do not mutate production while this gate is open; active alpha remains exactR43.
 
 ## Completion conditions
 
