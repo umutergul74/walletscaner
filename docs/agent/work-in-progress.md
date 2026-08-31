@@ -422,6 +422,15 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   temp/partial artifacts. Next exact action is read-only discovery of the named verified dump and
   local disk headroom; do not start a restore until its SHA/provenance and isolated target are
   established. Production remains exactR43 and migration054 remains unapplied there.
+- Populated-clone source is now established read-only at
+  `C:/Users/Umut/WalletscanerBackups/memecoin_alpha_20260829T173517Z/` (dump size
+  2,770,884,949 bytes). A fresh local SHA-256 calculation, the server sidecar and the offsite
+  acknowledgement all match
+  `566487ea4fdbc074ed81bd83853a1147dbdcb962bddb3d9f96b3112ae9f06478`; the acknowledgement says
+  `offsite-sha256+source-postgres16-byte-identical`. Local C: free space is about 66.45GiB. Next:
+  verify the custom archive list with local PostgreSQL16, start the disposable cluster, create only
+  `walletscaner_populated_20260829`, restore with no owner/ACL, measure the result, then apply 054
+  and run full-vs-continuation parity/capacity. Do not alter production or the verified dump.
 
 ## Completion conditions
 
