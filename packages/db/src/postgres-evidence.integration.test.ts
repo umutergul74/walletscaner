@@ -75,6 +75,260 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(second).toBe(first);
   });
 
+  it("records source revisions once per producer statement and never loses a locked invalidation", async () => {
+    const strategyVersion = "fifo-continuation-cas-integration-v1";
+    const walletAddress = "FifoContinuationWallet111";
+    const baseTrade = (index: number) => ({
+      idempotencyKey: `fifo-continuation-trade-${index}`,
+      chain: "solana" as const,
+      walletAddress,
+      tokenAddress: "FifoContinuationMint111",
+      poolAddress: "FifoContinuationPool111",
+      side: "buy" as const,
+      baseAmount: 10,
+      baseTokenAmount: { rawAmount: `${10_000_000 + index}`, decimals: 6 },
+      dataQuality: "observed-balance" as const,
+      signature: `fifo-continuation-signature-${index}`,
+      slot: 40_000 + index,
+      provider: "integration-test",
+      observedAt: `2026-08-30T00:0${index}:00.000Z`,
+      strategyVersion,
+      raw: {}
+    });
+
+    expect(await repository.saveWalletTradeEvent(baseTrade(1))).toBe(true);
+    expect(await repository.saveWalletTradeEvent(baseTrade(2))).toBe(true);
+    expect(await repository.saveWalletTradeEvent(baseTrade(2))).toBe(false);
+    expect(
+      await repository.saveWalletTradeEvent({
+        ...baseTrade(2),
+        raw: { providerDiagnosticOnly: true }
+      })
+    ).toBe(true);
+
+    const revisionBeforeEnrichment = await testPool.query<{
+      revision: string;
+      dirty_min_slot: string;
+    }>(
+      `SELECT revision, dirty_min_slot
+       FROM wallet_trade_revisions
+       WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(revisionBeforeEnrichment.rows[0]).toMatchObject({
+      revision: "2",
+      dirty_min_slot: "40001"
+    });
+    expect(
+      (await repository.listWalletTradeLedgerInputsForWallets([walletAddress], strategyVersion))[0]
+        ?.baseTokenAmount
+    ).toEqual({ rawAmount: "10000001", decimals: 6 });
+
+    const initialPayload = JSON.stringify({ checkpoint: "initial" });
+    expect(
+      (
+        await testPool.query<{ committed: boolean }>(
+          `SELECT commit_wallet_fifo_continuation(
+             'solana', $1, $2, 2, 'fifo-continuation-v1', $3,
+             digest($3, 'sha256'), 40002, '2026-08-30T00:02:00.000Z',
+             'fifo-continuation-signature-2', 'fifo-continuation-trade-2',
+             '2026-08-30T01:00:00.000Z'
+           ) AS committed`,
+          [walletAddress, strategyVersion, initialPayload]
+        )
+      ).rows[0]?.committed
+    ).toBe(true);
+
+    expect(
+      await repository.enrichWalletTradePrices({
+        idempotencyKey: "fifo-continuation-price-1",
+        chain: "solana",
+        tokenAddress: "FifoContinuationMint111",
+        poolAddress: "FifoContinuationPool111",
+        priceUsd: 2,
+        liquidityUsd: 25_000,
+        rugged: false,
+        signature: "fifo-continuation-price-signature-1",
+        slot: 40_010,
+        provider: "integration-test",
+        observedAt: "2026-08-30T00:04:00.000Z",
+        strategyVersion,
+        raw: {}
+      })
+    ).toBe(2);
+
+    const revisionAfterEnrichment = await testPool.query<{
+      revision: string;
+      dirty_order_known: boolean;
+      dirty_min_slot: string;
+    }>(
+      `SELECT revision, dirty_order_known, dirty_min_slot
+       FROM wallet_trade_revisions
+       WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(revisionAfterEnrichment.rows[0]).toMatchObject({
+      revision: "3",
+      dirty_order_known: true,
+      dirty_min_slot: "40001"
+    });
+
+    const stalePayload = JSON.stringify({ checkpoint: "stale" });
+    expect(
+      (
+        await testPool.query<{ committed: boolean }>(
+          `SELECT commit_wallet_fifo_continuation(
+             'solana', $1, $2, 2, 'fifo-continuation-v1', $3,
+             digest($3, 'sha256'), 40002, '2026-08-30T00:02:00.000Z',
+             'fifo-continuation-signature-2', 'fifo-continuation-trade-2',
+             '2026-08-30T01:01:00.000Z'
+           ) AS committed`,
+          [walletAddress, strategyVersion, stalePayload]
+        )
+      ).rows[0]?.committed
+    ).toBe(false);
+
+    const lockClient = await testPool.connect();
+    const producerClient = await testPool.connect();
+    try {
+      await lockClient.query("BEGIN");
+      await lockClient.query(
+        `SELECT revision FROM wallet_trade_revisions
+         WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2
+         FOR UPDATE`,
+        [walletAddress, strategyVersion]
+      );
+
+      let producerFinished = false;
+      const producerRevision = producerClient
+        .query<{ revision: string }>(
+          `SELECT record_wallet_trade_revision(
+             'solana', $1, $2, 40003, '2026-08-30T00:03:00.000Z',
+             'fifo-continuation-signature-3', 'fifo-continuation-trade-3'
+           ) AS revision`,
+          [walletAddress, strategyVersion]
+        )
+        .then((result) => {
+          producerFinished = true;
+          return result;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(producerFinished).toBe(false);
+
+      const acceptedPayload = JSON.stringify({ checkpoint: "accepted" });
+      expect(
+        (
+          await lockClient.query<{ committed: boolean }>(
+            `SELECT commit_wallet_fifo_continuation(
+               'solana', $1, $2, 3, 'fifo-continuation-v1', $3,
+               digest($3, 'sha256'), 40002, '2026-08-30T00:02:00.000Z',
+               'fifo-continuation-signature-2', 'fifo-continuation-trade-2',
+               '2026-08-30T01:02:00.000Z'
+             ) AS committed`,
+            [walletAddress, strategyVersion, acceptedPayload]
+          )
+        ).rows[0]?.committed
+      ).toBe(true);
+      await lockClient.query("COMMIT");
+      expect((await producerRevision).rows[0]?.revision).toBe("4");
+    } catch (error) {
+      await lockClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      lockClient.release();
+      producerClient.release();
+    }
+
+    expect(
+      (
+        await testPool.query<{
+          revision: string;
+          dirty_order_known: boolean;
+          dirty_min_slot: string;
+        }>(
+          `SELECT revision, dirty_order_known, dirty_min_slot
+           FROM wallet_trade_revisions
+           WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+          [walletAddress, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({ revision: "4", dirty_order_known: true, dirty_min_slot: "40003" });
+    expect(
+      (
+        await testPool.query<{ trade_revision: string; generation: string }>(
+          `SELECT trade_revision, generation
+           FROM wallet_fifo_continuations
+           WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+          [walletAddress, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({ trade_revision: "3", generation: "2" });
+  });
+
+  it("coalesces historical materialization changes into one wallet source revision", async () => {
+    const strategyVersion = "fifo-historical-revision-integration-v1";
+    const walletAddress = "FifoHistoricalWallet111";
+    await testPool.query(
+      `INSERT INTO historical_market_observations (
+         idempotency_key, chain, token_address, quote_token_address, pool_address,
+         trader_address, side, base_amount, quote_amount, price_quote,
+         price_usd_estimate, volume_usd_estimate, price_source, confidence,
+         signature, slot, provider, observed_at, strategy_version, raw
+       ) VALUES
+         ('fifo-historical-source-1', 'solana', 'FifoHistoricalMint111', 'So111', NULL,
+          $1, 'buy', 10, 20, 2, 2, 20, 'fixture', 0.9,
+          'fifo-historical-signature-1', 50001, 'integration-test',
+          '2026-08-30T02:01:00.000Z', $2, '{}'),
+         ('fifo-historical-source-2', 'solana', 'FifoHistoricalMint111', 'So111', NULL,
+          $1, 'sell', 5, 15, 3, 3, 15, 'fixture', 0.9,
+          'fifo-historical-signature-2', 50002, 'integration-test',
+          '2026-08-30T02:02:00.000Z', $2, '{}')`,
+      [walletAddress, strategyVersion]
+    );
+
+    expect(await repository.materializeHistoricalWalletTrades(strategyVersion)).toBe(2);
+    expect(await repository.materializeHistoricalWalletTrades(strategyVersion)).toBe(0);
+    expect(
+      (
+        await testPool.query<{ revision: string; dirty_min_slot: string }>(
+          `SELECT revision, dirty_min_slot
+           FROM wallet_trade_revisions
+           WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+          [walletAddress, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({ revision: "1", dirty_min_slot: "50001" });
+    expect(
+      await testPool.query<{ exact_count: number }>(
+        `SELECT COUNT(*) FILTER (
+           WHERE base_raw_amount IS NOT NULL OR base_token_decimals IS NOT NULL
+         )::int AS exact_count
+         FROM wallet_trade_events
+         WHERE wallet_address = $1 AND strategy_version = $2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ exact_count: 0 }] });
+
+    await testPool.query(
+      `UPDATE historical_market_observations
+       SET price_usd_estimate = price_usd_estimate + 0.5,
+           volume_usd_estimate = volume_usd_estimate + 1
+       WHERE trader_address = $1 AND strategy_version = $2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(await repository.materializeHistoricalWalletTrades(strategyVersion)).toBe(2);
+    expect(
+      (
+        await testPool.query<{ revision: string; dirty_min_slot: string }>(
+          `SELECT revision, dirty_min_slot
+           FROM wallet_trade_revisions
+           WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+          [walletAddress, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({ revision: "2", dirty_min_slot: "50001" });
+  });
+
   it("atomically replaces an episode whose deterministic id changed but natural key did not", async () => {
     const strategyVersion = "ledger-natural-key-regression-v1";
     const walletAddress = "LedgerNaturalKeyWallet111";

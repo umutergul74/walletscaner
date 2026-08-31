@@ -782,13 +782,18 @@ function buildWalletLedgerBatch(
       activeEpisode.realizations.push({
         id: realizationId,
         sourceEventIdempotencyKey: trade.idempotencyKey,
+        openedAt,
         closedAt: trade.observedAt,
         rawAmount: matchedUnits.toString(),
+        remainingRawAmount: remainingUnits.toString(),
+        tokenDecimals: decimals,
         costBasisUsd: allocatedCostUsd,
         proceedsUsd,
         realizedPnlUsd: netPnlUsd,
         returnPct: (netPnlUsd / allocatedCostUsd) * 100,
-        priceQuality: episodeQuality
+        highQuality: episodeHighQuality,
+        priceQuality: episodeQuality,
+        exact: episodeHighQuality
       });
 
       if (remainingUnits === 0n) {

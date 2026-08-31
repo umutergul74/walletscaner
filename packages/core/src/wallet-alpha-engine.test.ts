@@ -70,8 +70,26 @@ describe("wallet alpha engine", () => {
     expect(ledger.positionEpisodes[0]!.metadata).toMatchObject({
       ledgerVersion: "fifo-v2",
       realizations: [
-        expect.objectContaining({ sourceEventIdempotencyKey: expect.any(String) }),
-        expect.objectContaining({ sourceEventIdempotencyKey: expect.any(String) })
+        expect.objectContaining({
+          sourceEventIdempotencyKey: expect.any(String),
+          openedAt: "2026-07-01T00:05:00.000Z",
+          closedAt: "2026-07-01T00:15:00.000Z",
+          rawAmount: "40000000",
+          remainingRawAmount: "60000000",
+          tokenDecimals: 6,
+          highQuality: true,
+          exact: true
+        }),
+        expect.objectContaining({
+          sourceEventIdempotencyKey: expect.any(String),
+          openedAt: "2026-07-01T00:05:00.000Z",
+          closedAt: "2026-07-01T00:20:00.000Z",
+          rawAmount: "30000000",
+          remainingRawAmount: "30000000",
+          tokenDecimals: 6,
+          highQuality: true,
+          exact: true
+        })
       ]
     });
     expect(ledger.positionLots).toEqual([

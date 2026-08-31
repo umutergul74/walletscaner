@@ -349,6 +349,43 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   checkpoint/CAS with source correction invalidation and durable partial-sale facts; do not deploy
   another queue-only optimization before populated parity and benchmark evidence.
 
+## Phase4: transactional FIFO continuation foundation (active, local only)
+
+- Rejected approach: a wallet-level invalidation trigger that takes advisory locks per changed row.
+  Multi-wallet price enrichment can acquire scopes in different orders and deadlock; a global lock
+  would serialize ingestion. Do not implement either.
+- Selected invariant: one `wallet_trade_revisions` row per chain/wallet/strategy. Every canonical
+  trade insert/update, price enrichment and historical materialization transaction increments it
+  once per affected wallet and retains the lexicographically earliest dirty trade order. A worker
+  checkpoint commit locks this row and succeeds only at the revision it read. Later append-only
+  evidence can continue from the suffix; an old/updated/unknown boundary requires full rebuild.
+- Additive migration054 will add the revision row, bounded integrity-hashed FIFO checkpoint and
+  durable per-partial-sale facts. It does not redirect readers, delete source, change score gates or
+  run in production. First implementation checkpoint: producer revision function/calls, schema and
+  race/order integration tests plus expanded realization metadata. Reader/commit cutover follows
+  only after this foundation passes nativePG16 and populated-clone parity.
+- Local implementation checkpoint: migration054 now defines the non-seeding revision table,
+  4MiB-bounded/hash-checked continuation table, durable partial-sale facts and a row-locking
+  expected-revision commit function. `saveWalletTradeEvent`, price enrichment and historical
+  materialization record one oldest-dirty revision per affected wallet in their existing
+  transaction; partial-sale metadata now carries exact raw/remaining quantity, decimals and
+  open/close/quality fields. Static and nativePG16 concurrency tests are written but not yet run.
+  No production schema/image/config/service changed. Next exact action: start the disposable local
+  PG16, run migration054 via the complete clean-schema integration setup, fix any SQL/type failure,
+  then run the focused core+DB tests before a coherent commit. Do not deploy at this checkpoint.
+- Foundation verification completed locally. Migration054 also adds nullable exact raw-quantity and
+  decimals columns without a default/rewrite; new exact evidence round-trips through the scalar
+  reader, while historical unknowns remain NULL. Raw-payload-only merges preserve the repository's
+  changed return value but do not advance FIFO revision or enqueue scorer work. Producer tests prove
+  save/enrich/historical changes coalesce once per affected wallet, stale CAS rejection, and that a
+  producer blocked behind the checkpoint row lock advances revision/dirty state after commit.
+  Typecheck, lint and workspace production build passed. The first fully parallel test invocation
+  passed499 unit tests but three concurrent migration-suite hooks exceeded their unchanged10s setup
+  budget; rerunning the identical complete suite with one worker (no timeout/gate relaxation) passed
+  all107files/544tests with zero skips. Next: stop disposablePG16, commit this independently safe
+  foundation and record its hash. No production migration/deploy is authorized by this result;
+  reader/fact commit integration and populated-clone parity remain required.
+
 ## Completion conditions
 
 Queue arrivals below useful drain, preserved trade/enrichment evidence, bounded lag and failure

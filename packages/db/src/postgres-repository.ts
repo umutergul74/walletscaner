@@ -696,18 +696,38 @@ export class PostgresRepository
 
   async saveWalletTradeEvent(trade: WalletTradeEvidence): Promise<boolean> {
     const result = await this.pool.query(
-      `WITH changed AS (
+      `WITH existing AS MATERIALIZED (
+       SELECT
+         base_raw_amount,
+         base_token_decimals,
+         execution_price_usd,
+         quote_value_usd
+       FROM wallet_trade_events
+       WHERE idempotency_key = $1
+       FOR UPDATE
+      ), changed AS (
        INSERT INTO wallet_trade_events (
         idempotency_key, chain, wallet_address, token_address, quote_token_address,
-        pool_address, side, base_amount, quote_amount, execution_price_usd,
+        pool_address, side, base_amount, base_raw_amount, base_token_decimals,
+        quote_amount, execution_price_usd,
         quote_value_usd, pool_created_at, pool_age_minutes, data_quality,
         signature, slot, provider, observed_at, strategy_version, raw
       )
-      VALUES (
+      SELECT
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
-      )
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21, $22
+      FROM (SELECT COUNT(*) FROM existing) AS existing_barrier
       ON CONFLICT (idempotency_key) DO UPDATE SET
+        base_raw_amount = COALESCE(
+          wallet_trade_events.base_raw_amount,
+          EXCLUDED.base_raw_amount
+        ),
+        base_token_decimals = CASE
+          WHEN wallet_trade_events.base_raw_amount IS NULL
+          THEN EXCLUDED.base_token_decimals
+          ELSE wallet_trade_events.base_token_decimals
+        END,
         execution_price_usd = COALESCE(
           wallet_trade_events.execution_price_usd,
           EXCLUDED.execution_price_usd
@@ -723,21 +743,44 @@ export class PostgresRepository
         ELSE wallet_trade_events.data_quality
         END,
         raw = wallet_trade_events.raw || EXCLUDED.raw
-      WHERE (wallet_trade_events.execution_price_usd IS NULL
+      WHERE (wallet_trade_events.base_raw_amount IS NULL
+             AND EXCLUDED.base_raw_amount IS NOT NULL)
+         OR (wallet_trade_events.execution_price_usd IS NULL
              AND EXCLUDED.execution_price_usd IS NOT NULL)
          OR (wallet_trade_events.quote_value_usd IS NULL
              AND EXCLUDED.quote_value_usd IS NOT NULL)
          OR NOT (wallet_trade_events.raw @> EXCLUDED.raw)
-      RETURNING chain, wallet_address, strategy_version
+      RETURNING
+        chain, wallet_address, strategy_version, slot, observed_at, signature, idempotency_key
+      ), ledger_changed AS MATERIALIZED (
+        SELECT changed.*
+        FROM changed
+        WHERE NOT EXISTS (SELECT 1 FROM existing)
+           OR ((SELECT base_raw_amount FROM existing) IS NULL AND $9::numeric IS NOT NULL)
+           OR ((SELECT execution_price_usd FROM existing) IS NULL AND $12::numeric IS NOT NULL)
+           OR ((SELECT quote_value_usd FROM existing) IS NULL AND $13::numeric IS NOT NULL)
+      ), revised AS MATERIALIZED (
+        SELECT
+          changed.*,
+          record_wallet_trade_revision(
+            chain,
+            wallet_address,
+            strategy_version,
+            slot,
+            observed_at,
+            signature,
+            idempotency_key
+          ) AS trade_revision
+        FROM ledger_changed AS changed
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(
           chain,
           wallet_address,
           strategy_version,
-          $21::smallint,
-          $22
+          $23::smallint,
+          $24
         ) AS queued
-        FROM changed
+        FROM revised
       )
       SELECT
         EXISTS(SELECT 1 FROM changed) AS changed,
@@ -751,6 +794,8 @@ export class PostgresRepository
         trade.poolAddress ?? null,
         trade.side,
         trade.baseAmount,
+        trade.baseTokenAmount?.rawAmount ?? null,
+        trade.baseTokenAmount?.decimals ?? null,
         trade.quoteAmount ?? null,
         trade.executionPriceUsd ?? null,
         trade.quoteValueUsd ?? null,
@@ -807,22 +852,45 @@ export class PostgresRepository
          AND execution_price_usd IS NULL
          AND observed_at <= $5
          AND observed_at >= $5::timestamptz - INTERVAL '5 minutes'
-       RETURNING chain, wallet_address, strategy_version
-      ), changed_wallets AS (
-        SELECT DISTINCT chain, wallet_address, strategy_version
+       RETURNING
+         chain, wallet_address, strategy_version, slot, observed_at, signature, idempotency_key
+      ), changed_wallets AS MATERIALIZED (
+        SELECT DISTINCT ON (chain, wallet_address, strategy_version)
+          chain, wallet_address, strategy_version, slot, observed_at, signature, idempotency_key
         FROM changed
-      ), eligible_wallets AS MATERIALIZED (
-        SELECT changed_wallets.*
+        ORDER BY
+          chain,
+          wallet_address,
+          strategy_version,
+          slot,
+          observed_at,
+          signature COLLATE "C",
+          idempotency_key COLLATE "C"
+      ), revised AS MATERIALIZED (
+        SELECT
+          changed_wallets.*,
+          record_wallet_trade_revision(
+            chain,
+            wallet_address,
+            strategy_version,
+            slot,
+            observed_at,
+            signature,
+            idempotency_key
+          ) AS trade_revision
         FROM changed_wallets
+      ), eligible_wallets AS MATERIALIZED (
+        SELECT revised.*
+        FROM revised
         WHERE $10::integer IS NULL
            OR (
              SELECT COUNT(*)
              FROM (
                SELECT 1
                FROM wallet_trade_events trade
-               WHERE trade.chain = changed_wallets.chain
-                 AND trade.strategy_version = changed_wallets.strategy_version
-                 AND trade.wallet_address = changed_wallets.wallet_address
+               WHERE trade.chain = revised.chain
+                 AND trade.strategy_version = revised.strategy_version
+                 AND trade.wallet_address = revised.wallet_address
                LIMIT COALESCE($10::integer, 1)
              ) bounded_trades
            ) >= COALESCE($10::integer, 1)
@@ -831,9 +899,9 @@ export class PostgresRepository
              FROM (
                SELECT 1
                FROM wallet_entry_signals entry
-               WHERE entry.chain = changed_wallets.chain
-                 AND entry.strategy_version = changed_wallets.strategy_version
-                 AND entry.wallet_address = changed_wallets.wallet_address
+               WHERE entry.chain = revised.chain
+                 AND entry.strategy_version = revised.strategy_version
+                 AND entry.wallet_address = revised.wallet_address
                  AND entry.observed_at >=
                    NOW() - make_interval(days => COALESCE($12::integer, 1))
                LIMIT COALESCE($11::integer, 1)
@@ -876,7 +944,8 @@ export class PostgresRepository
       `WITH changed AS (
        INSERT INTO wallet_trade_events (
         idempotency_key, chain, wallet_address, token_address, quote_token_address,
-        pool_address, side, base_amount, quote_amount, execution_price_usd,
+        pool_address, side, base_amount, base_raw_amount, base_token_decimals,
+        quote_amount, execution_price_usd,
         quote_value_usd, pool_created_at, pool_age_minutes, data_quality,
         signature, slot, provider, observed_at, strategy_version, raw
       )
@@ -889,6 +958,8 @@ export class PostgresRepository
         COALESCE(c.pool_address, matched_pool.pool_address),
         c.side,
         c.base_amount,
+        NULL::numeric,
+        NULL::smallint,
         c.quote_amount,
         c.price_usd_estimate,
         c.volume_usd_estimate,
@@ -943,10 +1014,33 @@ export class PostgresRepository
          OR (wallet_trade_events.pool_created_at IS NULL AND EXCLUDED.pool_created_at IS NOT NULL)
          OR (wallet_trade_events.pool_age_minutes IS NULL AND EXCLUDED.pool_age_minutes IS NOT NULL)
          OR wallet_trade_events.data_quality IS DISTINCT FROM EXCLUDED.data_quality
-      RETURNING chain, wallet_address, strategy_version
-      ), changed_wallets AS (
-        SELECT DISTINCT chain, wallet_address, strategy_version
+      RETURNING
+        chain, wallet_address, strategy_version, slot, observed_at, signature, idempotency_key
+      ), changed_wallets AS MATERIALIZED (
+        SELECT DISTINCT ON (chain, wallet_address, strategy_version)
+          chain, wallet_address, strategy_version, slot, observed_at, signature, idempotency_key
         FROM changed
+        ORDER BY
+          chain,
+          wallet_address,
+          strategy_version,
+          slot,
+          observed_at,
+          signature COLLATE "C",
+          idempotency_key COLLATE "C"
+      ), revised AS MATERIALIZED (
+        SELECT
+          changed_wallets.*,
+          record_wallet_trade_revision(
+            chain,
+            wallet_address,
+            strategy_version,
+            slot,
+            observed_at,
+            signature,
+            idempotency_key
+          ) AS trade_revision
+        FROM changed_wallets
       ), queued AS MATERIALIZED (
         SELECT enqueue_wallet_alpha_work(
           chain,
@@ -955,7 +1049,7 @@ export class PostgresRepository
           0::smallint,
           'historical-materialization'
         ) AS queued
-        FROM changed_wallets
+        FROM revised
       )
       SELECT
         COUNT(*)::int AS changed_count,
@@ -2753,7 +2847,8 @@ export class PostgresRepository
     const result = await this.pool.query(
       `SELECT
          idempotency_key, chain, wallet_address, token_address, quote_token_address,
-         pool_address, side, base_amount, quote_amount, execution_price_usd,
+         pool_address, side, base_amount, base_raw_amount, base_token_decimals,
+         quote_amount, execution_price_usd,
          quote_value_usd, pool_created_at, pool_age_minutes, data_quality,
          signature, slot, provider, observed_at, strategy_version, '{}'::jsonb AS raw
        FROM wallet_trade_events
@@ -4496,6 +4591,14 @@ function rowToWalletTradeEvent(row: Record<string, unknown>): WalletTradeEvidenc
     ...(row.pool_address ? { poolAddress: String(row.pool_address) } : {}),
     side: row.side as WalletTradeEvidence["side"],
     baseAmount: Number(row.base_amount),
+    ...(row.base_raw_amount !== null && row.base_token_decimals !== null
+      ? {
+          baseTokenAmount: {
+            rawAmount: String(row.base_raw_amount),
+            decimals: Number(row.base_token_decimals)
+          }
+        }
+      : {}),
     ...(row.quote_amount !== null ? { quoteAmount: Number(row.quote_amount) } : {}),
     ...(row.execution_price_usd !== null
       ? { executionPriceUsd: Number(row.execution_price_usd) }
