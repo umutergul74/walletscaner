@@ -444,6 +444,15 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   matching 16.15 Windows x64 archive is EDB file id `1260468` (HTTP 200, 332,445,137 bytes). Next:
   download it only to the local temp validation directory, extract it separately, verify
   `pg_restore --version` is 16.15, then rerun the same exit-on-error restore. No production action.
+- Official PG16.15 client archive was downloaded to local temp (exact advertised 332,445,137
+  bytes), extracted separately and reports `pg_restore (PostgreSQL) 16.15`. Its guarded two-job
+  restore completed with exit zero. The isolated clone is 17GB on PostgreSQL16.15, has
+  `pg_stat_statements`/`pgcrypto`, zero invalid indexes and 2,603,821 `wallet_trade_events`; largest
+  relations include wallet trades 4,689MB and payload partitions 2,012/1,390/648MB. Restored
+  migration state ends at 051, so populated upgrade must correctly apply ordered 052, 053 and 054,
+  not 054 alone. Next: capture wallet table relfilenode/size and WAL LSN, run the normal checksum
+  migration runner on this isolated clone, then prove no table rewrite/invalid index and record
+  elapsed/WAL/disk. The verified dump stays immutable and production remains untouched.
 
 ## Completion conditions
 
