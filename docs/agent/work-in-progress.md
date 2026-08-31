@@ -416,7 +416,7 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   547-test run passed. No schema, image, config or service has been changed in production. Next:
   review/stage only the Phase4b files, commit the coherent local checkpoint, stop the disposable
   PG, then locate a hash-verified dump and measure populated-clone parity/capacity.
-- Phase4b was committed as `e5d1714` (`perf: continue wallet FIFO ledgers transactionally`). The
+- Phase4b source was committed as `7e3464a` (`perf: continue wallet FIFO ledgers transactionally`). The
   disposable local PostgreSQL instance was then stopped cleanly and status confirms no server is
   running. The only remaining workspace files are the four preserved pre-existing deploy
   temp/partial artifacts. Next exact action is read-only discovery of the named verified dump and
