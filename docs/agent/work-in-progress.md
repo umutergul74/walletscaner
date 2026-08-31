@@ -579,6 +579,18 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   `94296952e45819eeed18ad50beaca2238036be6f629d1587473129a041d31270`. It has not been uploaded or
   applied. Next remains final backup verification, then ledgered migration/config/env/alpha-only
   canary with exactR43 plus original Compose/env as rollback.
+- The31-August pre-change backup is now a verified recovery artifact:
+  `memecoin_alpha_20260831T173517Z.dump`,2,804,194,002bytes,SHA-256
+  `112599cf58e915dd57993fa780b84cfc7e5c2fed22368d7e6b211fd80aa3e4ad`.
+  Scheduler pg_restore-list passed before atomic rename; an independent low-priority host SHA and a
+  second PostgreSQL16 `pg_restore --list` both passed. Two older off-host-verified generations remain
+  (16July and29August);13,331,984,384bytes disk remain. Next exact mutation sequence: ledger R51
+  migration planned/in-progress; capture IDs/image/live/limits/relfilenode/LSN; run only migrations
+  052-055 from the immutable R51 image with5s lock/60s statement bounds; verify checksums/tables/
+  triggers/no rewrite/no invalid indexes. Then atomically stage the exact one-line Compose candidate
+  and guarded research-image env change, recreate only wallet-alpha with `--no-deps`, and accept or
+  roll back on identity/live/resource/OOM/restart/failure/useful-throughput/net-lane gates. All other
+  Walletscaner containers and ingestion must retain identity.
 
 ## Completion conditions
 
