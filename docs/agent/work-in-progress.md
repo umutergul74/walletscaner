@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-08-30T21:44:00Z
+updated_at_utc: 2026-08-31T22:39:06Z
 owner: codex
 task: bounded alpha producer and sustainable wallet evidence storage
-last_safe_checkpoint: R46 safe/auth working but queue capacity failed; no production mutation pending, ledger6; local continuation and scorer parity522tests pass
+last_safe_checkpoint: R51 staged and current backup verified; live exactR43/migration051 unchanged; production rollout preflight passed and no mutation is in progress
 ---
 
 # Active objective
@@ -591,6 +591,29 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   and guarded research-image env change, recreate only wallet-alpha with `--no-deps`, and accept or
   roll back on identity/live/resource/OOM/restart/failure/useful-throughput/net-lane gates. All other
   Walletscaner containers and ingestion must retain identity.
+- Fresh resume/pre-mutation reconciliation at2026-08-31T22:39:06Z proves the previous operation did
+  not partially continue: live wallet-alpha is still container24e887caab3d/exactR43 image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`, restart0/OOMfalse,
+  live execution false,160MiB/0.10CPU and Node old-space112MiB without the staged semi-space cap.
+  Migration051 remains latest, all three FIFO tables are absent, wallet trade relfilenode60487,
+  size6,217,736,192bytes and zero indexes are invalid. Current DB size is25,067,830,295bytes,
+  WAL553,648,128bytes, root free13,230,452,736bytes and available RAM about1.02GB. Canonical wallet
+  trades were14seconds fresh. Evidence-v1 has39,500pending (39,193background/307elevated/0signal),
+  39,498ready and one pending error; recent R43 cycles alternate between short admission passes and
+  120-248second expensive work, so the positive queue slope remains the acceptance problem.
+  The only listed Compose project is Walletscaner and the protected co-tenant inventory is empty.
+- The immutable R51 image remains exact
+  `sha256:11040e46acec558b3b37fec3103e4367efe0ade8b1ee62c3234dcd22079e0a49`; its labels retain exactR43
+  as the base and patch `c25f147-c075c51`. The active server Compose SHA is still
+  `8c57d28c53145bbd7fe5669c53eb1329047c2821e748e8d24553d01937ae3288`; the server-derived one-line
+  candidate remains local-only at SHA
+  `94296952e45819eeed18ad50beaca2238036be6f629d1587473129a041d31270`. The31-August dump retains
+  exact size2,804,194,002bytes and its existing sidecar; the preceding checkpoint already records
+  independent SHA and PostgreSQL16 list verification. No hash process or partial backup is active.
+  Next exact action after committing this checkpoint: transition the existing R51 release ledger
+  revision3 to a new migration phase planned, then in_progress; stop only wallet-alpha, run the
+  exact R51 one-shot migration with explicit5s lock/60s statement limits, and independently verify
+  migrations052-055/checksums/triggers/relfilenode/indexes before any config or service activation.
 
 ## Completion conditions
 
