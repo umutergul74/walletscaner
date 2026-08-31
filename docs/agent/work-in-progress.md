@@ -562,6 +562,12 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   migration055's coalesced trigger used35.226ms/one call, versus79.702ms/1,000calls in the existing
   archive trigger. Next: full native gate/type/lint/build, commit R51 source, create a new immutable
   artifact and Linux gate. Production remains exactR43; the active backup still gates migration.
+- R51 source/docs are committed as `c25f147`; the full native gate passed107files/552tests plus
+  typecheck, ESLint and production build. The exact20-entry copy-only artifact is710,144bytes with
+  SHA-256 `07266ba5b5ad0276ecb1e09aef3c2bfcc0c460968df5c0874c6b4f4c059e2597` and includes immutable
+  migration055. Next: create a fresh R51 release ledger, upload/hash/build from exactR43 with network
+  disabled, and run Linux tests/benchmark. The image may remain unused while the31-August backup
+  runs; no migration/activation is allowed until that generation is final and verified.
 
 ## Completion conditions
 
