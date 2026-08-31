@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-08-31T22:43:00Z
+updated_at_utc: 2026-08-31T22:44:00Z
 owner: codex
 task: bounded alpha producer and sustainable wallet evidence storage
 last_safe_checkpoint: R51 staged and current backup verified; live exactR43/migration051 unchanged; production rollout preflight passed and no mutation is in progress
@@ -620,6 +620,23 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   Compose or environment value changed in this phase. A trailing CRLF-only shell diagnostic occurred
   after the readback and has no state ambiguity. Next: re-read revision4, transition this same phase
   to `in_progress`, stop only wallet-alpha, apply the bounded exact-image migration once, then verify.
+- Production migrations052/053/054/055 are now applied through the immutable R51 one-shot container;
+  their recorded checksums exactly match the local files. The original wallet-trade relfilenode
+  remains60487, all three FIFO tables and all three migration055 statement triggers plus the prior
+  archive trigger exist/enabled, five required functions exist and invalid indexes remain zero.
+  Live legacy ingestion immediately populated known-order wallet revision rows while alpha was
+  stopped, proving producer-independent invalidation is operational. DB size25,070,902,295bytes,
+  WAL directory553,648,128bytes, wallet-trade freshness19seconds and root free13,216,702,464bytes.
+- Only wallet-alpha was stopped. Its exactR43 container remains as rollback evidence with exit137,
+  OOMfalse/restart0; it exceeded the30-second graceful stop window rather than crashing. Every other
+  Walletscaner container ID/image remained unchanged and the protected co-tenant inventory remained
+  empty. The one-shot migration container was removed. Release ledger revision6 is migration phase
+  `completed`, SHA-256
+  `aa24bdc8d64725623ca917955a67033c48ecfd42e36bc03cba64d65d4ebb5fd6`.
+  Next exact action: open a new activation phase as planned/in_progress, hash-upload only the
+  server-derived one-line Compose candidate, preserve root-only rollback copies of the active
+  Compose/env files, dry-run then atomically change only the research image, and recreate only
+  wallet-alpha with `--no-deps`. Restore the original Compose/env and exactR43 alpha on any hard gate.
 
 ## Completion conditions
 
