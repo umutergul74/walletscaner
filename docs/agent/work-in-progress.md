@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-08-31T22:46:00Z
+status: complete
+updated_at_utc: 2026-08-31T23:03:01Z
 owner: codex
-task: bounded alpha producer and sustainable wallet evidence storage
-last_safe_checkpoint: R51 staged and current backup verified; live exactR43/migration051 unchanged; production rollout preflight passed and no mutation is in progress
+task: R51 FIFO continuation production rollout and capacity acceptance
+last_safe_checkpoint: migrations052-055 operational; R51 capacity rejected and exactR43 rollback verified; no mutation is in progress
 ---
 
 # Active objective
@@ -647,6 +647,36 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   unchanged from the migration checkpoint; wallet-alpha remains stopped. Next: transition ledger7
   to activation `in_progress`, make root-only rollback copies, guarded-update only the research image
   and active Compose, recreate only wallet-alpha, then independently verify or automatically revert.
+
+## Final outcome, 2026-08-31 23:03 UTC
+
+- The rollout procedure is complete with a **no-go** capacity result, not a successful R51
+  promotion. Three bounded live cycles processed useful/low/failure counts of76/2/2,40/9/0 and
+  72/1/2 in242.495/246.910/242.305seconds. Pending queue moved39,496->39,803 and the failure count
+  moved1->5. Every loaded wallet was still a first-time `full-rebuild`; the179 completed
+  continuations could not benefit the unresolved39k historical seed cohort during this canary.
+- Resource/correctness gates passed: observed alpha RSS stayed below127.81MiB under160MiB,
+  restart/OOM remained0/false, live execution remained false, canonical wallet trades stayed fresh,
+  no invalid index appeared and non-alpha container identities never changed. CAS revision races and
+  inventory/page limits failed closed without advancing an unsafe checkpoint or losing evidence.
+- Useful-drain and no-failure-growth gates failed, so active Compose/env were atomically restored and
+  only wallet-alpha was recreated on exactR43. Final R43 container7313793b5a18, image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`, restart0/OOMfalse,
+  live=false,160MiB/0.10CPU. Every other Walletscaner identity and the empty protected-co-tenant
+  inventory matched pre-state.
+- Additive migrations052-055 remain operational and safe for legacy producers. Migration055 is the
+  latest, relfilenode60487 is unchanged and invalid indexes are zero. R51's derived canary state is
+  retained without deletion: wallet revisions about0.55MiB, continuations about46.98MiB and
+  realization facts about53.98MiB. R43 does not grow the continuation/fact tables; database triggers
+  continue only the compact coalesced revision contract.
+- Server rollout ledger revision9 is `activate-wallet-alpha-r51=failed`, SHA-256
+  `d5482cebbf9d1fd9bc77c057dbb44dfcfe5871032275ca991d96e5b0ffa69408`. Exact rollback files remain
+  root-only under `backups/deploy/alpha-fifo-r51-preactivation-r8`; current verified dump remains
+  2,804,194,002bytes. Final DB size25,248,013,335bytes, root free12,888,768,512bytes and available
+  RAM about1.02GB. No B2 object, canonical evidence, volume or unrelated service was deleted.
+- This checkpoint is closed; do not retry R51 unchanged. The next separate task must make initial
+  seeding resumable across pages/cycles and isolate historical background seeding from the live
+  elevated lane, then pass an hour-long negative useful-queue slope before another deployment.
 
 ## Completion conditions
 

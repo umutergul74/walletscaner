@@ -3,6 +3,28 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-31 23:03 UTC R51 FIFO rollout rejected and rolled back
+
+- Production migrations052-055 are operational. Checksums match source, wallet-trade relfilenode
+  remained60487, migration055's three producer-independent statement triggers plus the prior archive
+  trigger are enabled and invalid indexes are zero. Live legacy ingestion populated known-order
+  revision rows while alpha was stopped, so CAS invalidation no longer depends on producer image age.
+- ExactR51 passed immutable Linux tests/benchmark and all immediate runtime gates, but failed its
+  capacity canary. Three cycles processed76/40/72 useful wallets in242.495/246.910/242.305seconds;
+  queue pending moved39,496->39,803 and failures1->5. The old39k cohort remained first-seed
+  `full-rebuild`, so continuation speed could not yet affect useful drain. This is a measured no-go,
+  not an operational queue fix.
+- Only wallet-alpha was rolled back. It now runs exactR43 image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`, container7313793b5a18,
+  live=false,restart0/OOMfalse,160MiB/0.10CPU. Active Compose SHA is restored to8c57d28...3288 and
+  all non-alpha Walletscaner identities are unchanged. R51 remains an inactive artifact; do not
+  retry it without resumable initial seeding and a separately bounded background lane.
+- R51 canary-derived state is retained, not deleted: revisions573,440bytes,
+  continuations49,258,496bytes and realization facts56,598,528bytes. R43 does not write the latter
+  two. Final DB25,248,013,335bytes, root free12,888,768,512bytes, wallet trade freshness59seconds and
+  current backup2,804,194,002bytes. Ledger `alpha-fifo-r51-20260831` revision9 records failed
+  acceptance plus verified rollback.
+
 ## 2026-08-31 local FIFO populated validation (not deployed)
 
 - Source foundation/reader checkpoints are committed as `b15282f`/`7e3464a`; the paged-seed/no-op
