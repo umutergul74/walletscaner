@@ -66,6 +66,11 @@ try {
             process.env.WALLET_ALPHA_MAX_TRADE_EVENTS_PER_WALLET,
             10_000
           ),
+          maximumSeedTradeEventsPerWallet: positiveInt(
+            process.env.WALLET_ALPHA_MAX_SEED_TRADE_EVENTS_PER_WALLET,
+            20_000
+          ),
+          fifoTradePageSize: positiveInt(process.env.WALLET_ALPHA_FIFO_TRADE_PAGE_SIZE, 1_000),
           maximumEntriesPerWallet: positiveInt(
             process.env.WALLET_ALPHA_MAX_ENTRIES_PER_WALLET,
             2_000

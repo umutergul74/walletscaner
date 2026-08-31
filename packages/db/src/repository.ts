@@ -800,6 +800,13 @@ export interface EvidenceRepository {
     boundary: WalletTradeOrderBoundary,
     maxRows?: number
   ): Promise<WalletTradeEvidence[]>;
+  listWalletTradeLedgerInputPage(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary?: WalletTradeOrderBoundary,
+    maxRows?: number
+  ): Promise<WalletTradeEvidence[]>;
   commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean>;
   claimWalletAlphaWork(options: WalletAlphaWorkClaimOptions): Promise<WalletAlphaWorkItem[]>;
   listWalletAlphaWorkCandidates(
@@ -819,7 +826,8 @@ export interface EvidenceRepository {
     minObservedAt: string,
     maximumTradeEvents: number,
     maximumEntries: number,
-    maximumOutcomes: number
+    maximumOutcomes: number,
+    tradeAfter?: WalletTradeOrderBoundary
   ): Promise<WalletAlphaEvidenceBounds>;
   completeWalletAlphaWork(item: WalletAlphaWorkItem): Promise<boolean>;
   failWalletAlphaWork(

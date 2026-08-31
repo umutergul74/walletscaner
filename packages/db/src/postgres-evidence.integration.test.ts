@@ -412,6 +412,99 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
         [walletAddress, strategyVersion]
       )
     ).toMatchObject({ rows: [{ dirty_order_known: false }] });
+    const beforeNoop = await testPool.query(
+      `SELECT continuation.ctid::text AS checkpoint_ctid, continuation.generation,
+              revision.ctid::text AS revision_ctid
+       FROM wallet_fifo_continuations continuation
+       JOIN wallet_trade_revisions revision USING (chain, wallet_address, strategy_version)
+       WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(
+      await repository.commitWalletFifoContinuation({
+        chain: "solana",
+        walletAddress,
+        strategyVersion,
+        expectedTradeRevision: 4,
+        mode: "append",
+        checkpoint: {
+          version: "fifo-continuation-v1",
+          payload: finalPayload,
+          sha256: createHash("sha256").update(finalPayload).digest("hex"),
+          lastOrder: {
+            slot: 40_003,
+            observedAt: "2026-08-30T00:03:00.000Z",
+            signature: "fifo-continuation-signature-3",
+            idempotencyKey: "fifo-continuation-trade-3"
+          }
+        },
+        calculatedAt: "2026-08-30T01:04:00.000Z",
+        realizations: []
+      })
+    ).toBe(true);
+    const afterNoop = await testPool.query(
+      `SELECT continuation.ctid::text AS checkpoint_ctid, continuation.generation,
+              revision.ctid::text AS revision_ctid
+       FROM wallet_fifo_continuations continuation
+       JOIN wallet_trade_revisions revision USING (chain, wallet_address, strategy_version)
+       WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+      [walletAddress, strategyVersion]
+    );
+    expect(afterNoop.rows).toEqual(beforeNoop.rows);
+  });
+
+  it("pages same-slot FIFO evidence in C order and bounds only the remaining suffix", async () => {
+    const strategyVersion = "fifo-page-order-integration-v1";
+    const walletAddress = "FifoPageOrderWallet111";
+    const observedAt = "2026-08-30T01:00:00.000Z";
+    const values = [
+      { signature: "b-signature", idempotencyKey: "fifo-page-0" },
+      { signature: "a-signature", idempotencyKey: "fifo-page-A" },
+      { signature: "Z-signature", idempotencyKey: "fifo-page-z" }
+    ];
+    for (const value of values) {
+      await repository.saveWalletTradeEvent({
+        ...value,
+        chain: "solana",
+        walletAddress,
+        tokenAddress: "FifoPageMint111",
+        poolAddress: "FifoPagePool111",
+        side: "buy",
+        baseAmount: 1,
+        dataQuality: "observed-balance",
+        slot: 50_000,
+        provider: "integration-test",
+        observedAt,
+        strategyVersion,
+        raw: { providerPayload: "not-in-scalar-page" }
+      });
+    }
+    const first = await repository.listWalletTradeLedgerInputPage(
+      "solana", walletAddress, strategyVersion, undefined, 1
+    );
+    expect(first.map((trade) => trade.signature)).toEqual(["Z-signature"]);
+    expect(first[0]?.raw).toEqual({});
+    const second = await repository.listWalletTradeLedgerInputPage(
+      "solana", walletAddress, strategyVersion, first[0], 1
+    );
+    expect(second.map((trade) => trade.signature)).toEqual(["a-signature"]);
+    const third = await repository.listWalletTradeLedgerInputPage(
+      "solana", walletAddress, strategyVersion, second[0], 1
+    );
+    expect(third.map((trade) => trade.signature)).toEqual(["b-signature"]);
+    const [item] = await repository.claimWalletAlphaWork({
+      strategyVersion,
+      workerId: "fifo-page-test",
+      limit: 1,
+      leaseSeconds: 30
+    });
+    expect(item).toBeDefined();
+    expect(
+      await repository.probeWalletAlphaEvidenceBounds(item!, observedAt, 1, 1, 1)
+    ).toMatchObject({ tradeEventsExceeded: true });
+    expect(
+      await repository.probeWalletAlphaEvidenceBounds(item!, observedAt, 1, 1, 1, second[0])
+    ).toMatchObject({ tradeEventsExceeded: false });
   });
 
   it("coalesces historical materialization changes into one wallet source revision", async () => {

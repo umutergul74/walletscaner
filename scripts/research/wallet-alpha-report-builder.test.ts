@@ -111,7 +111,7 @@ describe("wallet alpha report", () => {
       );
     }
     await repository.saveWalletTradeEvent(walletTrade("ZHealthyWallet", "healthy", 1_000));
-    const scopedLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
+    const scopedLoads = vi.spyOn(repository, "listWalletTradeLedgerInputPage");
     const boundedProbes = vi.spyOn(repository, "probeWalletAlphaEvidenceBounds");
 
     const result = await processWalletAlphaQueue(
@@ -145,7 +145,7 @@ describe("wallet alpha report", () => {
     expect(boundedProbes).toHaveBeenCalledTimes(2);
     // The pathological wallet is rejected by an index-bounded count probe;
     // its 101 full rows are never sorted/materialized into the worker heap.
-    expect(scopedLoads.mock.calls.map(([wallets]) => wallets)).toEqual([["ZHealthyWallet"]]);
+    expect(scopedLoads.mock.calls.map((call) => call[1])).toEqual(["ZHealthyWallet"]);
     expect(await repository.listWalletAlphaScores("evidence-v1")).toHaveLength(1);
 
     await repository.saveWalletTradeEvent(walletTrade("AHeavyWallet", "heavy-new", 2_000));
@@ -165,6 +165,7 @@ describe("wallet alpha report", () => {
     const batchCompletion = vi.spyOn(repository, "completeWalletAlphaWorkCandidates");
     const scopedTradeLoads = vi.spyOn(repository, "listWalletTradeEventsForWallets");
     const ledgerTradeLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsForWallets");
+    const pageLoads = vi.spyOn(repository, "listWalletTradeLedgerInputPage");
     await repository.saveWalletTradeEvent(walletTrade("SingleTradeWallet", "single", 1));
     for (let index = 0; index < 3; index += 1) {
       await repository.saveWalletEntrySignal({
@@ -205,12 +206,11 @@ describe("wallet alpha report", () => {
     expect(batchCompletion).toHaveBeenCalledWith([
       expect.objectContaining({ walletAddress: "SingleTradeWallet", revision: 1 })
     ]);
-    // Only the admitted wallet reaches the full evidence load. The low-evidence
+    // Only the admitted wallet reaches the bounded page load. The low-evidence
     // wallet is completed from the revision-bound batch probe.
-    expect(scopedTradeLoads.mock.calls.map(([wallets]) => wallets)).toEqual([["ThreeEntryWallet"]]);
-    expect(ledgerTradeLoads.mock.calls.map(([wallets]) => wallets)).toEqual([
-      ["ThreeEntryWallet"]
-    ]);
+    expect(scopedTradeLoads).not.toHaveBeenCalled();
+    expect(ledgerTradeLoads).not.toHaveBeenCalled();
+    expect(pageLoads.mock.calls.map((call) => call[1])).toEqual(["ThreeEntryWallet"]);
   });
 
   it("falls back to a fresh probe when evidence advances the queued revision", async () => {
@@ -296,8 +296,7 @@ describe("wallet alpha report", () => {
   it("uses a suffix after the first FIFO seed and rebuilds on an old source correction", async () => {
     const repository = new MemoryRepository();
     const walletAddress = "ContinuationWallet";
-    const fullLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsForWallets");
-    const suffixLoads = vi.spyOn(repository, "listWalletTradeLedgerInputsAfter");
+    const pageLoads = vi.spyOn(repository, "listWalletTradeLedgerInputPage");
     await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 1, "buy", 100, 100));
     await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 2, "sell", 100, 150));
 
@@ -340,8 +339,9 @@ describe("wallet alpha report", () => {
         options
       )
     ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
-    expect(fullLoads).toHaveBeenCalledTimes(1);
-    expect(suffixLoads).toHaveBeenCalledTimes(1);
+    expect(pageLoads).toHaveBeenCalledTimes(2);
+    expect(pageLoads.mock.calls[0]![3]).toBeUndefined();
+    expect(pageLoads.mock.calls[1]![3]).toBeDefined();
     expect(
       await repository.getWalletFifoContinuationState(
         "solana",
@@ -381,8 +381,8 @@ describe("wallet alpha report", () => {
         options
       )
     ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
-    expect(fullLoads).toHaveBeenCalledTimes(2);
-    expect(suffixLoads).toHaveBeenCalledTimes(1);
+    expect(pageLoads).toHaveBeenCalledTimes(3);
+    expect(pageLoads.mock.calls[2]![3]).toBeUndefined();
     expect(
       await repository.getWalletFifoContinuationState(
         "solana",
@@ -390,6 +390,78 @@ describe("wallet alpha report", () => {
         "evidence-v1"
       )
     ).toMatchObject({ tradeRevision: 5, continuation: { tradeRevision: 5, generation: 3 } });
+  });
+
+  it("seeds a large wallet in bounded pages and checks only its suffix after seeding", async () => {
+    const repository = new MemoryRepository();
+    const walletAddress = "PagedContinuationWallet";
+    for (let index = 1; index <= 150; index += 1) {
+      await repository.saveWalletTradeEvent(
+        fifoTrade(walletAddress, index, index % 2 === 1 ? "buy" : "sell", 100, 100)
+      );
+    }
+    const pageLoads = vi.spyOn(repository, "listWalletTradeLedgerInputPage");
+    const options = {
+      materializeHistorical: false,
+      workBatchSize: 1,
+      maxWorkBatches: 1,
+      maximumTradeEventsPerWallet: 100,
+      maximumSeedTradeEventsPerWallet: 200,
+      fifoTradePageSize: 25
+    };
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:00:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0, oversizedWallets: 0 });
+    expect(pageLoads).toHaveBeenCalledTimes(7);
+    expect(pageLoads.mock.calls.every((call) => call[4] === 25)).toBe(true);
+
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 151, "buy", 100, 100));
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 152, "sell", 100, 150));
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:01:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0, oversizedWallets: 0 });
+    expect(pageLoads).toHaveBeenCalledTimes(8);
+    expect(pageLoads.mock.calls[7]![3]).toBeDefined();
+    expect(await repository.listWalletAlphaScores("evidence-v1")).toEqual(
+      buildWalletAlphaScores({
+        trades: await repository.listWalletTradeEvents(walletAddress, "evidence-v1"),
+        entries: [],
+        outcomes: [],
+        strategyVersion: "evidence-v1",
+        calculatedAt: "2026-07-10T00:01:00.000Z"
+      })
+    );
+    const merges = vi.spyOn(repository, "mergeWalletPositionLedger");
+    await repository.saveWalletEntrySignal({
+      ...unknownRiskEntry(),
+      idempotencyKey: "paged-entry-only-wakeup",
+      walletAddress
+    });
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:02:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0 });
+    expect(merges).not.toHaveBeenCalled();
+    expect(
+      await repository.getWalletFifoContinuationState("solana", walletAddress, "evidence-v1")
+    ).toMatchObject({ continuation: { generation: 2 } });
   });
 });
 

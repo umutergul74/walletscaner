@@ -77,6 +77,8 @@ export interface WalletAlphaReportOptions {
   workLeaseSeconds?: number;
   workerId?: string;
   maximumTradeEventsPerWallet?: number;
+  maximumSeedTradeEventsPerWallet?: number;
+  fifoTradePageSize?: number;
   maximumEntriesPerWallet?: number;
   maximumOutcomesPerWallet?: number;
   oversizedRetrySeconds?: number;
@@ -222,6 +224,13 @@ export async function processWalletAlphaQueue(
     100,
     100_000
   );
+  const maximumSeedTradeEventsPerWallet = boundedInt(
+    options.maximumSeedTradeEventsPerWallet,
+    maximumTradeEventsPerWallet,
+    maximumTradeEventsPerWallet,
+    100_000
+  );
+  const fifoTradePageSize = boundedInt(options.fifoTradePageSize, 1_000, 1, 10_000);
   const maximumEntriesPerWallet = boundedInt(options.maximumEntriesPerWallet, 2_000, 100, 50_000);
   const maximumOutcomesPerWallet = boundedInt(
     options.maximumOutcomesPerWallet,
@@ -360,15 +369,27 @@ export async function processWalletAlphaQueue(
         continue;
       }
 
+      const fifoState = await repository.getWalletFifoContinuationState(
+        item.chain,
+        item.walletAddress,
+        strategyVersion,
+        maximumTradeEventsPerWallet
+      );
+      const fifoMode = walletFifoMode(fifoState);
+      const maximumWorkTrades =
+        fifoMode === "full-rebuild"
+          ? maximumSeedTradeEventsPerWallet
+          : maximumTradeEventsPerWallet;
       const bounds = await repository.probeWalletAlphaEvidenceBounds(
         item,
         minimumObservedAt,
-        maximumTradeEventsPerWallet,
+        maximumWorkTrades,
         maximumEntriesPerWallet,
-        maximumOutcomesPerWallet
+        maximumOutcomesPerWallet,
+        fifoMode === "append" ? fifoState.continuation!.lastOrder : undefined
       );
       if (bounds.tradeEventsExceeded) {
-        throw evidenceLimitError(item.walletAddress, "trade-events", maximumTradeEventsPerWallet);
+        throw evidenceLimitError(item.walletAddress, "trade-events", maximumWorkTrades);
       }
       if (bounds.entriesExceeded) {
         throw evidenceLimitError(item.walletAddress, "entries", maximumEntriesPerWallet);
@@ -377,28 +398,13 @@ export async function processWalletAlphaQueue(
         throw evidenceLimitError(item.walletAddress, "outcomes", maximumOutcomesPerWallet);
       }
 
-      const fifoState = await repository.getWalletFifoContinuationState(
-        item.chain,
-        item.walletAddress,
-        strategyVersion,
-        maximumTradeEventsPerWallet
-      );
-      const fifoMode = walletFifoMode(fifoState);
-      const [ledgerTrades, entries, outcomes, matchingCreators] = await Promise.all([
-        fifoMode === "append"
-          ? repository.listWalletTradeLedgerInputsAfter(
-              item.chain,
-              item.walletAddress,
-              strategyVersion,
-              fifoState.continuation!.lastOrder,
-              maximumTradeEventsPerWallet
-            )
-          : repository.listWalletTradeLedgerInputsForWallets(
-              walletAddresses,
-              strategyVersion,
-              undefined,
-              maximumTradeEventsPerWallet + 1
-            ),
+      const [loadedFifo, entries, outcomes, matchingCreators] = await Promise.all([
+        loadWalletFifoPages(repository, item, fifoState, fifoMode, {
+          maximumTrades: maximumWorkTrades,
+          pageSize: fifoTradePageSize,
+          minimumObservedAtMs,
+          deadlineMs: startedAt + maximumRunSeconds * 1_000
+        }),
         repository.listWalletEntrySignalsForWallets(
           walletAddresses,
           strategyVersion,
@@ -415,12 +421,6 @@ export async function processWalletAlphaQueue(
       ]);
       assertEvidenceWithinLimit(
         item.walletAddress,
-        "trade-events",
-        ledgerTrades.length,
-        maximumTradeEventsPerWallet
-      );
-      assertEvidenceWithinLimit(
-        item.walletAddress,
         "entries",
         entries.length,
         maximumEntriesPerWallet
@@ -431,37 +431,23 @@ export async function processWalletAlphaQueue(
         outcomes.length,
         maximumOutcomesPerWallet
       );
-      const trades = ledgerTrades.filter(
-        (trade) => new Date(trade.observedAt).getTime() >= minimumObservedAtMs
-      );
-      const continuationResult =
-        ledgerTrades.length === 0 && fifoMode === "full-rebuild"
-          ? undefined
-          : advanceWalletLedger(
-              ledgerTrades,
-              fifoMode === "append" && fifoState.continuation
-                ? {
-                    version: fifoState.continuation.version,
-                    payload: fifoState.continuation.payload,
-                    sha256: fifoState.continuation.sha256
-                  }
-                : undefined
-            );
+      const continuationResult = loadedFifo.continuationResult;
       const ledger = continuationResult
         ? fifoMode === "append"
           ? combineWalletFifoLedger(fifoState, continuationResult.ledger)
           : continuationResult.ledger
-        : buildWalletLedger(ledgerTrades);
+        : buildWalletLedger([]);
       const prebuiltLedgers = partitionWalletLedger(ledger, walletAddresses);
       if (
-        ledgerTrades.length >= maximumTradeEventsPerWallet / 2 ||
+        loadedFifo.tradeCount >= maximumTradeEventsPerWallet / 2 ||
         workIndex === 0 ||
         (workIndex + 1) % 25 === 0
       ) {
         progress("wallet-loaded", {
           workItem: workIndex + 1,
-          trades: trades.length,
-          ledgerTrades: ledgerTrades.length,
+          trades: loadedFifo.windowTradeCount,
+          ledgerTrades: loadedFifo.tradeCount,
+          fifoPages: loadedFifo.pages,
           entries: entries.length,
           outcomes: outcomes.length,
           fifoMode,
@@ -474,7 +460,7 @@ export async function processWalletAlphaQueue(
         await repository.replaceWalletPositionLedger(
           ledgerSnapshot(ledger, item.chain, strategyVersion, now, walletAddresses)
         );
-      } else {
+      } else if (loadedFifo.tradeCount > 0) {
         await repository.mergeWalletPositionLedger(
           ledgerSnapshot(
             continuationResult!.ledger,
@@ -502,7 +488,9 @@ export async function processWalletAlphaQueue(
       }
 
       const scores = buildWalletAlphaScores({
-        trades,
+        // The verified ledger map supplies wallet identity and profitability. Retaining all source
+        // pages here would defeat bounded FIFO continuation and is not needed by the scorer.
+        trades: [],
         entries,
         outcomes,
         strategyVersion,
@@ -587,6 +575,104 @@ function walletAlphaWorkRevisionKey(input: {
   revision: number;
 }): string {
   return [input.chain, input.walletAddress, input.strategyVersion, input.revision].join(":");
+}
+
+async function loadWalletFifoPages(
+  repository: WalletAlphaRepository,
+  item: WalletAlphaWorkItem,
+  state: WalletFifoContinuationState,
+  mode: WalletFifoContinuationCommit["mode"],
+  options: {
+    maximumTrades: number;
+    pageSize: number;
+    minimumObservedAtMs: number;
+    deadlineMs: number;
+  }
+): Promise<{
+  continuationResult?: { checkpoint: WalletLedgerCheckpoint; ledger: WalletLedger };
+  tradeCount: number;
+  windowTradeCount: number;
+  pages: number;
+}> {
+  let checkpoint: WalletLedgerCheckpoint | undefined =
+    mode === "append" && state.continuation
+      ? {
+          version: state.continuation.version,
+          payload: state.continuation.payload,
+          sha256: state.continuation.sha256
+        }
+      : undefined;
+  let boundary = mode === "append" ? state.continuation!.lastOrder : undefined;
+  let tradeCount = 0;
+  let windowTradeCount = 0;
+  let pages = 0;
+  const realized = new Map<string, WalletLedger["realizedEpisodes"][number]>();
+  const episodes = new Map<string, WalletLedger["positionEpisodes"][number]>();
+  const lots = new Map<string, WalletLedger["positionLots"][number]>();
+  let openInventory: WalletLedger["openInventory"] = [];
+
+  while (true) {
+    if (Date.now() >= options.deadlineMs) {
+      throw new Error(`Wallet FIFO page budget expired for ${item.walletAddress}.`);
+    }
+    const remaining = options.maximumTrades - tradeCount;
+    const limit = Math.min(options.pageSize, Math.max(remaining, 1));
+    const page = await repository.listWalletTradeLedgerInputPage(
+      item.chain,
+      item.walletAddress,
+      item.strategyVersion,
+      boundary,
+      limit
+    );
+    pages += 1;
+    if (page.length > remaining) {
+      throw evidenceLimitError(item.walletAddress, "trade-events", options.maximumTrades);
+    }
+    if (page.length === 0 && !checkpoint) break;
+    let next: ReturnType<typeof advanceWalletLedger>;
+    try {
+      next = advanceWalletLedger(page, checkpoint);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("budget exceeded")) {
+        throw new WalletAlphaEvidenceLimitError(error.message);
+      }
+      throw error;
+    }
+    checkpoint = next.checkpoint;
+    boundary = walletLedgerCheckpointOrder(checkpoint);
+    tradeCount += page.length;
+    windowTradeCount += page.filter(
+      (trade) => Date.parse(trade.observedAt) >= options.minimumObservedAtMs
+    ).length;
+    for (const position of next.ledger.realizedEpisodes) {
+      realized.set(position.episodeId, position);
+    }
+    if (realized.size > 10_000) {
+      throw evidenceLimitError(item.walletAddress, "FIFO realizations", 10_000);
+    }
+    for (const episode of next.ledger.positionEpisodes) episodes.set(episode.episodeId, episode);
+    for (const lot of next.ledger.positionLots) lots.set(lot.lotId, lot);
+    openInventory = next.ledger.openInventory;
+    if (page.length < limit) break;
+  }
+  return {
+    ...(checkpoint
+      ? {
+          continuationResult: {
+            checkpoint,
+            ledger: {
+              realizedEpisodes: [...realized.values()],
+              openInventory,
+              positionEpisodes: [...episodes.values()],
+              positionLots: [...lots.values()]
+            }
+          }
+        }
+      : {}),
+    tradeCount,
+    windowTradeCount,
+    pages
+  };
 }
 
 function walletFifoMode(

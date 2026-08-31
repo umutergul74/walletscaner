@@ -1003,7 +1003,8 @@ export class MemoryRepository
     minObservedAt: string,
     maximumTradeEvents: number,
     maximumEntries: number,
-    maximumOutcomes: number
+    maximumOutcomes: number,
+    tradeAfter?: WalletTradeOrderBoundary
   ): Promise<WalletAlphaEvidenceBounds> {
     const minimumTime = new Date(minObservedAt).getTime();
     const entries = [...this.walletEntrySignals.values()].filter(
@@ -1018,7 +1019,8 @@ export class MemoryRepository
         [...this.walletTradeEvents.values()].filter(
           (trade) =>
             trade.walletAddress === item.walletAddress &&
-            trade.strategyVersion === item.strategyVersion
+            trade.strategyVersion === item.strategyVersion &&
+            (!tradeAfter || compareWalletTradeOrder(trade, tradeAfter) > 0)
         ).length > maximumTradeEvents,
       entriesExceeded: entries.length > maximumEntries,
       outcomesExceeded:
@@ -1445,6 +1447,27 @@ export class MemoryRepository
     return values.map((trade) => ({ ...trade, raw: {} }));
   }
 
+  async listWalletTradeLedgerInputPage(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary?: WalletTradeOrderBoundary,
+    maxRows = 5_000
+  ): Promise<WalletTradeEvidence[]> {
+    const boundedMaximum = clampLimit(maxRows, 5_000, 10_000);
+    return [...this.walletTradeEvents.values()]
+      .filter(
+        (trade) =>
+          trade.chain === chain &&
+          trade.walletAddress === walletAddress &&
+          trade.strategyVersion === strategyVersion &&
+          (!boundary || compareWalletTradeOrder(trade, boundary) > 0)
+      )
+      .sort(compareWalletTradeOrder)
+      .slice(0, boundedMaximum)
+      .map((trade) => ({ ...trade, raw: {} }));
+  }
+
   async commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean> {
     const key = `${input.chain}:${input.walletAddress}:${input.strategyVersion}`;
     const current = this.walletTradeRevisions.get(key);
@@ -1467,6 +1490,17 @@ export class MemoryRepository
       ) {
         throw new Error(`Wallet FIFO realization ${fact.realizationId} is outside commit scope.`);
       }
+    }
+    const existing = this.walletFifoContinuations.get(key);
+    if (
+      input.mode === "append" &&
+      input.realizations.length === 0 &&
+      existing?.tradeRevision === input.expectedTradeRevision &&
+      existing.sha256 === input.checkpoint.sha256 &&
+      existing.version === input.checkpoint.version &&
+      compareWalletTradeOrder(existing.lastOrder, input.checkpoint.lastOrder) === 0
+    ) {
+      return true;
     }
     if (input.mode === "full-rebuild") {
       for (const [id, fact] of this.walletFifoRealizations) {

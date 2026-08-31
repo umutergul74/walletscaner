@@ -465,6 +465,49 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   memory is acceptable. Next Phase4c: prove bounded multi-page first seeding with the exact
   checkpoint order on this populated clone, then implement only if checkpoint/RSS/time remain under
   hard limits. Production remains R43/unmodified.
+- Phase4c populated testing exposed a real order mismatch: core used locale-sensitive string
+  comparison and `compareObservedAt` placed idempotency before signature, unlike the documented
+  PostgreSQL C-order boundary. Local core now uses explicit code-unit order and the exact persisted
+  `(slot, observed_at, signature, idempotency_key)` tuple. Regression covers same-slot mixed-case
+  signatures with opposing idempotency order. A 5,000-row chunked read-only run on the 11,857-trade
+  wallet then passed ledger+score parity with 667 entries/1,332 outcomes and a 2,644,019-byte
+  checkpoint. Its baseline+continuation comparison process held both full ledgers and used206.77MiB
+  RSS, so this is not yet a worker memory acceptance pass.
+- Local worker now uses exact-order pages (default1,000), an explicit optional20,000 first-seed
+  budget, and suffix-only bounds after seeding; it no longer retains source pages for scoring.
+  New Memory test proves150-row seed under25-row pages with100-row suffix budget and a later
+  successful append despite total history exceeding100. PostgreSQL page/bounds test and core
+  targeted tests pass; existing report-builder spy assertions were updated to the new page API and
+  all10report tests pass. Next exact action: run the actual one-shot worker with112MiB heap on only
+  the named heavy wallet in the isolated clone, capture peakRSS/elapsed, then full native tests.
+  Clone mutation is limited to that wallet's derived queue/ledger/continuation/score; no canonical
+  trades, dump, B2 or production service may be changed by this benchmark.
+- Actual112MiB-heap local worker seeded the heavy wallet successfully:11,857trades/12pages,
+  667entries/1,332outcomes,1,239episodes/4,997lots, cycle5,413ms, no failure/quarantine. PeakRSS was
+  171,488KiB (167.47MiB), so the160MiB production ceiling gate FAILED despite currentRSS149MiB.
+  Next: reset only this wallet's derived continuation/facts/revision in the guarded isolated clone,
+  requeue only this wallet, and repeat with the same112MiB old-space ceiling plus a4MiB semi-space
+  cap. Do not raise production resources or call the seed capacity accepted until peakRSS has margin.
+- The isolated-clone retry with `--max-old-space-size=112 --max-semi-space-size=4` completed the same
+  11,857-trade seed in about3.15s with a measured peak RSS of111,416KiB (108.8MiB), below the
+  unchanged160MiB production ceiling with margin. A subsequent no-new-trade wake completed in947ms,
+  read zero trade rows, kept continuation generation1 and checkpoint row `ctid=(0,2)` unchanged,
+  and peaked at103,032KiB (100.6MiB). This proves both bounded first seeding and the no-op path on
+  populated PostgreSQL without a wide checkpoint rewrite. The verified source dump and canonical
+  clone tables were not changed; only the named wallet's disposable derived state was exercised.
+  Next exact action: rerun the full native repository gate with a durable captured exit code, then
+  typecheck/lint/build and the synthetic worker benchmark. If all pass, commit Phase4c, stop the
+  disposable PostgreSQL instance, and perform a fresh read-only production preflight before any
+  separately ledgered migration or wallet-alpha-only canary. Production remains exactR43 and
+  migration054 is still unapplied there.
+- The refined full local gate is now green: native PostgreSQL16+verified zstd1.5.7 passed107test
+  files/550tests with no skips or failures; typecheck, ESLint and workspace production build passed.
+  The synthetic bounded worker benchmark processed99 useful wallets in474.73ms at29.62MiB heap and
+  118.11MiB RSS, quarantining only its intentional10,001-trade suffix-limit fixture under the
+  30s/100MiBheap/160MiBRSS gates. Next exact action: inspect/stage only the18 listed Phase4c files,
+  commit the coherent local checkpoint, stop the disposable localPG16 instance cleanly, then run a
+  fresh read-only production inventory. Any production migration/artifact/config/service mutation
+  must be separately recorded in the release ledger and must retain exactR43 as rollback.
 
 ## Completion conditions
 

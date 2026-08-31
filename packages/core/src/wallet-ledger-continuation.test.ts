@@ -163,6 +163,30 @@ describe("bounded FIFO continuation (not yet a production reader)", () => {
     expect(advanceWalletLedger(suffix, first.checkpoint)).toEqual(next);
   });
 
+  it("uses PostgreSQL C/code-unit ordering instead of host locale ordering", () => {
+    const firstTrade = {
+      ...trade(1, "buy", "1000000", 1),
+      idempotencyKey: "z-first",
+      signature: "Z-signature",
+      slot: 500,
+      observedAt: "2026-08-01T00:00:00.000Z"
+    };
+    const secondTrade = {
+      ...trade(2, "sell", "1000000", 2),
+      idempotencyKey: "A-second",
+      signature: "a-signature",
+      slot: 500,
+      observedAt: "2026-08-01T00:00:00.000Z"
+    };
+    // Many host locales place lowercase before uppercase even though PostgreSQL COLLATE "C"
+    // and JavaScript code-unit order place "Z" before "a".
+    const first = advanceWalletLedger([firstTrade]);
+    const second = advanceWalletLedger([secondTrade], first.checkpoint);
+    expect(normalized(mergeDeltas([first.ledger, second.ledger]))).toEqual(
+      normalized(buildWalletLedger([secondTrade, firstTrade]))
+    );
+  });
+
   it("rejects late arrivals or historical corrections instead of silently skipping them", () => {
     const values = fixture();
     const first = advanceWalletLedger(values.slice(0, 5));

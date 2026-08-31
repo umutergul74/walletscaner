@@ -1713,7 +1713,8 @@ export class PostgresRepository
     minObservedAt: string,
     maximumTradeEvents: number,
     maximumEntries: number,
-    maximumOutcomes: number
+    maximumOutcomes: number,
+    tradeAfter?: WalletTradeOrderBoundary
   ): Promise<{
     tradeEventsExceeded: boolean;
     entriesExceeded: boolean;
@@ -1738,9 +1739,23 @@ export class PostgresRepository
            WHERE trade.chain = $1
              AND trade.wallet_address = $2
              AND trade.strategy_version = $3
+             AND (
+               $5::bigint IS NULL
+               OR ROW(trade.slot, trade.observed_at,
+                      trade.signature COLLATE "C", trade.idempotency_key COLLATE "C") >
+                  ROW($5::bigint, $6::timestamptz,
+                      $7::text COLLATE "C", $8::text COLLATE "C")
+             )
            OFFSET $4 LIMIT 1
          ) AS exceeded`,
-        [...common, tradeLimit]
+        [
+          ...common,
+          tradeLimit,
+          tradeAfter?.slot ?? null,
+          tradeAfter?.observedAt ?? null,
+          tradeAfter?.signature ?? null,
+          tradeAfter?.idempotencyKey ?? null
+        ]
       );
       const entries = await boundedWalletAlphaProbe(
         client,
@@ -3075,6 +3090,46 @@ export class PostgresRepository
     return result.rows.map((row) => rowToWalletTradeEvent(row));
   }
 
+  async listWalletTradeLedgerInputPage(
+    chain: ChainId,
+    walletAddress: string,
+    strategyVersion: string,
+    boundary?: WalletTradeOrderBoundary,
+    maxRows = 5_000
+  ): Promise<WalletTradeEvidence[]> {
+    const boundedMaximum = clampLimit(maxRows, 5_000, 10_000);
+    const result = await this.pool.query(
+      `SELECT
+         idempotency_key, chain, wallet_address, token_address, quote_token_address,
+         pool_address, side, base_amount, base_raw_amount, base_token_decimals,
+         quote_amount, execution_price_usd, quote_value_usd, pool_created_at,
+         pool_age_minutes, data_quality, signature, slot, provider, observed_at,
+         strategy_version, '{}'::jsonb AS raw
+       FROM wallet_trade_events
+       WHERE chain = $1
+         AND wallet_address = $2
+         AND strategy_version = $3
+         AND (
+           $4::bigint IS NULL
+           OR ROW(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C") >
+              ROW($4::bigint, $5::timestamptz, $6::text COLLATE "C", $7::text COLLATE "C")
+         )
+       ORDER BY slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C"
+       LIMIT $8`,
+      [
+        chain,
+        walletAddress,
+        strategyVersion,
+        boundary?.slot ?? null,
+        boundary?.observedAt ?? null,
+        boundary?.signature ?? null,
+        boundary?.idempotencyKey ?? null,
+        boundedMaximum
+      ]
+    );
+    return result.rows.map((row) => rowToWalletTradeEvent(row));
+  }
+
   async commitWalletFifoContinuation(input: WalletFifoContinuationCommit): Promise<boolean> {
     if (
       !Number.isSafeInteger(input.expectedTradeRevision) ||
@@ -3082,6 +3137,8 @@ export class PostgresRepository
       Buffer.byteLength(input.checkpoint.payload) === 0 ||
       Buffer.byteLength(input.checkpoint.payload) > 4 * 1024 * 1024 ||
       !/^[a-f0-9]{64}$/.test(input.checkpoint.sha256) ||
+      createHash("sha256").update(input.checkpoint.payload).digest("hex") !==
+        input.checkpoint.sha256 ||
       input.realizations.length > 10_000
     ) {
       throw new Error("Invalid or unbounded wallet FIFO continuation commit.");
@@ -3122,6 +3179,46 @@ export class PostgresRepository
 
     try {
       return await this.withTransaction(async (client) => {
+        if (input.mode === "append" && factRows.length === 0) {
+          const unchanged = await client.query(
+            `SELECT revision.revision,
+                    continuation.trade_revision = $4
+                    AND continuation.checkpoint_version = $5
+                    AND continuation.checkpoint_sha256 = decode($6, 'hex')
+                    AND continuation.last_slot = $7
+                    AND continuation.last_observed_at = $8
+                    AND continuation.last_signature = $9
+                    AND continuation.last_idempotency_key = $10 AS checkpoint_unchanged
+             FROM wallet_trade_revisions AS revision
+             LEFT JOIN wallet_fifo_continuations AS continuation
+               ON continuation.chain = revision.chain
+              AND continuation.wallet_address = revision.wallet_address
+              AND continuation.strategy_version = revision.strategy_version
+             WHERE revision.chain = $1
+               AND revision.wallet_address = $2
+               AND revision.strategy_version = $3
+             FOR UPDATE OF revision`,
+            [
+              input.chain,
+              input.walletAddress,
+              input.strategyVersion,
+              input.expectedTradeRevision,
+              input.checkpoint.version,
+              input.checkpoint.sha256,
+              input.checkpoint.lastOrder.slot,
+              input.checkpoint.lastOrder.observedAt,
+              input.checkpoint.lastOrder.signature,
+              input.checkpoint.lastOrder.idempotencyKey
+            ]
+          );
+          const state = unchanged.rows[0];
+          if (state && Number(state.revision) !== input.expectedTradeRevision) {
+            throw new WalletFifoContinuationCasMismatch();
+          }
+          // Entry/outcome-only wakeups still verify the source revision under its row lock,
+          // but must not rewrite a multi-MiB checkpoint or create avoidable WAL/bloat.
+          if (state?.checkpoint_unchanged) return true;
+        }
         const committed = await client.query(
           `SELECT commit_wallet_fifo_continuation(
              $1, $2, $3, $4, $5, $6, decode($7, 'hex'), $8, $9, $10, $11, $12

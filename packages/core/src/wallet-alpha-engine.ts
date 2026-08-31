@@ -373,7 +373,7 @@ export function buildWalletAlphaScores(input: BuildWalletAlphaInput): WalletAlph
         statusRank(b.status) - statusRank(a.status) ||
         b.overallScore - a.overallScore ||
         b.completedPositions - a.completedPositions ||
-        a.walletAddress.localeCompare(b.walletAddress)
+        compareCodeUnits(a.walletAddress, b.walletAddress)
     );
 }
 
@@ -429,13 +429,7 @@ interface NormalizedTradeQuantity {
 
 type LedgerOrder = Pick<
   WalletTradeEvidence,
-  | "slot"
-  | "observedAt"
-  | "signature"
-  | "idempotencyKey"
-  | "transactionIndex"
-  | "instructionIndex"
-  | "innerInstructionIndex"
+  "slot" | "observedAt" | "signature" | "idempotencyKey"
 >;
 type LedgerFirstBuy = Pick<
   WalletTradeEvidence,
@@ -559,7 +553,7 @@ export function advanceWalletLedger(
     scope,
     roundTripCostPct,
     lastOrder: last ? ledgerOrder(last) : prior!.lastOrder,
-    markets: markets.sort((a, b) => a.key.localeCompare(b.key))
+    markets: markets.sort((a, b) => compareCodeUnits(a.key, b.key))
   } satisfies LedgerContinuationPayload);
   if (Buffer.byteLength(payload) > maximumBytes)
     throw new Error("FIFO continuation byte budget exceeded");
@@ -578,12 +572,7 @@ function ledgerOrder(trade: WalletTradeEvidence): LedgerOrder {
     slot: trade.slot,
     observedAt: trade.observedAt,
     signature: trade.signature,
-    idempotencyKey: trade.idempotencyKey,
-    ...(trade.transactionIndex !== undefined ? { transactionIndex: trade.transactionIndex } : {}),
-    ...(trade.instructionIndex !== undefined ? { instructionIndex: trade.instructionIndex } : {}),
-    ...(trade.innerInstructionIndex !== undefined
-      ? { innerInstructionIndex: trade.innerInstructionIndex }
-      : {})
+    idempotencyKey: trade.idempotencyKey
   };
 }
 
@@ -883,8 +872,8 @@ function buildWalletLedgerBatch(
     realizedEpisodes: realizedEpisodes.sort(compareRealizedEpisodes),
     openInventory: openInventory.sort(
       (a, b) =>
-        a.walletAddress.localeCompare(b.walletAddress) ||
-        a.tokenAddress.localeCompare(b.tokenAddress)
+        compareCodeUnits(a.walletAddress, b.walletAddress) ||
+        compareCodeUnits(a.tokenAddress, b.tokenAddress)
     ),
     positionEpisodes: positionEpisodes.sort(comparePositionEpisodes),
     positionLots: positionLots.sort(comparePositionLots)
@@ -937,18 +926,18 @@ function comparePositionEpisodes(
   b: WalletLedgerPositionEpisode
 ): number {
   return (
-    a.walletAddress.localeCompare(b.walletAddress) ||
-    a.tokenAddress.localeCompare(b.tokenAddress) ||
+    compareCodeUnits(a.walletAddress, b.walletAddress) ||
+    compareCodeUnits(a.tokenAddress, b.tokenAddress) ||
     a.roundTripIndex - b.roundTripIndex ||
-    a.episodeId.localeCompare(b.episodeId)
+    compareCodeUnits(a.episodeId, b.episodeId)
   );
 }
 
 function comparePositionLots(a: WalletLedgerPositionLot, b: WalletLedgerPositionLot): number {
   return (
-    a.episodeId.localeCompare(b.episodeId) ||
+    compareCodeUnits(a.episodeId, b.episodeId) ||
     a.lotSequence - b.lotSequence ||
-    a.lotId.localeCompare(b.lotId)
+    compareCodeUnits(a.lotId, b.lotId)
   );
 }
 
@@ -1443,7 +1432,8 @@ function combinePriceQualities(qualities: WalletTradePriceQuality[]): WalletTrad
 
 function deduplicateTrades(trades: WalletTradeEvidence[]): WalletTradeEvidence[] {
   const ordered = [...trades].sort(
-    (a, b) => compareEvidenceOrder(a, b) || canonicalTradeKey(a).localeCompare(canonicalTradeKey(b))
+    (a, b) =>
+      compareEvidenceOrder(a, b) || compareCodeUnits(canonicalTradeKey(a), canonicalTradeKey(b))
   );
   const unique = new Map<string, WalletTradeEvidence>();
   for (const trade of ordered) {
@@ -1574,9 +1564,6 @@ function compareEvidenceOrder(
     | "observedAt"
     | "signature"
     | "idempotencyKey"
-    | "transactionIndex"
-    | "instructionIndex"
-    | "innerInstructionIndex"
   >,
   b: Pick<
     WalletTradeEvidence,
@@ -1584,30 +1571,24 @@ function compareEvidenceOrder(
     | "observedAt"
     | "signature"
     | "idempotencyKey"
-    | "transactionIndex"
-    | "instructionIndex"
-    | "innerInstructionIndex"
   >
 ): number {
   return (
     a.slot - b.slot ||
-    (a.transactionIndex ?? 0) - (b.transactionIndex ?? 0) ||
-    (a.instructionIndex ?? 0) - (b.instructionIndex ?? 0) ||
-    (a.innerInstructionIndex ?? 0) - (b.innerInstructionIndex ?? 0) ||
-    compareObservedAt(a, b) ||
-    a.signature.localeCompare(b.signature) ||
-    a.idempotencyKey.localeCompare(b.idempotencyKey)
+    (validTimestamp(a.observedAt) ?? 0) - (validTimestamp(b.observedAt) ?? 0) ||
+    compareCodeUnits(a.signature, b.signature) ||
+    compareCodeUnits(a.idempotencyKey, b.idempotencyKey)
   );
 }
 
 function compareRealizedEpisodes(a: WalletClosedPosition, b: WalletClosedPosition): number {
   return (
     (validTimestamp(a.closedAt) ?? 0) - (validTimestamp(b.closedAt) ?? 0) ||
-    a.walletAddress.localeCompare(b.walletAddress) ||
-    a.tokenAddress.localeCompare(b.tokenAddress) ||
+    compareCodeUnits(a.walletAddress, b.walletAddress) ||
+    compareCodeUnits(a.tokenAddress, b.tokenAddress) ||
     a.roundTripIndex - b.roundTripIndex ||
-    a.sellIdempotencyKey.localeCompare(b.sellIdempotencyKey) ||
-    a.episodeId.localeCompare(b.episodeId)
+    compareCodeUnits(a.sellIdempotencyKey, b.sellIdempotencyKey) ||
+    compareCodeUnits(a.episodeId, b.episodeId)
   );
 }
 
@@ -1710,8 +1691,12 @@ function compareObservedAt(
   return (
     (validTimestamp(a.observedAt) ?? 0) - (validTimestamp(b.observedAt) ?? 0) ||
     (a.slot ?? 0) - (b.slot ?? 0) ||
-    (a.idempotencyKey ?? "").localeCompare(b.idempotencyKey ?? "")
+    compareCodeUnits(a.idempotencyKey ?? "", b.idempotencyKey ?? "")
   );
+}
+
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function numberField(value: unknown): number | undefined {

@@ -3,6 +3,28 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-08-31 local FIFO populated validation (not deployed)
+
+- Source foundation/reader checkpoints are committed as `b15282f`/`7e3464a`; the paged-seed/no-op
+  refinement passed the complete nativePG16+zstd gate (107 files,550/550tests), typecheck, ESLint,
+  workspace production build and the bounded worker benchmark. Production was not changed during
+  this validation; last verified alpha
+  remains exactR43 and maintenanceR48. Refresh live state before making a current-health claim.
+- The hash-verified29-August dump (2,770,884,949bytes,
+  SHA566487ea4fdbc074ed81bd83853a1147dbdcb962bddb3d9f96b3112ae9f06478) restored completely into
+  isolated localPG16.15 with matching pg_restore16.15/exit0. Clone17GB,2,603,821wallet trades,
+  zero invalid indexes. Ordered051->054 upgrade took9.907s/950,272WAL bytes and did not rewrite
+  the4,689MBwallet trade table (relfilenode172701 unchanged).
+- Populated parity exposed and fixed local FIFO/SQL ordering mismatch (locale comparison and
+  idempotency-before-signature tie break). The heavy11,857-trade/667-entry/1,332-outcome wallet now
+  matches complete ledger and score hashes across bounded continuation pages. It remains research
+  evidence, not an alpha recommendation: its previous observed score had poor followability.
+- The actual paged worker seeded that wallet in12x<=1,000-row pages,3.15s and108.8MiBpeakRSS under
+  112MiBold-space plus4MiBsemi-space. An entry/outcome-only follow-up completed947ms/100.6MiBpeakRSS,
+  read0trade rows and left the2,674,026-byte checkpoint at ctid(0,2)/generation1. This prevents
+  repeated wide checkpoint WAL/bloat. Production migration/image/canary and live queue/storage
+  equilibrium remain unproven; no canonical wallet history was retired.
+
 ## 2026-08-30 22:44 UTC R48 maintenance closure and local alpha Phase3a
 
 - Maintenance R48 is operational only for `data-maintenance`: exact image

@@ -92,6 +92,40 @@ function createRepository(): MemoryRepository {
       );
     });
   };
+  generated.listWalletTradeLedgerInputPage = async (
+    _chain,
+    walletAddress,
+    requestedStrategyVersion,
+    boundary,
+    maxRows = 1_000
+  ) => {
+    if (requestedStrategyVersion !== strategyVersion) return [];
+    const count =
+      walletAddress === "APathologicalWallet"
+        ? oversizedTradeCount
+        : roundTripsPerHealthyWallet * 2;
+    const start = boundary ? boundary.slot + 1 : 0;
+    return Array.from({ length: Math.min(maxRows, Math.max(0, count - start)) }, (_, offset) => {
+      const index = start + offset;
+      const side = walletAddress === "APathologicalWallet" || index % 2 === 0 ? "buy" : "sell";
+      const tokenIndex = walletAddress === "APathologicalWallet" ? index : Math.floor(index / 2);
+      return trade(
+        walletAddress,
+        `${walletAddress}:Token${tokenIndex}`,
+        side,
+        index,
+        side === "buy" ? 1 : 1.2
+      );
+    });
+  };
+  generated.probeWalletAlphaEvidenceBounds = async (item, _minimum, maximumTrades) => ({
+    tradeEventsExceeded:
+      (item.walletAddress === "APathologicalWallet"
+        ? oversizedTradeCount
+        : roundTripsPerHealthyWallet * 2) > maximumTrades,
+    entriesExceeded: false,
+    outcomesExceeded: false
+  });
   return generated;
 }
 

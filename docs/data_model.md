@@ -165,6 +165,10 @@ fields match; conflicting evidence fails closed and is never overwritten.
 
 Idempotent normalized buy/sell evidence by wallet/token/pool. New writes can include exact raw base/quote amounts, decoder coordinates and price provenance in the typed/raw payload while keeping compatibility columns such as `base_amount` and `execution_price_usd`.
 
+Migration 054 (local validation, not yet production) adds nullable scalar `base_raw_amount` and
+`base_token_decimals` without rewriting historical rows. Both are known together or remain NULL;
+historical `base_amount` is never silently promoted to exact quantity.
+
 Price-quality classes:
 
 - `observed-execution`: same-transaction base and stable USD quote amounts;
@@ -194,6 +198,22 @@ snapshot must produce the same row set and score hash. Wallet-scoped replacement
 advisory lock and database transaction, removes stale scoped lots/episodes first, and only then
 inserts the incoming deterministic projection. This ordering permits an episode id to change while
 its natural wallet/token/strategy/index key remains constant without exposing a partial state.
+
+### Transactional FIFO continuation (migration 054; rollout pending)
+
+`wallet_trade_revisions` records one source revision per chain/wallet/strategy plus the oldest dirty
+persisted order. `wallet_fifo_continuations` stores an integrity-hashed, at-most-4-MiB checkpoint.
+`wallet_fifo_realization_facts` retains one scalar fact per partial sale, separately from completed
+round trips. Producer writes and historical/price corrections advance the source revision in their
+transaction; checkpoint/fact persistence succeeds only under the expected-revision row lock.
+
+The persisted ordering is `(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C")`;
+the core uses the same locale-independent code-unit order. First seeding and old-correction rebuilds
+use bounded pages; a later append probes/reads only rows after the checkpoint. An old or unknown
+dirty boundary requires a full rebuild. The worker preserves closed episode projections and only
+replaces current lot state. Entry/outcome-only wakeups verify the same source revision but do not
+rewrite an unchanged checkpoint or ledger. These tables are derived continuation evidence, not an
+archive receipt and not permission to delete canonical wallet history.
 
 ## Wallet-alpha
 

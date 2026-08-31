@@ -216,7 +216,7 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
       REDIS_URL: redis://redis:6379
       ENABLE_LIVE_EXECUTION: "false"
-      NODE_OPTIONS: "--max-old-space-size=${WALLET_ALPHA_NODE_HEAP_MB:-112}"
+      NODE_OPTIONS: "--max-old-space-size=${WALLET_ALPHA_NODE_HEAP_MB:-112} --max-semi-space-size=${WALLET_ALPHA_NODE_SEMI_SPACE_MB:-4}"
       PGOPTIONS: "-c max_parallel_workers_per_gather=0"
     mem_limit: 160m
     cpus: "0.10"

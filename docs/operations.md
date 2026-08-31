@@ -427,6 +427,18 @@ The admitted FIFO/scorer load uses a dedicated scalar projection that omits the 
 column while retaining the same persisted accounting, price, identity and event-order columns.
 General evidence/archive readers still return the complete raw payload. This reduces hot-query wire,
 parse and sort memory without changing canonical storage or granting source-retirement authority.
+
+The staged migration-054 continuation worker is not deployed yet. It uses exact-order keyset pages
+(`WALLET_ALPHA_FIFO_TRADE_PAGE_SIZE=1000`), a separately bounded first-seed/rebuild ceiling
+(`WALLET_ALPHA_MAX_SEED_TRADE_EVENTS_PER_WALLET=20000`), and the existing 10,000-row suffix ceiling.
+After seeding, the ceiling probe applies to the suffix, not the ever-growing historical total.
+Every page respects the current run deadline; the checkpoint, market, inventory and realization
+hard limits remain fail-closed. Core and SQL use the same C/code-unit tuple order. No-op trade
+continuations lock/check the source revision without rewriting multi-MiB checkpoint/lot state.
+The staged Compose setting retains 112MiB old-space and the160MiB container ceiling, with a4MiB
+semi-space cap. On the17GB local PG16 clone, the11,857-trade wallet seeded in12pages at108.8MiB
+peakRSS; a trades-empty follow-up used100.6MiB and kept checkpoint ctid/generation unchanged.
+These local measurements do not replace immutable Linux artifact and shared-host capacity gates.
 Live price enrichment therefore applies admission at its already-changed wallet scope, not in the
 ordered claim. It passes `WALLET_ALPHA_MIN_TRADE_EVENTS`, `WALLET_ALPHA_MIN_ENTRIES` and
 `WALLET_ALPHA_WINDOW_DAYS` explicitly. The two probes stop at their small configured limits on the

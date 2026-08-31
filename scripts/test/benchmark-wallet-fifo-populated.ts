@@ -8,7 +8,8 @@ import {
   buildWalletAlphaScores,
   buildWalletLedger,
   walletLedgerCheckpointOrder,
-  type WalletLedger
+  type WalletLedger,
+  type WalletLedgerCheckpoint
 } from "@memecoin-alpha/core";
 import type { WalletTradeEvidence } from "@memecoin-alpha/shared";
 
@@ -17,6 +18,10 @@ const walletAddress = process.argv[2];
 const strategyVersion = process.argv[3] ?? "evidence-v1";
 const suffixCount = positiveInt(process.argv[4], 100);
 const maximumTrades = positiveInt(process.env.WALLET_FIFO_BENCHMARK_MAX_TRADES, 10_000);
+const seedPageSize = Math.min(
+  positiveInt(process.env.WALLET_FIFO_BENCHMARK_SEED_PAGE_SIZE, 5_000),
+  10_000
+);
 
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");
 if (!walletAddress) {
@@ -64,7 +69,7 @@ try {
   const fullBuildMs = performance.now() - fullBuildStarted;
 
   const prefixBuildStarted = performance.now();
-  const first = advanceWalletLedger(prefix);
+  const first = advanceInChunks(prefix, seedPageSize);
   const prefixBuildMs = performance.now() - prefixBuildStarted;
   const boundary = walletLedgerCheckpointOrder(first.checkpoint);
 
@@ -132,6 +137,7 @@ try {
       tradeCount: ordered.length,
       prefixCount: prefix.length,
       suffixCount: suffix.length,
+      seedPageSize,
       entryCount: entries.length,
       outcomeCount: outcomes.length,
       realizationCount: fullLedger.realizedEpisodes.length,
@@ -182,6 +188,44 @@ function mergeDeltas(ledgers: WalletLedger[]): WalletLedger {
     positionEpisodes: [...episodes.values()],
     positionLots: [...lots.values()]
   };
+}
+
+function advanceInChunks(
+  trades: WalletTradeEvidence[],
+  pageSize: number
+): { checkpoint: WalletLedgerCheckpoint; ledger: WalletLedger } {
+  let checkpoint: WalletLedgerCheckpoint | undefined;
+  const deltas: WalletLedger[] = [];
+  for (let offset = 0; offset < trades.length; offset += pageSize) {
+    const page = trades.slice(offset, offset + pageSize);
+    let next: ReturnType<typeof advanceWalletLedger>;
+    try {
+      next = advanceWalletLedger(page, checkpoint);
+    } catch (error) {
+      const boundary = checkpoint ? walletLedgerCheckpointOrder(checkpoint) : undefined;
+      throw new Error(
+        `FIFO seed page failed at offset ${offset}: ${JSON.stringify({
+          boundary,
+          first: page[0]
+            ? {
+                slot: page[0].slot,
+                observedAt: page[0].observedAt,
+                signature: page[0].signature,
+                idempotencyKey: page[0].idempotencyKey,
+                transactionIndex: page[0].transactionIndex,
+                instructionIndex: page[0].instructionIndex,
+                innerInstructionIndex: page[0].innerInstructionIndex
+              }
+            : undefined
+        })}`,
+        { cause: error }
+      );
+    }
+    checkpoint = next.checkpoint;
+    deltas.push(next.ledger);
+  }
+  if (!checkpoint) throw new Error("FIFO seed prefix is empty.");
+  return { checkpoint, ledger: mergeDeltas(deltas) };
 }
 
 function normalized(ledger: WalletLedger) {
