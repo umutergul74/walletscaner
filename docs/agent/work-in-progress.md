@@ -508,6 +508,24 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   commit the coherent local checkpoint, stop the disposable localPG16 instance cleanly, then run a
   fresh read-only production inventory. Any production migration/artifact/config/service mutation
   must be separately recorded in the release ledger and must retain exactR43 as rollback.
+- Local Phase4c was committed as `eae80ee`. The disposable17GB PostgreSQL process was stopped
+  cleanly; its data directory is preserved for evidence and no local server remains running. Fresh
+  production preflight at2026-08-31T18:10Z found exactR43 alpha image
+  `sha256:e87020e75036e6f0f376a516228c6546959cd3c6479840e4547d62f5f928bf3b`,
+  restart0/OOMfalse, live=false,160MiB/0.10CPU; PostgreSQL/Redis are healthy, migration051 is latest,
+  FIFO tables are absent as expected, database24,656,870,423bytes, disk free13,128,605,696bytes,
+  WAL687,874,048bytes and temp53,248bytes. The only listed Compose project is Walletscaner; the
+  protected co-tenant is absent. Queue has39,700pending (39,135background/565elevated),39,366 ready,
+  one active lease and two errors; recent R43 cycles process19-60items per roughly246-257s while
+  arrivals exceed drain. Canonical wallet trades remain fresh (~64s at the sample).
+- A new scheduled backup is actively writing
+  `backups/memecoin_alpha_20260831T173517Z.dump.tmp`:930,506,276bytes at18:13Z and growing across a
+  three-second sample; pg_dump is alive at bounded low CPU. It is not yet a recovery artifact.
+  Do not migrate or activate until it becomes a final dump, passes pg_restore-list/SHA and leaves
+  adequate disk. Existing verified29-August dump/offsite marker and the complete localPG16 restore
+  remain the rollback evidence. While the backup runs, the copy-only Dockerfile was narrowed to the
+  exact current core/DB/report/worker tests and migrations052-054 required over exactR43; no image,
+  upload, Compose file, environment, database or service has changed yet.
 
 ## Completion conditions
 
