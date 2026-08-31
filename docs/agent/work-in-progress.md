@@ -453,6 +453,18 @@ archive/restore/parity. No emergency DELETE/TRUNCATE/VACUUM FULL is authorized b
   not 054 alone. Next: capture wallet table relfilenode/size and WAL LSN, run the normal checksum
   migration runner on this isolated clone, then prove no table rewrite/invalid index and record
   elapsed/WAL/disk. The verified dump stays immutable and production remains untouched.
+- Populated 051->054 upgrade passed: normal checksum runner applied 052/053/054 in 9,907ms,
+  generated 950,272 WAL bytes, retained wallet trade relfilenode 172701 (no 4,689MB rewrite), and
+  left zero invalid indexes. Historical exact quantity remains honestly NULL; continuation tables
+  start empty. A new read-only, localhost/database-name-guarded benchmark proves a 3,337-trade
+  wallet at ledger+score hash parity: full read/build 925/88ms versus 100-row suffix read/build
+  13/14ms, 680,142-byte checkpoint, 125.91MiB RSS. However the only sampled backlog wallet with
+  material entry/outcome evidence has 11,857 trades, 667 entries and 1,332 outcomes; the current
+  10,000 first-seed limit fails closed. Its last score is observed (2,686 positions, realized median
+  +1.47%, followable median -37.28%), so neither silently excluding it nor merely raising one-batch
+  memory is acceptable. Next Phase4c: prove bounded multi-page first seeding with the exact
+  checkpoint order on this populated clone, then implement only if checkpoint/RSS/time remain under
+  hard limits. Production remains R43/unmodified.
 
 ## Completion conditions
 
