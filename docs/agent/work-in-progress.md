@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-09-01T09:40:00Z
+updated_at_utc: 2026-09-01T10:00:00Z
 owner: codex
 task: R53 end-to-end queue, FIFO and maintenance recovery
-last_safe_checkpoint: all three source fixes implemented; targeted unit/type/PG16 gates pass; no production mutation
+last_safe_checkpoint: R53 commit/image verified; production release ledger revision 1 planned; no service/schema mutation
 ---
 
 # Active R53 objective and exclusions
@@ -127,6 +127,20 @@ production mutation is currently in progress.
   pass 3/3; repository-wide TypeScript typecheck passes. The first retry integration run exposed
   millisecond truncation caused by stringifying a PostgreSQL `Date`; the new queue timestamp path
   now preserves exact ISO milliseconds and the rerun passes.
+- Source checkpoint is commit `10727d4252950fa42792b7ccbf9c293a8469fe53`. Immutable Linux image
+  `walletscaner-worker:queue-recovery-r53-20260901` is
+  `sha256:5845c8871753022f0374d9973cbdf9e47ab7488e8df84c92ded11ddd38ed9578`.
+  Linux functional tests, including zstd archive and all PostgreSQL integrations, pass; 14
+  deploy-host tests require Python or the intentionally omitted server Compose file and pass 24/24
+  in the Windows repository gate. Typecheck, lint and workspace production build pass.
+- Compressed immutable image artifact SHA-256 is
+  `78f8a417647642cd792c18f8eac1b2d2af9e935b6f1dde299ee1379cbe8e3249`.
+  Production pre-state at 2026-09-01T09:52Z: 11,728,699,392 bytes free, about 1.03 GB available
+  RAM, live execution false, affected services restart zero/OOM false, migration 056 latest, DB
+  24,738,413,591 bytes, zero open coverage incidents and 36,126 Pump.fun pending signatures.
+  Server dump `memecoin_alpha_20260831T173517Z.dump` remains. Production R53 ledger revision 1 is
+  `artifact-transfer/planned`; no artifact upload, migration, environment or service mutation has
+  occurred yet.
 
 # Completed R52 history
 
