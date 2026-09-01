@@ -1,12 +1,47 @@
 ---
-status: active
-updated_at_utc: 2026-09-01T12:32:00Z
+status: paused-for-host-migration
+updated_at_utc: 2026-09-01T13:06:00Z
 owner: codex
-task: R53 end-to-end queue, FIFO and maintenance recovery
-last_safe_checkpoint: R53 capacity canary rejected; committed/tested R53.1 image and transfer artifact are ready off-host
+task: Preserve R53 recovery state for DigitalOcean to Netcup migration
+last_safe_checkpoint: R53.1 deployed; acceptance intentionally paused at release ledger revision 38
 ---
 
 # Active R53 objective and exclusions
+
+## User-directed pause and host migration handoff — 2026-09-01
+
+The user must retire the current DigitalOcean host within two days and will migrate Walletscaner
+step by step to a new Netcup host. At the user's explicit direction, do **not** spend another long
+run finishing R53 acceptance before that migration and do not begin the migration without a new
+request containing the Netcup access/target details. No production service, environment value,
+database row, B2 object or backup was changed as part of recording this pause.
+
+The server release ledger intentionally remains revision 38,
+`acceptance/in_progress`. This is not an unknown interrupted mutation: all R53.1 named-service
+mutations completed before the pause. The open phase consists only of observation and final
+acceptance. Never rerun migration 057, artifact upload, image-env changes or service recreates merely
+because the phase is open.
+
+Before shutting down the DigitalOcean host, the migration task must separately capture and verify:
+
+1. a fresh PostgreSQL dump plus SHA-256 and PostgreSQL 16 archive-list/restore evidence;
+2. successful off-host acknowledgement while retaining the independently verified 29-Aug generation;
+3. B2 archive manifests/object verification state, Compose/env file transfer without exposing
+   secrets, persistent reports/checkpoints and exact image/source identities;
+4. a consistent source-host cutover boundary, final ingestion stop time/slot, queue and coverage
+   state, then a Netcup restore/replay proof before DNS/Telegram or continuous collection cutover;
+5. `ENABLE_LIVE_EXECUTION=false`, protected-host boundaries, resource limits and named-service-only
+   startup on Netcup. Do not destroy the DigitalOcean host until restore, counts, migrations,
+   freshness, backup and rollback checks pass on Netcup.
+
+The first post-migration engineering action is to refresh actual Netcup runtime state and resume
+R53 acceptance from ledger revision 38. The remaining fault is not the R53 FIFO natural-key repair:
+that repair passed. The unresolved alpha bottleneck is repeated five-second
+`trade-events bound probe` statement timeout. Three consecutive R53.1 cycles reported queue
+`226 -> 274 -> 303` and persisted failures `100 -> 103 -> 104`; the latest cycles processed
+38/23/3 wallets and the failure class was identical. Inspect the production query plan for
+`probeWalletAlphaEvidenceBounds` against the populated restored Netcup database before designing an
+additive index or query change. Do not raise CPU/RAM/timeouts as the default fix.
 
 Restore end-to-end, bounded Walletscaner flow after the R52.1 admission rollout by fixing three
 verified faults: the growing Pump.fun durable signature queue, incremental FIFO episode natural-key
@@ -104,14 +139,48 @@ every source commit, populated-data proof and production mutation.
 
 # Active R53 next exact action
 
-Mark release-ledger revision 11 `rollout-ingestion/in_progress` failed with the measured inbox
-growth, then stage/upload R53.1 artifact SHA
-`eb0aa98d3776c5de70e6ed884d58f9ff5e69a0049ce9fddd1996792aa2c58223` through `.partial`, verify,
-atomically rename and load it. Update only the existing ingestion image key from R53 to R53.1 and
-recreate only ingestion. Do not rerun migration 057 or deploy wallet-alpha/operations while the new
-canary is unresolved.
+Wait for the user's Netcup migration request and access details. Start that task with a read-only
+inventory of both hosts and a fresh, verified recovery generation; use the five migration gates in
+the handoff above. Do not continue R53 acceptance on DigitalOcean merely to close the open ledger.
+After the restored Netcup services and data pass cutover acceptance, resume R53 from server ledger
+revision 38 and measure the bound-probe query plan against the restored production data. Do not
+rerun migration 057, recreate services speculatively, change live execution or hide the offsite-
+backup, inventory-timeout, backlog or disk-runway residuals.
 
 # Active R53 completed checkpoints
+
+- Wallet-alpha R53.1 completed its first full production cycle in 256.399 seconds. It processed 38
+  wallets with zero natural-key/FIFO merge error, zero signal-refresh failure, restart/OOM zero and
+  98.78 MiB RSS below the 160 MiB limit. One independent trade-events bound probe reached its
+  statement timeout and was durably retried for 300 seconds; this is not the repaired merge error
+  and remains visible for final health assessment. Queue state after the cycle was 226 pending,
+  100 failed (including that retry), zero signal-priority and zero unchecked pending. Release ledger
+  revision 30 completes `rollout-alpha`; operations services have not yet been changed.
+- Operations preflight at 12:56 UTC found 10,622,787,584 bytes free, about 936 MiB available RAM,
+  approximately 1.85 GiB free swap and no protected co-tenant container. Data-maintenance is exact
+  R48 `sha256:fb863a...bbf2`; operations-monitor is exact R47b `sha256:6d59cc...1a65`; both have
+  restart/OOM zero, live=false and only the reviewed reports/logs/backup mounts. The other ten
+  service-ID hash is `ce6af2e2...2604`. The hash-locked environment updater dry-run proves only
+  `WALLETSCANER_OPERATIONS_IMAGE` would change from R48 to exact R53.1; no environment or service
+  mutation has occurred at this checkpoint.
+- `WALLETSCANER_OPERATIONS_IMAGE` was atomically changed from exact R48 to exact R53.1. Before/after
+  environment text hashes were `a913bccd...3556` / `f31eee76...1189`; rendered Compose proves both
+  named operations services resolve to R53.1 with live=false and unchanged 64 MiB / 4% and 3% CPU
+  ceilings. Release ledger revision 33 completes `image-env-operations`; the running operations
+  containers are still their old identities and have not yet been recreated.
+- Only `data-maintenance` and `operations-monitor` were recreated with `--no-build --no-deps`.
+  Containers `2fdaf1ef58c3...` / `9beb2e237256...` both run exact R53.1
+  `sha256:fe1439cf...d116`, live=false, restart/OOM zero. The other ten service-ID hash remains
+  `ce6af2e2...2604`. Release ledger revision 35 is `rollout-operations/in_progress`; the bounded
+  maintenance SQL canary is the next action. The trailing protected-count display command had a
+  CRLF formatting error after all assertions; rerun that read-only check before phase completion.
+- The bounded production maintenance canary completed in 5.909 seconds. It emitted no `42P18`,
+  retired at most one eligible swap, completed signature and superseded score, and deleted zero
+  canonical wallet trade/entry/outcome/episode rows; archive retirement was explicitly disabled.
+  Its status is `partial` only because four isolated inventory probes reached their independent
+  timeout. A fresh R53.1 monitor report consumed this exact canary report. Both operations services
+  remain exact R53.1 with restart/OOM zero, other-service hash unchanged and protected count zero.
+  Release ledger revision 36 completes `rollout-operations`; revision 38 begins final acceptance.
 
 - Incremental FIFO merge now deletes only an incoming stale projection ID that conflicts on the
   same deterministic natural key. The new changed-ID regression plus prior suffix-preservation and
@@ -184,6 +253,34 @@ canary is unresolved.
   `eb0aa98d3776c5de70e6ed884d58f9ff5e69a0049ce9fddd1996792aa2c58223`. At 12:28 UTC the still-running
   rejected R53 had drained signature pending to 34,413 but grown canonical inbox pending to 4,404;
   disk free was 10,077,478,912 bytes. Upload/recreate should proceed without another full build.
+- The server `.partial` matched 463,813,090 bytes and exact SHA-256, passed full zstd frame
+  verification, was atomically renamed and loaded as exact R53.1 image
+  `sha256:fe1439cf...116`; its revision/base labels match the off-host artifact. Release ledger
+  revision 15 completes the transfer. Root free space before load was 9,654,132,736 bytes; the
+  transfer artifact remains only until the new runtime canary passes. The running container is
+  still rejected R53 at this checkpoint.
+- The image key was atomically changed from R53 to R53.1 and only ingestion was recreated. Container
+  `6f758f46fa74...` runs exact image `sha256:fe1439cf...116`, live=false, restart/OOM zero. The
+  non-ingestion service-ID hash remains `f15bdbfd...d127` and protected co-tenant inventory remains
+  empty. Release ledger revision 20 remains in-progress until the live/replay/inbox capacity gate
+  passes.
+- R53.1 canary passed. Across independent samples canonical inbox pending decreased
+  `8,073 -> 7,994 -> 7,827`; durable signature pending decreased `30,076 -> 29,992 -> 29,909`.
+  Discovery is OK at zero slot lag, fresh notification-to-observation was 97-236 ms, provider
+  latency 1.26-1.84 seconds, replay stayed exactly one worker/1,000 ms and no retry/dead-letter/drop,
+  parser/finality/claim error, restart or OOM appeared. Final observed RSS was 69.57 MiB and CPU
+  11.67% under the unchanged 160 MiB/20% ceilings. Release ledger revision 21 completes ingestion.
+- Both exact server transfer files were rehashed, their loaded image IDs/current runtime and
+  off-host copies were proven, then only those `.tar.zst` files were removed. Loaded R53.1/R53
+  images remain. Filesystem free space increased `9,634,185,216 -> 10,561,830,912` bytes, reclaiming
+  927,645,696 bytes. No database, backup, B2 object, volume or unrelated file was touched. Release
+  ledger revision 24 completes cleanup.
+- Wallet-alpha prestate exposed the impact of the merge bug: persisted failed work increased from
+  20 to 99 across recent R52.1 cycles, with individual cycles reporting up to 20 new failures.
+  The research image key was hash-locked from R52.1 to R53.1 and only wallet-alpha was recreated.
+  Container `09cbda8f4773...` runs exact `sha256:fe1439cf...116`, live=false, restart/OOM zero; the
+  non-alpha service-ID hash stayed `9f54dcc0...a4d2` and protected inventory stayed empty. Ledger
+  revision 29 remains in-progress for a full-cycle error-slope canary.
 
 # Completed R52 history
 
