@@ -128,6 +128,16 @@ Unresolved work is never discarded. Inbox metadata for processed or rolled-back 
 bounded hot horizon. Pre-migration inline payloads remain readable through a claim fallback until
 they finish or age out.
 
+### `solana_signature_queue`
+
+Live discovery signatures cross this PostgreSQL boundary before transaction fetching. The natural
+key is provider/program/signature. Pending rows retain chain slot, notification time, attempt count,
+next due time and the last bounded failure; completed rows keep short-term duplicate evidence.
+Migration 057 adds a terminal `dead_letter` state for a transaction that neither primary nor the
+metered archival fallback can resolve within the fixed attempt budget. Dead letters are retained,
+reported as DOWN and create an `unresolved_transaction` ingestion coverage incident; they are never
+silently completed or removed by normal signature-queue retention.
+
 ### `archive_segments` and `archive_attempts`
 
 `archive_segments` is one UTC-day manifest per canonical payload source. Its revision, lease,

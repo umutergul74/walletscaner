@@ -30,6 +30,8 @@ import type {
   CanonicalEventFailureResult,
   CanonicalRepository,
   DurableSolanaSignature,
+  DurableSolanaSignatureFailureOptions,
+  DurableSolanaSignatureFailureResult,
   DurableSolanaSignatureQueueSummary,
   EvidenceRepository,
   IngestionGapRepair,
@@ -1312,6 +1314,25 @@ export class PostgresRepository
       );
 
       if (episodeRows.length > 0) {
+        // A continuation replay can rebuild the same natural episode scope from
+        // an earlier dirty boundary and therefore assign a different deterministic
+        // id. ON CONFLICT(id) cannot resolve the independent natural-key conflict.
+        // Remove only the stale projection for an incoming natural key; unrelated
+        // closed episodes remain durable and the surrounding transaction restores
+        // the replacement atomically.
+        await client.query(
+          `DELETE FROM wallet_position_episodes AS existing
+           USING jsonb_to_recordset($4::jsonb) AS input(
+             id text, token_address text, episode_index integer
+           )
+           WHERE existing.chain = $1
+             AND existing.strategy_version = $2
+             AND existing.wallet_address = $3
+             AND existing.token_address = input.token_address
+             AND existing.episode_index = input.episode_index
+             AND existing.id <> input.id`,
+          [snapshot.chain, snapshot.strategyVersion, walletAddress, JSON.stringify(episodeRows)]
+        );
         await client.query(
           `INSERT INTO wallet_position_episodes (
              id, chain, wallet_address, token_address, strategy_version, episode_index,
@@ -3464,10 +3485,12 @@ export class PostgresRepository
     limit: number
   ): Promise<DurableSolanaSignature[]> {
     const result = await this.pool.query(
-      `SELECT provider, address, signature, slot, notified_at
+      `SELECT provider, address, signature, slot, notified_at, attempt_count, next_attempt_at
        FROM solana_signature_queue
-       WHERE provider = $1 AND address = $2 AND status = 'pending'
-       ORDER BY slot, notified_at, signature
+       WHERE provider = $1
+         AND address = $2
+         AND status = 'pending'
+       ORDER BY next_attempt_at, slot, notified_at, signature
        LIMIT $3`,
       [provider, address, clampLimit(limit, 500, 5_000)]
     );
@@ -3476,7 +3499,9 @@ export class PostgresRepository
       address: String(row.address),
       signature: String(row.signature),
       slot: Number(row.slot),
-      notifiedAt: new Date(String(row.notified_at)).toISOString()
+      notifiedAt: new Date(String(row.notified_at)).toISOString(),
+      attemptCount: Number(row.attempt_count),
+      nextAttemptAt: postgresTimestampIso(row.next_attempt_at)
     }));
   }
 
@@ -3495,6 +3520,57 @@ export class PostgresRepository
     return (result.rowCount ?? 0) > 0;
   }
 
+  async deferSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    options: DurableSolanaSignatureFailureOptions
+  ): Promise<DurableSolanaSignatureFailureResult | undefined> {
+    const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts));
+    const result = await this.pool.query(
+      `UPDATE solana_signature_queue
+       SET attempt_count = attempt_count + 1,
+           status = CASE
+             WHEN attempt_count + 1 >= $7::integer THEN 'dead_letter'
+             ELSE 'pending'
+           END,
+           next_attempt_at = CASE
+             WHEN attempt_count + 1 >= $7::integer THEN next_attempt_at
+             ELSE $6::timestamptz
+           END,
+           last_error = LEFT($4::text, 1000),
+           dead_lettered_at = CASE
+             WHEN attempt_count + 1 >= $7::integer THEN $5::timestamptz
+             ELSE NULL
+           END,
+           updated_at = NOW()
+       WHERE provider = $1
+         AND address = $2
+         AND signature = $3
+         AND status = 'pending'
+       RETURNING status, attempt_count, next_attempt_at`,
+      [
+        provider,
+        address,
+        signature,
+        options.error,
+        options.failedAt,
+        options.retryAt,
+        maxAttempts
+      ]
+    );
+    const row = result.rows[0];
+    if (!row) return undefined;
+    const status = String(row.status) === "dead_letter" ? "dead_letter" : "retry";
+    return {
+      status,
+      attemptCount: Number(row.attempt_count),
+      ...(status === "retry"
+        ? { retryAt: postgresTimestampIso(row.next_attempt_at) }
+        : {})
+    };
+  }
+
   async getSolanaSignatureQueueSummary(
     provider?: string
   ): Promise<DurableSolanaSignatureQueueSummary> {
@@ -3502,7 +3578,14 @@ export class PostgresRepository
       `SELECT
          COUNT(*) FILTER (WHERE status = 'pending')::integer AS pending_count,
          COUNT(*) FILTER (WHERE status = 'completed')::integer AS completed_count,
-         MIN(notified_at) FILTER (WHERE status = 'pending') AS oldest_pending_at
+         COUNT(*) FILTER (WHERE status = 'dead_letter')::integer AS dead_letter_count,
+         COUNT(*) FILTER (
+           WHERE status = 'pending' AND next_attempt_at > NOW()
+         )::integer AS deferred_count,
+         MIN(notified_at) FILTER (WHERE status = 'pending') AS oldest_pending_at,
+         MIN(next_attempt_at) FILTER (
+           WHERE status = 'pending' AND next_attempt_at > NOW()
+         ) AS next_retry_at
        FROM solana_signature_queue
        WHERE ($1::text IS NULL OR provider = $1)`,
       [provider ?? null]
@@ -3511,8 +3594,13 @@ export class PostgresRepository
     return {
       pendingCount: Number(row?.pending_count ?? 0),
       completedCount: Number(row?.completed_count ?? 0),
+      deadLetterCount: Number(row?.dead_letter_count ?? 0),
+      deferredCount: Number(row?.deferred_count ?? 0),
       ...(row?.oldest_pending_at
-        ? { oldestPendingAt: new Date(String(row.oldest_pending_at)).toISOString() }
+        ? { oldestPendingAt: postgresTimestampIso(row.oldest_pending_at) }
+        : {}),
+      ...(row?.next_retry_at
+        ? { nextRetryAt: postgresTimestampIso(row.next_retry_at) }
         : {})
     };
   }
@@ -5242,6 +5330,10 @@ function rowToPipelineWatermark(row: Record<string, unknown>): PipelineWatermark
     updatedAt: new Date(String(row.updated_at)).toISOString(),
     metadata: (row.metadata as Record<string, unknown>) ?? {}
   };
+}
+
+function postgresTimestampIso(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
 }
 
 function rowToIngestionCoverageIncident(row: Record<string, unknown>): IngestionCoverageIncident {

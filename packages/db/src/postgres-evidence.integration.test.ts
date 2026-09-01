@@ -871,6 +871,74 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     });
   });
 
+  it("replaces a changed incremental episode id with the same natural key", async () => {
+    const strategyVersion = "ledger-suffix-natural-key-v1";
+    const walletAddress = "LedgerSuffixNaturalWallet111";
+    const tokenAddress = "LedgerSuffixNaturalMint111";
+    const openedAt = "2026-08-30T04:00:00.000Z";
+    const episode = (id: string) => ({
+      id,
+      chain: "solana" as const,
+      walletAddress,
+      tokenAddress,
+      strategyVersion,
+      episodeIndex: 1,
+      status: "open" as const,
+      openedAt,
+      costBasisUsd: 10,
+      proceedsUsd: 0,
+      realizedPnlUsd: 0,
+      remainingRawAmount: "1000",
+      tokenDecimals: 6,
+      realizedLotCount: 0,
+      highQualityPriceCoverage: 1,
+      metadata: {}
+    });
+    const lot = (id: string, episodeId: string) => ({
+      id,
+      episodeId,
+      sourceEventIdempotencyKey: `${id}-source`,
+      lotSequence: 1,
+      rawAmount: "1000",
+      remainingRawAmount: "1000",
+      tokenDecimals: 6,
+      quoteCostUsd: 10,
+      feesUsd: 0,
+      slippageUsd: 0,
+      openedAt,
+      status: "open" as const,
+      metadata: {}
+    });
+
+    await repository.replaceWalletPositionLedger({
+      chain: "solana",
+      strategyVersion,
+      generatedAt: "2026-08-30T04:01:00.000Z",
+      walletAddresses: [walletAddress],
+      episodes: [episode("ledger-suffix-natural-old")],
+      lots: [lot("ledger-suffix-natural-old-lot", "ledger-suffix-natural-old")]
+    });
+
+    await expect(
+      repository.mergeWalletPositionLedger({
+        chain: "solana",
+        strategyVersion,
+        generatedAt: "2026-08-30T04:02:00.000Z",
+        walletAddresses: [walletAddress],
+        episodes: [episode("ledger-suffix-natural-new")],
+        lots: [lot("ledger-suffix-natural-new-lot", "ledger-suffix-natural-new")]
+      })
+    ).resolves.toEqual({ episodeCount: 1, lotCount: 1 });
+
+    expect(
+      await testPool.query<{ id: string }>(
+        `SELECT id FROM wallet_position_episodes
+         WHERE chain = 'solana' AND wallet_address = $1 AND strategy_version = $2`,
+        [walletAddress, strategyVersion]
+      )
+    ).toMatchObject({ rows: [{ id: "ledger-suffix-natural-new" }] });
+  });
+
   it("creates a missing payload partition without inverting the canonical inbox lock order", async () => {
     const event = {
       idempotencyKey: "partition-lock-order-event",
@@ -3070,6 +3138,62 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
       idempotencyKey: `pg-finality-event-${suffix}`,
       commitment: "finalized",
       requiresFinality: true
+    });
+  });
+
+  it("durably defers unavailable Solana signatures and terminates bounded retries", async () => {
+    const suffix = Date.now().toString();
+    const provider = "integration-rpc-retry";
+    const address = `PgRetryProgram${suffix}`;
+    const signature = `pg-retry-signature-${suffix}`;
+    const notifiedAt = new Date(Date.now() - 10_000).toISOString();
+    expect(
+      await repository.admitSolanaSignature({
+        provider,
+        address,
+        signature,
+        slot: 702,
+        notifiedAt
+      })
+    ).toBe(true);
+
+    const futureRetryAt = new Date(Date.now() + 60_000).toISOString();
+    expect(
+      await repository.deferSolanaSignature(provider, address, signature, {
+        error: "integration unavailable",
+        failedAt: new Date().toISOString(),
+        retryAt: futureRetryAt,
+        maxAttempts: 2
+      })
+    ).toEqual({ status: "retry", attemptCount: 1, retryAt: futureRetryAt });
+    expect(await repository.listPendingSolanaSignatures(provider, address, 10)).toEqual([
+      expect.objectContaining({
+        signature,
+        attemptCount: 1,
+        nextAttemptAt: futureRetryAt
+      })
+    ]);
+    expect(await repository.getSolanaSignatureQueueSummary(provider)).toMatchObject({
+      pendingCount: 1,
+      completedCount: 0,
+      deadLetterCount: 0,
+      deferredCount: 1,
+      nextRetryAt: futureRetryAt
+    });
+
+    expect(
+      await repository.deferSolanaSignature(provider, address, signature, {
+        error: "integration permanently unavailable",
+        failedAt: new Date().toISOString(),
+        retryAt: new Date(Date.now() + 120_000).toISOString(),
+        maxAttempts: 2
+      })
+    ).toEqual({ status: "dead_letter", attemptCount: 2 });
+    expect(await repository.getSolanaSignatureQueueSummary(provider)).toMatchObject({
+      pendingCount: 0,
+      completedCount: 0,
+      deadLetterCount: 1,
+      deferredCount: 0
     });
   });
 

@@ -42,6 +42,21 @@ export interface DurableSolanaSignatureItem {
   signature: string;
   slot: number;
   notifiedAt: string;
+  attemptCount?: number;
+  nextAttemptAt?: string;
+}
+
+export interface DurableSolanaSignatureFailureOptions {
+  error: string;
+  failedAt: string;
+  retryAt: string;
+  maxAttempts: number;
+}
+
+export interface DurableSolanaSignatureFailureResult {
+  status: "retry" | "dead_letter";
+  attemptCount: number;
+  retryAt?: string;
 }
 
 /**
@@ -62,6 +77,12 @@ export interface DurableSolanaSignatureStore {
     signature: string,
     completedAt?: string
   ): Promise<boolean>;
+  deferSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    options: DurableSolanaSignatureFailureOptions
+  ): Promise<DurableSolanaSignatureFailureResult | undefined>;
 }
 
 export interface SolanaGapRepairSession {
@@ -251,6 +272,14 @@ export interface SolanaEventSourceDiagnostics {
   durableSignatureCompletionErrorCount?: number;
   durableSignatureReloadCount?: number;
   durablyDeferredSignatureCount?: number;
+  durableSignatureRetryCount?: number;
+  durableSignatureDeadLetterCount?: number;
+  durableSignatureLastRetryAt?: string | null;
+  durableSignatureLastDeadLetterAt?: string | null;
+  transactionFallbackRequestCount?: number;
+  transactionFallbackRecoveredCount?: number;
+  transactionFallbackErrorCount?: number;
+  transactionFallbackTimeoutCount?: number;
   queuePressureCount?: number;
   queuePressureAddressCount?: number;
   lastQueuePressureAt?: string | null;
@@ -315,6 +344,8 @@ export interface SolanaBackfillTruncation {
 
 export interface StandardSolanaEventSourceOptions {
   rpcUrl: string;
+  /** Optional bounded archival fallback used only after the primary RPC cannot resolve a tx. */
+  transactionFallbackRpcUrl?: string;
   wsUrl: string;
   addresses: string[];
   cursorStore: SolanaCursorStore;
@@ -345,6 +376,11 @@ export interface StandardSolanaEventSourceOptions {
   transactionFetchRetryMaxDelayMs?: number;
   transactionRequestTimeoutMs?: number;
   transactionRequestRetries?: number;
+  transactionFallbackRequestTimeoutMs?: number;
+  transactionFallbackMinRequestIntervalMs?: number;
+  durableSignatureRetryBaseDelayMs?: number;
+  durableSignatureRetryMaxDelayMs?: number;
+  durableSignatureMaxAttempts?: number;
   providerLatencyWarningMs?: number;
   subscriptionAckTimeoutMs?: number;
   heartbeatIntervalMs?: number;
@@ -368,6 +404,16 @@ export interface StandardSolanaEventSourceOptions {
     maxQueuedSignatures: number;
     oldestQueueDelayMs?: number;
   }) => void;
+  onDurableSignatureDeadLetter?: (item: {
+    provider: string;
+    address: string;
+    signature: string;
+    slot: number;
+    notifiedAt: string;
+    failedAt: string;
+    attemptCount: number;
+    error: string;
+  }) => Promise<void> | void;
   onBackfillTruncated?: (truncation: SolanaBackfillTruncation) => Promise<void> | void;
   now?: () => Date;
 }
@@ -422,6 +468,7 @@ interface QueuedLiveSignature {
   signature: string;
   slot: number;
   notifiedAtMs: number;
+  attemptCount?: number;
 }
 
 type SignatureOrigin = "live" | "backfill";
@@ -449,6 +496,11 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly transactionFetchRetryMaxDelayMs: number;
   private readonly transactionRequestTimeoutMs: number;
   private readonly transactionRequestRetries: number;
+  private readonly transactionFallbackRequestTimeoutMs: number;
+  private readonly transactionFallbackMinRequestIntervalMs: number;
+  private readonly durableSignatureRetryBaseDelayMs: number;
+  private readonly durableSignatureRetryMaxDelayMs: number;
+  private readonly durableSignatureMaxAttempts: number;
   private readonly providerLatencyWarningMs: number;
   private readonly subscriptionAckTimeoutMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -485,6 +537,10 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly activeTransactionAddresses = new Set<string>();
   private readonly durableRefillAddresses = new Set<string>();
   private readonly durableRefillRequestedAddresses = new Set<string>();
+  private readonly durableRefillTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; dueAtMs: number }
+  >();
   private readonly retryWaiters = new Set<() => void>();
   private encodedLogIncludePattern: RegExp | null = null;
   private fastLogPrefilterEnabled = false;
@@ -501,6 +557,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private heartbeatSentAtMs: number | null = null;
   private transactionRequestGate: Promise<void> = Promise.resolve();
   private lastTransactionRequestAtMs = 0;
+  private transactionFallbackRequestGate: Promise<void> = Promise.resolve();
+  private lastTransactionFallbackRequestAtMs = 0;
   private activeTransactionWorkers = 0;
   private stopped = true;
   private handler: ((event: SolanaChainEvent) => Promise<void> | void) | null = null;
@@ -554,6 +612,31 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.transactionRequestRetries = nonNegativeInteger(
       options.transactionRequestRetries ?? 2,
       "transactionRequestRetries"
+    );
+    this.transactionFallbackRequestTimeoutMs = positiveInteger(
+      options.transactionFallbackRequestTimeoutMs ?? this.transactionRequestTimeoutMs,
+      "transactionFallbackRequestTimeoutMs"
+    );
+    this.transactionFallbackMinRequestIntervalMs = positiveInteger(
+      options.transactionFallbackMinRequestIntervalMs ?? 1_000,
+      "transactionFallbackMinRequestIntervalMs"
+    );
+    this.durableSignatureRetryBaseDelayMs = positiveInteger(
+      options.durableSignatureRetryBaseDelayMs ?? 30_000,
+      "durableSignatureRetryBaseDelayMs"
+    );
+    this.durableSignatureRetryMaxDelayMs = positiveInteger(
+      options.durableSignatureRetryMaxDelayMs ?? 900_000,
+      "durableSignatureRetryMaxDelayMs"
+    );
+    if (this.durableSignatureRetryMaxDelayMs < this.durableSignatureRetryBaseDelayMs) {
+      throw new Error(
+        "durableSignatureRetryMaxDelayMs must be greater than or equal to durableSignatureRetryBaseDelayMs."
+      );
+    }
+    this.durableSignatureMaxAttempts = positiveInteger(
+      options.durableSignatureMaxAttempts ?? 6,
+      "durableSignatureMaxAttempts"
     );
     this.providerLatencyWarningMs = positiveInteger(
       options.providerLatencyWarningMs ?? 30_000,
@@ -694,6 +777,14 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       durableSignatureCompletionErrorCount: 0,
       durableSignatureReloadCount: 0,
       durablyDeferredSignatureCount: 0,
+      durableSignatureRetryCount: 0,
+      durableSignatureDeadLetterCount: 0,
+      durableSignatureLastRetryAt: null,
+      durableSignatureLastDeadLetterAt: null,
+      transactionFallbackRequestCount: 0,
+      transactionFallbackRecoveredCount: 0,
+      transactionFallbackErrorCount: 0,
+      transactionFallbackTimeoutCount: 0,
       queuePressureCount: 0,
       lastQueuePressureAt: null,
       lastQueuePressureReason: null,
@@ -752,6 +843,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.clearSubscriptionState();
     for (const timer of this.staleQueueTimers.values()) clearTimeout(timer);
     this.staleQueueTimers.clear();
+    for (const entry of this.durableRefillTimers.values()) clearTimeout(entry.timer);
+    this.durableRefillTimers.clear();
     this.liveSignatureQueue.length = 0;
     this.queuedSignatures.clear();
     const socket = this.socket;
@@ -784,6 +877,9 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     const staleQueueTimer = this.staleQueueTimers.get(address);
     if (staleQueueTimer) clearTimeout(staleQueueTimer);
     this.staleQueueTimers.delete(address);
+    const durableRefillTimer = this.durableRefillTimers.get(address);
+    if (durableRefillTimer) clearTimeout(durableRefillTimer.timer);
+    this.durableRefillTimers.delete(address);
     let purged = 0;
     for (let index = this.liveSignatureQueue.length - 1; index >= 0; index -= 1) {
       const queued = this.liveSignatureQueue[index];
@@ -1560,6 +1656,11 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       let loaded = 0;
       for (const item of pending) {
         if (this.liveSignatureQueue.length >= this.maxQueuedSignatures) break;
+        const nextAttemptAtMs = Date.parse(item.nextAttemptAt ?? item.notifiedAt);
+        if (Number.isFinite(nextAttemptAtMs) && nextAttemptAtMs > this.now().getTime()) {
+          this.scheduleDurableRefill(address, onEvent, nextAttemptAtMs);
+          continue;
+        }
         if (this.seenSignatures.has(item.signature)) {
           await this.completeDurableSignature(item.address, item.signature);
           continue;
@@ -1575,7 +1676,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
           address: item.address,
           signature: item.signature,
           slot: item.slot,
-          notifiedAtMs: Date.parse(item.notifiedAt)
+          notifiedAtMs: Date.parse(item.notifiedAt),
+          attemptCount: item.attemptCount ?? 0
         });
         this.scheduleStaleQueueCheck(item.address);
         loaded += 1;
@@ -1614,6 +1716,96 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     }
   }
 
+  private async deferDurableSignature(
+    item: QueuedLiveSignature,
+    onEvent: (event: SolanaChainEvent) => Promise<void> | void
+  ): Promise<boolean> {
+    const store = this.options.liveSignatureStore;
+    if (!store || this.stopped) return true;
+    const failedAt = this.now();
+    const priorAttempts = Math.max(0, item.attemptCount ?? 0);
+    const retryDelayMs = Math.min(
+      this.durableSignatureRetryBaseDelayMs * 2 ** Math.min(priorAttempts, 20),
+      this.durableSignatureRetryMaxDelayMs
+    );
+    const retryAt = new Date(failedAt.getTime() + retryDelayMs).toISOString();
+    const error = "transaction_or_processing_unresolved";
+    try {
+      const result = await store.deferSolanaSignature(
+        this.provider,
+        item.address,
+        item.signature,
+        {
+          error,
+          failedAt: failedAt.toISOString(),
+          retryAt,
+          maxAttempts: this.durableSignatureMaxAttempts
+        }
+      );
+      if (!result) return true;
+      if (result.status === "retry") {
+        this.diagnostics.durableSignatureRetryCount =
+          (this.diagnostics.durableSignatureRetryCount ?? 0) + 1;
+        this.diagnostics.durableSignatureLastRetryAt = failedAt.toISOString();
+        this.scheduleDurableRefill(
+          item.address,
+          onEvent,
+          Date.parse(result.retryAt ?? retryAt)
+        );
+        return true;
+      }
+      this.diagnostics.durableSignatureDeadLetterCount =
+        (this.diagnostics.durableSignatureDeadLetterCount ?? 0) + 1;
+      this.diagnostics.durableSignatureLastDeadLetterAt = failedAt.toISOString();
+      try {
+        await this.options.onDurableSignatureDeadLetter?.({
+          provider: this.provider,
+          address: item.address,
+          signature: item.signature,
+          slot: item.slot,
+          notifiedAt: new Date(item.notifiedAtMs).toISOString(),
+          failedAt: failedAt.toISOString(),
+          attemptCount: result.attemptCount,
+          error
+        });
+      } catch {
+        // The durable queue row is already terminal evidence. Surface the
+        // coverage callback failure without reopening a hot retry loop.
+        this.diagnostics.durableSignatureAdmissionErrorCount =
+          (this.diagnostics.durableSignatureAdmissionErrorCount ?? 0) + 1;
+        this.diagnostics.status = "degraded";
+      }
+      return true;
+    } catch {
+      this.diagnostics.durableSignatureAdmissionErrorCount =
+        (this.diagnostics.durableSignatureAdmissionErrorCount ?? 0) + 1;
+      this.diagnostics.status = "degraded";
+      this.scheduleDurableRefill(
+        item.address,
+        onEvent,
+        failedAt.getTime() + this.durableSignatureRetryBaseDelayMs
+      );
+      return false;
+    }
+  }
+
+  private scheduleDurableRefill(
+    address: string,
+    onEvent: (event: SolanaChainEvent) => Promise<void> | void,
+    dueAtMs: number
+  ): void {
+    if (this.stopped) return;
+    const boundedDueAtMs = Math.max(Date.now() + 1, dueAtMs);
+    const existing = this.durableRefillTimers.get(address);
+    if (existing && existing.dueAtMs <= boundedDueAtMs) return;
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => {
+      this.durableRefillTimers.delete(address);
+      if (!this.stopped) void this.refillDurableSignatureQueue(address, onEvent);
+    }, Math.min(2_147_483_647, Math.max(1, boundedDueAtMs - Date.now())));
+    this.durableRefillTimers.set(address, { timer, dueAtMs: boundedDueAtMs });
+  }
+
   private drainLiveSignatureQueue(
     onEvent: (event: SolanaChainEvent) => Promise<void> | void
   ): void {
@@ -1643,18 +1835,26 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       this.activeTransactionWorkers += 1;
       const process = () =>
         this.addressLogIncludes.has(next.address)
-          ? this.processSignatureUntilResolved(next.address, next.signature, next.slot, onEvent, {
-              origin: "live",
-              notifiedAtMs: next.notifiedAtMs
-            })
+          ? this.options.liveSignatureStore
+            ? this.processSignatureUnlocked(next.address, next.signature, next.slot, onEvent, {
+                origin: "live",
+                notifiedAtMs: next.notifiedAtMs
+              })
+            : this.processSignatureUntilResolved(next.address, next.signature, next.slot, onEvent, {
+                origin: "live",
+                notifiedAtMs: next.notifiedAtMs
+              })
           : Promise.resolve(false);
       const running = this.allowConcurrentLiveSignaturesPerAddress
         ? process()
         : this.runAddressTask(next.address, process);
+      let refillImmediately = true;
       void running
         .then(async (emitted) => {
           if (emitted || this.seenSignatures.has(next.signature)) {
             await this.completeDurableSignature(next.address, next.signature);
+          } else if (this.options.liveSignatureStore && !this.stopped) {
+            refillImmediately = await this.deferDurableSignature(next, onEvent);
           }
         })
         .catch(() => {
@@ -1664,7 +1864,9 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         .finally(async () => {
           this.activeTransactionAddresses.delete(next.address);
           this.activeTransactionWorkers -= 1;
-          await this.refillDurableSignatureQueue(next.address, onEvent);
+          if (refillImmediately) {
+            await this.refillDurableSignatureQueue(next.address, onEvent);
+          }
           this.drainLiveSignatureQueue(onEvent);
         });
     }
@@ -1800,6 +2002,14 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       let transaction: SolanaRpcTransaction | null = null;
       let attempts = 0;
       let transactionHttpDurationMs = 0;
+      const transactionParams = [
+        signature,
+        {
+          commitment: this.commitment,
+          encoding: "jsonParsed",
+          maxSupportedTransactionVersion: 0
+        }
+      ];
       for (let attempt = 1; attempt <= this.transactionFetchMaxAttempts; attempt += 1) {
         attempts = attempt;
         if (attempt > 1) {
@@ -1818,14 +2028,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         try {
           transaction = await this.rpc<SolanaRpcTransaction | null>(
             "getTransaction",
-            [
-              signature,
-              {
-                commitment: this.commitment,
-                encoding: "jsonParsed",
-                maxSupportedTransactionVersion: 0
-              }
-            ],
+            transactionParams,
             {
               timeoutMs: this.transactionRequestTimeoutMs,
               retries: this.transactionRequestRetries
@@ -1858,6 +2061,47 @@ export class StandardSolanaEventSource implements SolanaEventSource {
               (this.diagnostics.recoveredTransactionCount ?? 0) + 1;
           }
           break;
+        }
+      }
+      if (!transaction && this.options.transactionFallbackRpcUrl) {
+        await this.waitForTransactionFallbackRequestSlot();
+        this.diagnostics.transactionFallbackRequestCount =
+          (this.diagnostics.transactionFallbackRequestCount ?? 0) + 1;
+        attempts += 1;
+        const requestStartedAtMs = this.now().getTime();
+        try {
+          transaction = await this.rpcAt<SolanaRpcTransaction | null>(
+            this.options.transactionFallbackRpcUrl,
+            "getTransaction",
+            transactionParams,
+            { timeoutMs: this.transactionFallbackRequestTimeoutMs, retries: 0 },
+            `${this.provider}-transaction-fallback`
+          );
+          if (transaction) {
+            this.diagnostics.transactionFallbackRecoveredCount =
+              (this.diagnostics.transactionFallbackRecoveredCount ?? 0) + 1;
+            this.diagnostics.recoveredTransactionCount =
+              (this.diagnostics.recoveredTransactionCount ?? 0) + 1;
+          } else {
+            this.diagnostics.transactionNullResponseCount =
+              (this.diagnostics.transactionNullResponseCount ?? 0) + 1;
+          }
+        } catch (error) {
+          this.diagnostics.transactionFallbackErrorCount =
+            (this.diagnostics.transactionFallbackErrorCount ?? 0) + 1;
+          if (isAbortError(error)) {
+            this.diagnostics.transactionFallbackTimeoutCount =
+              (this.diagnostics.transactionFallbackTimeoutCount ?? 0) + 1;
+          }
+          transaction = null;
+        } finally {
+          const requestDurationMs = Math.max(0, this.now().getTime() - requestStartedAtMs);
+          transactionHttpDurationMs += requestDurationMs;
+          this.diagnostics.lastTransactionHttpDurationMs = requestDurationMs;
+          this.diagnostics.maxTransactionHttpDurationMs = Math.max(
+            this.diagnostics.maxTransactionHttpDurationMs ?? 0,
+            requestDurationMs
+          );
         }
       }
       const fetchCycleDurationMs = Math.max(0, this.now().getTime() - processingStartedAtMs);
@@ -2147,7 +2391,17 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     params: unknown[],
     requestOptions: { timeoutMs?: number; retries?: number } = {}
   ): Promise<T> {
-    const response = await fetchJson<RpcResponse<T>>(this.provider, this.options.rpcUrl, {
+    return this.rpcAt(this.options.rpcUrl, method, params, requestOptions, this.provider);
+  }
+
+  private async rpcAt<T>(
+    rpcUrl: string,
+    method: string,
+    params: unknown[],
+    requestOptions: { timeoutMs?: number; retries?: number },
+    provider: string
+  ): Promise<T> {
+    const response = await fetchJson<RpcResponse<T>>(provider, rpcUrl, {
       method: "POST",
       body: {
         jsonrpc: "2.0",
@@ -2178,6 +2432,27 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         await new Promise((resolve) => setTimeout(resolve, waitMs));
       }
       this.lastTransactionRequestAtMs = Date.now();
+    } finally {
+      release();
+    }
+  }
+
+  private async waitForTransactionFallbackRequestSlot(): Promise<void> {
+    const previous = this.transactionFallbackRequestGate;
+    let release: () => void = () => {};
+    this.transactionFallbackRequestGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      const waitMs = Math.max(
+        0,
+        this.lastTransactionFallbackRequestAtMs +
+          this.transactionFallbackMinRequestIntervalMs -
+          Date.now()
+      );
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      this.lastTransactionFallbackRequestAtMs = Date.now();
     } finally {
       release();
     }

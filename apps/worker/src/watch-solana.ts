@@ -537,6 +537,9 @@ const discoveryGapRepairMaxSignatures = boundedInteger(
   500,
   100_000
 );
+const discoveryTransactionFallbackRpcUrl =
+  process.env.SOLANA_DISCOVERY_TRANSACTION_FALLBACK_RPC_URL?.trim() ||
+  (heliusRpcUrl && heliusRpcUrl !== rpcUrl ? heliusRpcUrl : undefined);
 const discoveryProgramSources = programs.map((program) => ({
   programId: program.programId,
   probeLatestActivity: () =>
@@ -559,6 +562,9 @@ const discoveryProgramSources = programs.map((program) => ({
     }),
   source: new StandardSolanaEventSource({
     rpcUrl,
+    ...(discoveryTransactionFallbackRpcUrl
+      ? { transactionFallbackRpcUrl: discoveryTransactionFallbackRpcUrl }
+      : {}),
     wsUrl: discoveryWebSocketUrlByProgram.get(program.programId)!,
     addresses: [program.programId],
     logIncludesByAddress: {
@@ -584,7 +590,7 @@ const discoveryProgramSources = programs.map((program) => ({
     ),
     transactionFetchDelayMs: Number(process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_DELAY_MS ?? 0),
     transactionFetchMaxAttempts: Number(
-      process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_MAX_ATTEMPTS ?? 6
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_MAX_ATTEMPTS ?? 1
     ),
     transactionFetchRetryDelayMs: Number(
       process.env.SOLANA_DISCOVERY_TRANSACTION_FETCH_RETRY_DELAY_MS ?? 250
@@ -599,6 +605,21 @@ const discoveryProgramSources = programs.map((program) => ({
     ),
     transactionRequestRetries: Number(
       process.env.SOLANA_DISCOVERY_TRANSACTION_REQUEST_RETRIES ?? 0
+    ),
+    transactionFallbackRequestTimeoutMs: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FALLBACK_TIMEOUT_MS ?? 4_000
+    ),
+    transactionFallbackMinRequestIntervalMs: Number(
+      process.env.SOLANA_DISCOVERY_TRANSACTION_FALLBACK_INTERVAL_MS ?? 250
+    ),
+    durableSignatureRetryBaseDelayMs: Number(
+      process.env.SOLANA_DISCOVERY_DURABLE_RETRY_BASE_MS ?? 60_000
+    ),
+    durableSignatureRetryMaxDelayMs: Number(
+      process.env.SOLANA_DISCOVERY_DURABLE_RETRY_MAX_MS ?? 3_600_000
+    ),
+    durableSignatureMaxAttempts: Number(
+      process.env.SOLANA_DISCOVERY_DURABLE_MAX_ATTEMPTS ?? 6
     ),
     providerLatencyWarningMs: Number(process.env.SOLANA_PROVIDER_LATENCY_WARNING_MS ?? 30_000),
     subscriptionAckTimeoutMs: Number(
@@ -619,6 +640,39 @@ const discoveryProgramSources = programs.map((program) => ({
     cursorStore: discoveryCursorStore,
     liveSignatureStore: repository,
     allowConcurrentLiveSignaturesPerAddress: true,
+    onDurableSignatureDeadLetter: async (item) => {
+      const signatureSha256 = createHash("sha256").update(item.signature).digest("hex");
+      const idempotencyKey = createHash("sha256")
+        .update(
+          [
+            "solana-ingestion-coverage",
+            item.provider,
+            item.address,
+            "unresolved-transaction",
+            signatureSha256
+          ].join(":")
+        )
+        .digest("hex");
+      await repository.openIngestionCoverageIncident({
+        idempotencyKey,
+        chain: "solana",
+        provider: item.provider,
+        programAddress: item.address,
+        reason: "unresolved_transaction",
+        gapStartedAt: item.notifiedAt,
+        openedAt: item.failedAt,
+        sourceSlot: item.slot,
+        subscriptionAckTimeoutCount: 0,
+        successfulSubscriptionAckCount: 0,
+        metadata: {
+          signatureSha256,
+          attemptCount: item.attemptCount,
+          terminalError: item.error,
+          durableQueueStatus: "dead_letter",
+          coverageDisposition: "alpha_excluded_unreconciled"
+        }
+      });
+    },
     provider: discoveryProvider
   })
 }));

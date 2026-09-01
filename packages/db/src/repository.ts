@@ -127,12 +127,30 @@ export interface DurableSolanaSignature {
   signature: string;
   slot: number;
   notifiedAt: string;
+  attemptCount?: number;
+  nextAttemptAt?: string;
+}
+
+export interface DurableSolanaSignatureFailureOptions {
+  error: string;
+  failedAt: string;
+  retryAt: string;
+  maxAttempts: number;
+}
+
+export interface DurableSolanaSignatureFailureResult {
+  status: "retry" | "dead_letter";
+  attemptCount: number;
+  retryAt?: string;
 }
 
 export interface DurableSolanaSignatureQueueSummary {
   pendingCount: number;
   completedCount: number;
+  deadLetterCount: number;
+  deferredCount: number;
   oldestPendingAt?: string;
+  nextRetryAt?: string;
 }
 
 export type IngestionCoverageIncidentReason =
@@ -142,6 +160,7 @@ export type IngestionCoverageIncidentReason =
   | "stale_live_notification"
   | "backfill_truncated"
   | "source_start_failed"
+  | "unresolved_transaction"
   | "combined";
 
 export interface IngestionCoverageIncidentOpenInput {
@@ -934,6 +953,12 @@ export interface CanonicalRepository {
     signature: string,
     completedAt?: string
   ): Promise<boolean>;
+  deferSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    options: DurableSolanaSignatureFailureOptions
+  ): Promise<DurableSolanaSignatureFailureResult | undefined>;
   getSolanaSignatureQueueSummary(provider?: string): Promise<DurableSolanaSignatureQueueSummary>;
   listPendingSolanaFinalities(
     limit: number,

@@ -188,6 +188,9 @@ describe("operational maintenance SQL contract", () => {
     );
 
     expect(retention).toContain("decision.retain_until < NOW()");
+    expect(retention).toMatch(
+      /decision\.decided_at\s*<\s*NOW\(\)\s*-\s*make_interval\(days => \$1::integer\)/
+    );
     expect(retention).toContain("checkpoint.status NOT IN ('completed', 'dead_letter')");
     expect(retention).toContain("ORDER BY decision.retain_until, decision.id");
     expect(retention).toContain("LIMIT $2");

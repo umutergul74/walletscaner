@@ -42,6 +42,8 @@ import type {
   CanonicalEventStatus,
   CanonicalRepository,
   DurableSolanaSignature,
+  DurableSolanaSignatureFailureOptions,
+  DurableSolanaSignatureFailureResult,
   DurableSolanaSignatureQueueSummary,
   EvidenceRepository,
   IngestionGapRepair,
@@ -113,6 +115,7 @@ const COVERAGE_INCIDENT_REASONS = new Set([
   "stale_live_notification",
   "backfill_truncated",
   "source_start_failed",
+  "unresolved_transaction",
   "combined"
 ]);
 
@@ -177,7 +180,14 @@ export class MemoryRepository
   private readonly canonicalEvents = new Map<string, CanonicalChainEvent>();
   private readonly solanaSignatureQueue = new Map<
     string,
-    DurableSolanaSignature & { status: "pending" | "completed"; completedAt?: string }
+    DurableSolanaSignature & {
+      status: "pending" | "completed" | "dead_letter";
+      attemptCount: number;
+      nextAttemptAt: string;
+      completedAt?: string;
+      deadLetteredAt?: string;
+      lastError?: string;
+    }
   >();
   private readonly solanaFinalities = new Map<
     string,
@@ -1622,7 +1632,12 @@ export class MemoryRepository
     const key = `${item.provider}:${item.address}:${item.signature}`;
     const existing = this.solanaSignatureQueue.get(key);
     if (existing) return existing.status === "pending";
-    this.solanaSignatureQueue.set(key, { ...item, status: "pending" });
+    this.solanaSignatureQueue.set(key, {
+      ...item,
+      status: "pending",
+      attemptCount: item.attemptCount ?? 0,
+      nextAttemptAt: item.nextAttemptAt ?? nowIso()
+    });
     return true;
   }
 
@@ -1634,16 +1649,27 @@ export class MemoryRepository
     return [...this.solanaSignatureQueue.values()]
       .filter(
         (item) =>
-          item.provider === provider && item.address === address && item.status === "pending"
+          item.provider === provider &&
+          item.address === address &&
+          item.status === "pending"
       )
       .sort(
         (left, right) =>
+          left.nextAttemptAt.localeCompare(right.nextAttemptAt) ||
           left.slot - right.slot ||
           left.notifiedAt.localeCompare(right.notifiedAt) ||
           left.signature.localeCompare(right.signature)
       )
       .slice(0, Math.max(0, limit))
-      .map(({ status: _status, completedAt: _completedAt, ...item }) => item);
+      .map(
+        ({
+          status: _status,
+          completedAt: _completedAt,
+          deadLetteredAt: _deadLetteredAt,
+          lastError: _lastError,
+          ...item
+        }) => item
+      );
   }
 
   async completeSolanaSignature(
@@ -1659,6 +1685,35 @@ export class MemoryRepository
     return true;
   }
 
+  async deferSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    options: DurableSolanaSignatureFailureOptions
+  ): Promise<DurableSolanaSignatureFailureResult | undefined> {
+    const key = `${provider}:${address}:${signature}`;
+    const item = this.solanaSignatureQueue.get(key);
+    if (!item || item.status !== "pending") return undefined;
+    const attemptCount = item.attemptCount + 1;
+    if (attemptCount >= options.maxAttempts) {
+      this.solanaSignatureQueue.set(key, {
+        ...item,
+        status: "dead_letter",
+        attemptCount,
+        lastError: options.error,
+        deadLetteredAt: options.failedAt
+      });
+      return { status: "dead_letter", attemptCount };
+    }
+    this.solanaSignatureQueue.set(key, {
+      ...item,
+      attemptCount,
+      nextAttemptAt: options.retryAt,
+      lastError: options.error
+    });
+    return { status: "retry", attemptCount, retryAt: options.retryAt };
+  }
+
   async getSolanaSignatureQueueSummary(
     provider?: string
   ): Promise<DurableSolanaSignatureQueueSummary> {
@@ -1666,11 +1721,19 @@ export class MemoryRepository
       (item) => !provider || item.provider === provider
     );
     const pending = items.filter((item) => item.status === "pending");
+    const completed = items.filter((item) => item.status === "completed");
+    const deadLetters = items.filter((item) => item.status === "dead_letter");
+    const deferred = pending.filter((item) => Date.parse(item.nextAttemptAt) > Date.now());
     return {
       pendingCount: pending.length,
-      completedCount: items.length - pending.length,
+      completedCount: completed.length,
+      deadLetterCount: deadLetters.length,
+      deferredCount: deferred.length,
       ...(pending.length > 0
         ? { oldestPendingAt: pending.map((item) => item.notifiedAt).sort()[0] }
+        : {}),
+      ...(deferred.length > 0
+        ? { nextRetryAt: deferred.map((item) => item.nextAttemptAt).sort()[0] }
         : {})
     };
   }

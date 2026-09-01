@@ -638,6 +638,8 @@ try {
            SELECT decision.id
            FROM alpha_decision_tape decision
            WHERE decision.retain_until < NOW()
+             AND decision.decided_at <
+                 NOW() - make_interval(days => $1::integer)
              AND NOT EXISTS (
                SELECT 1 FROM alpha_decision_checkpoints checkpoint
                WHERE checkpoint.decision_id = decision.id

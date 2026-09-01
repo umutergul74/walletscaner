@@ -90,7 +90,24 @@ backfill is labelled separately and cannot be mistaken for live WebSocket lag. T
 A live event reaching `SOLANA_PROVIDER_LATENCY_WARNING_MS` (30 seconds by default) marks the source
 degraded and increments a durable-for-process counter; the next timely live event may recover
 health. Late events are still ingested, so health detection cannot create a coverage gap. There is
-no automatic provider failover or dual feed in this adapter.
+no automatic WebSocket failover or dual feed in this adapter.
+
+Discovery transaction resolution has a narrower, bounded archival fallback. A durable signature
+gets one primary `getTransaction` cycle; only a null/error result may use
+`SOLANA_DISCOVERY_TRANSACTION_FALLBACK_RPC_URL`, or the already configured Helius RPC when the
+URLs differ. The fallback is serialized per program at
+`SOLANA_DISCOVERY_TRANSACTION_FALLBACK_INTERVAL_MS` (250 ms by default), has one four-second HTTP
+attempt and exposes request/recovery/error/timeout counters. It never carries WebSocket discovery,
+backfill, gap repair or routine token-risk traffic.
+
+If neither endpoint resolves the transaction, the worker no longer occupies a fetch slot forever.
+It increments the PostgreSQL attempt count and sets `next_attempt_at` with exponential delay from
+`SOLANA_DISCOVERY_DURABLE_RETRY_BASE_MS` (60 seconds) to
+`SOLANA_DISCOVERY_DURABLE_RETRY_MAX_MS` (one hour), then continues other due durable signatures.
+After `SOLANA_DISCOVERY_DURABLE_MAX_ATTEMPTS` (six), the row becomes retained `dead_letter`
+evidence and opens an `unresolved_transaction` coverage incident. It is not completed, deleted or
+counted as covered; operational health is DOWN until repaired. This path is deliberately metered so
+the free Helius allowance cannot become an unbounded retry owner.
 
 Quiet standard sockets send a bounded application-level `getHealth` heartbeat every
 `SOLANA_DISCOVERY_HEARTBEAT_INTERVAL_SECONDS` (30 seconds by default). A response or provider pong
@@ -140,6 +157,12 @@ Standard and Helius sources use the same fail-closed delivery contract:
 - backfill performs a bounded one-row boundary probe. Remaining history is reported as per-address
   truncation and cannot advance the cursor across the unknown range;
 - the saved cursor carries both slot/signature and the last admitted transaction's chain time.
+
+For high-rate discovery, WebSocket notifications cross `solana_signature_queue` before concurrent
+fetch. Restart replay reads only due rows. Completion is allowed only after canonical admission or
+an exact postfetch filter; unavailable rows persist attempts and backoff instead. The durable queue
+therefore permits bounded fetch concurrency without turning an in-memory crash, provider archive
+limit or retry storm into a hidden drop.
 
 `getSignaturesForAddress` pagination cannot prove unbounded history. With no existing cursor, the
 first bounded page is an activation sample only; operators must not describe it as reconstructed

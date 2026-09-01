@@ -1,12 +1,134 @@
 ---
-status: complete
-updated_at_utc: 2026-09-01T07:39:00Z
+status: active
+updated_at_utc: 2026-09-01T09:40:00Z
 owner: codex
-task: R52 wallet-alpha admission checkpoint and queue equilibrium
-last_safe_checkpoint: R52.1 operational; release ledger revision 15 complete; no mutation in progress
+task: R53 end-to-end queue, FIFO and maintenance recovery
+last_safe_checkpoint: all three source fixes implemented; targeted unit/type/PG16 gates pass; no production mutation
 ---
 
-# Objective and exclusions
+# Active R53 objective and exclusions
+
+Restore end-to-end, bounded Walletscaner flow after the R52.1 admission rollout by fixing three
+verified faults: the growing Pump.fun durable signature queue, incremental FIFO episode natural-key
+conflicts, and recurring operational-maintenance SQL `42P18` failures. Prove negative/zero queue
+slope, current canonical freshness, bounded resource use and storage progress before declaring the
+release operational.
+
+Keep `ENABLE_LIVE_EXECUTION=false`. Do not delete canonical evidence, clear queues, skip unresolved
+signatures silently, lower alpha/risk gates, mutate B2 objects/policy, run global prune, touch a
+co-tenant, or normalize a coverage gap as healthy. The latest unacknowledged server dump must not be
+removed. Provider fallback must be bounded and observable rather than an unmetered Helius credit
+path.
+
+# Active R53 resume protocol
+
+Before every resumed action compare this file with `git status --short --branch`, `git log -8`, the
+new R53 release ledger if it exists, production container/image identities, applied migrations,
+backup evidence, disk/memory and live queue snapshots. Determine whether the previous test, image
+build, upload, migration or recreate actually completed before retrying it. Update this file after
+every source commit, populated-data proof and production mutation.
+
+# Active R53 verified pre-state
+
+- Local Git is `27a9052`; `main` is ahead of `origin/main` by 270. Preserve four unrelated untracked
+  deploy remnants: `.tmp-pipeline-storage-r28-2dc66ab.tar817264887` and three storage-r34/r35/r36
+  `.partial` files.
+- Production has twelve Walletscaner services. Wallet-alpha R52.1 image is
+  `sha256:3666f0c616ada4894cc6b24fd03c867577f2a92c9e68704b57ebb985996aea70`;
+  Solana ingestion is `walletscaner-worker:alpha-producer-admission-r46-20260829`; maintenance is
+  `walletscaner-worker:maintenance-r48-20260831`. Affected containers have restart 0/OOM false and
+  live execution is false. R52.1/R52/R43 and the current ingestion/maintenance images are rollback
+  points.
+- At 2026-09-01 09:02 UTC the canonical inbox was zero with no dead letter, finality was current,
+  open coverage incidents were zero, DB was 24,666,176,535 bytes and root free space was
+  11,362,369,536 bytes. One verified chain-payload archive segment was being independently checked;
+  archive dead letters were zero.
+- The latest server dump `memecoin_alpha_20260831T173517Z.dump` is 2,804,194,002 bytes and has prior
+  SHA/archive-list proof, but its off-site acknowledgement is absent. The independently verified
+  29-Aug off-host generation remains. No backup may be retired in this task without fresh recovery
+  proof and separate gate satisfaction.
+
+# Active R53 root-cause evidence
+
+## Pump.fun durable signature queue
+
+- Pending `solana-rpc-discovery` rows belong only to program `6EF8...wF6P`: 35,357 rows, oldest
+  75,296 seconds. Operational samples grew 34,362 -> 35,294 in 67.6 minutes and a later snapshot
+  reached 35,357, so the queue has positive slope.
+- The WebSocket is open/head-current and durable admission/drop counters are 55,729/0, but only
+  20,537 rows have reloaded. Four workers are occupied behind old unresolved fetches; the latest
+  queue delay is 75,929,572 ms. Diagnostics show 95,000 transaction requests, 74,434 null responses,
+  22 timeouts and 11,940 unresolved cycles. `processSignatureUntilResolved` retries forever and the
+  schema has only pending/completed state, so a few permanently unavailable transactions create
+  head-of-line blocking. Transport liveness is therefore not end-to-end coverage.
+
+## Incremental FIFO
+
+- Evidence-v1 has 12 pending/error wallets and 3,143 coalesced revisions. Nine rows repeatedly fail
+  the natural-key constraint
+  `(chain,wallet_address,token_address,strategy_version,episode_index)`; two hit the inventory budget
+  and one is the intentional >10,000-trade guard.
+- `replaceWalletPositionLedger` removes a stale deterministic episode ID before insert and has a
+  regression test. `mergeWalletPositionLedger` deletes only open lots, preserves prior episodes,
+  then handles only `ON CONFLICT(id)`. A changed deterministic ID with the same natural key therefore
+  reaches the second unique constraint and rolls back. Canonical trades remain intact.
+
+## Maintenance/storage
+
+- Maintenance attempts at 07:49, 08:20 and 08:51 UTC failed in `bounded-retention` with PostgreSQL
+  code `42P18`; inventory probes also time out independently. The exact statement was isolated:
+  the future alpha decision-tape prune used `$2` for batch size while the shared bounded-prune
+  runner also supplied an otherwise untyped `$1`, so PostgreSQL could not infer parameter one.
+- From 07:50 to 08:58 UTC DB size grew 203,718,656 bytes and disk free fell 270,979,072 bytes.
+  Current monitor status is degraded, with 1.24 conservative days above the 8 GiB reserve. A roughly
+  301 MB verifier staging artifact is temporary, but failed maintenance means storage equilibrium is
+  not proven.
+
+# Active R53 planned phases and hard gates
+
+1. Add bounded durable-signature retry/lease/error state and a provider fallback policy that cannot
+   advance coverage silently past an unresolved older signature. Test duplicates, restart replay,
+   unavailable-primary/fallback success, retry exhaustion, concurrency and cursor ordering.
+2. Fix incremental ledger natural-key replacement without deleting prior unrelated closed episodes;
+   add the missing merge-path PostgreSQL regression and deterministic continuation tests.
+3. Reproduce and fix maintenance `42P18`; retain independent one-second advisory probes and bounded
+   deletion budgets. Test timeout isolation and the exact production-shaped SQL.
+4. Run targeted tests, typecheck/lint/full gate, Linux image tests and populated PostgreSQL 16 proof.
+   Measure queue throughput, RSS/CPU, locks/WAL/temp and rollback.
+5. Before production mutation create an atomic R53 release ledger and refresh exact backups,
+   headroom, mounts, service identities and live=false. Deploy only named affected services; stop or
+   roll back on any coverage, data, resource, migration or co-tenant hard gate.
+6. Acceptance requires Pump pending/oldest-age negative slope, no new alpha error class, maintenance
+   completion, inbox/finality freshness, no dead-letter growth, archive progress, bounded CPU/RAM and
+   a storage trend that no longer consumes the emergency reserve.
+
+# Active R53 next exact action
+
+Run the complete local and populated PostgreSQL gates, document the new durable signature state,
+then build an immutable Linux worker artifact. Before any server mutation, refresh backup/headroom,
+write the revision-checked R53 release ledger and prove the exact migration/image rollback path. No
+production mutation is currently in progress.
+
+# Active R53 completed checkpoints
+
+- Incremental FIFO merge now deletes only an incoming stale projection ID that conflicts on the
+  same deterministic natural key. The new changed-ID regression plus prior suffix-preservation and
+  replace-path tests pass against disposable PostgreSQL 16.
+- The decision-tape retention SQL now gives `$1` an explicit 60-day conservative time predicate;
+  22 maintenance tests pass (one optional test remains intentionally skipped).
+- Migration `057_durable_solana_signature_retry.sql` adds persistent attempt count, due time,
+  last error and terminal dead-letter evidence, plus the explicit `unresolved_transaction`
+  fail-closed coverage reason. It applied cleanly on disposable PostgreSQL 16.
+- Discovery no longer holds a worker in an infinite in-process transaction loop when a durable
+  signature is unavailable. It performs one bounded primary request, optionally one metered
+  archival fallback, persists exponential deferral, continues with other due signatures and opens
+  coverage evidence on retry exhaustion. No signature is silently completed or deleted.
+- Targeted provider/migration/maintenance tests pass 73/73; targeted populated PostgreSQL tests
+  pass 3/3; repository-wide TypeScript typecheck passes. The first retry integration run exposed
+  millisecond truncation caused by stringifying a PostgreSQL `Date`; the new queue timestamp path
+  now preserves exact ISO milliseconds and the rerun passes.
+
+# Completed R52 history
 
 Make the wallet-alpha queue sustainable without losing canonical Solana evidence or creating a
 discovery gap. Separate cheap, durable admission from expensive FIFO/scoring work; preserve future

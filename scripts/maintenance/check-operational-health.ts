@@ -112,6 +112,8 @@ try {
     finality_oldest_pending_age_seconds: number | null;
     finality_unresolved_24h: number;
     signature_queue_pending: number;
+    signature_queue_deferred: number;
+    signature_queue_dead_letters: number;
     signature_queue_oldest_pending_age_seconds: number | null;
   }>(
     `WITH unresolved AS (
@@ -246,6 +248,13 @@ try {
          SELECT COUNT(*)::integer FROM solana_signature_queue WHERE status = 'pending'
        ) AS signature_queue_pending,
        (
+         SELECT COUNT(*)::integer FROM solana_signature_queue WHERE status = 'dead_letter'
+       ) AS signature_queue_dead_letters,
+       (
+         SELECT COUNT(*)::integer FROM solana_signature_queue
+         WHERE status = 'pending' AND next_attempt_at > NOW()
+       ) AS signature_queue_deferred,
+       (
          SELECT EXTRACT(EPOCH FROM (NOW() - MIN(notified_at)))::float
          FROM solana_signature_queue WHERE status = 'pending'
        ) AS signature_queue_oldest_pending_age_seconds,
@@ -354,6 +363,9 @@ try {
       `signature queue age ${round(row.signature_queue_oldest_pending_age_seconds ?? 0)}s > ${maxSignaturePendingAgeSeconds}s`
     );
   }
+  if (row.signature_queue_dead_letters > 0) {
+    reasons.push(`${row.signature_queue_dead_letters} signature queue dead letters`);
+  }
   if (row.dead_letters > 0) reasons.push(`${row.dead_letters} dead-letter events`);
   if ((row.last_pool_age_seconds ?? 0) > maxEventLagSeconds) {
     reasons.push(`last pool event ${round(row.last_pool_age_seconds ?? 0)}s ago`);
@@ -429,6 +441,7 @@ try {
 
   const status =
     row.dead_letters > 0 ||
+    row.signature_queue_dead_letters > 0 ||
     (archiveEnabled && row.archive_dead_letter_segments > 0) ||
     diskUsedPercent >= criticalDiskUsedPercent
       ? "down"
@@ -449,6 +462,8 @@ try {
       finalityOldestPendingAgeSeconds: row.finality_oldest_pending_age_seconds,
       finalityUnresolved24h: row.finality_unresolved_24h,
       signatureQueuePending: row.signature_queue_pending,
+      signatureQueueDeferred: row.signature_queue_deferred,
+      signatureQueueDeadLetters: row.signature_queue_dead_letters,
       signatureQueueOldestPendingAgeSeconds: row.signature_queue_oldest_pending_age_seconds,
       lastPoolAgeSeconds: row.last_pool_age_seconds,
       lastSwapAgeSeconds: row.last_swap_age_seconds,

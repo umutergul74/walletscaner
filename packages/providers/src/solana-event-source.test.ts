@@ -28,14 +28,24 @@ class MemoryCursorStore implements SolanaCursorStore {
 class MemoryLiveSignatureStore implements DurableSolanaSignatureStore {
   readonly values = new Map<
     string,
-    DurableSolanaSignatureItem & { status: "pending" | "completed" }
+    DurableSolanaSignatureItem & {
+      status: "pending" | "completed" | "dead_letter";
+      attemptCount: number;
+      nextAttemptAt: string;
+      lastError?: string;
+    }
   >();
 
   async admitSolanaSignature(item: DurableSolanaSignatureItem): Promise<boolean> {
     const key = `${item.provider}:${item.address}:${item.signature}`;
     const existing = this.values.get(key);
     if (existing) return existing.status === "pending";
-    this.values.set(key, { ...item, status: "pending" });
+    this.values.set(key, {
+      ...item,
+      status: "pending",
+      attemptCount: item.attemptCount ?? 0,
+      nextAttemptAt: item.nextAttemptAt ?? new Date().toISOString()
+    });
     return true;
   }
 
@@ -47,13 +57,18 @@ class MemoryLiveSignatureStore implements DurableSolanaSignatureStore {
     return [...this.values.values()]
       .filter(
         (item) =>
-          item.provider === provider && item.address === address && item.status === "pending"
+          item.provider === provider &&
+          item.address === address &&
+          item.status === "pending"
       )
       .sort(
-        (left, right) => left.slot - right.slot || left.signature.localeCompare(right.signature)
+        (left, right) =>
+          left.nextAttemptAt.localeCompare(right.nextAttemptAt) ||
+          left.slot - right.slot ||
+          left.signature.localeCompare(right.signature)
       )
       .slice(0, limit)
-      .map(({ status: _status, ...item }) => item);
+      .map(({ status: _status, lastError: _lastError, ...item }) => item);
   }
 
   async completeSolanaSignature(
@@ -66,6 +81,39 @@ class MemoryLiveSignatureStore implements DurableSolanaSignatureStore {
     if (!existing || existing.status !== "pending") return false;
     this.values.set(key, { ...existing, status: "completed" });
     return true;
+  }
+
+  async deferSolanaSignature(
+    provider: string,
+    address: string,
+    signature: string,
+    options: {
+      error: string;
+      failedAt: string;
+      retryAt: string;
+      maxAttempts: number;
+    }
+  ) {
+    const key = `${provider}:${address}:${signature}`;
+    const existing = this.values.get(key);
+    if (!existing || existing.status !== "pending") return undefined;
+    const attemptCount = existing.attemptCount + 1;
+    if (attemptCount >= options.maxAttempts) {
+      this.values.set(key, {
+        ...existing,
+        status: "dead_letter",
+        attemptCount,
+        lastError: options.error
+      });
+      return { status: "dead_letter" as const, attemptCount };
+    }
+    this.values.set(key, {
+      ...existing,
+      attemptCount,
+      nextAttemptAt: options.retryAt,
+      lastError: options.error
+    });
+    return { status: "retry" as const, attemptCount, retryAt: options.retryAt };
   }
 }
 
@@ -2517,6 +2565,219 @@ describe("StandardSolanaEventSource", () => {
     expect(source.getDiagnostics()).toMatchObject({
       durableSignatureReloadCount: 1,
       droppedSignatureCount: 0
+    });
+    await source.stop();
+  });
+
+  it("uses one bounded archival fallback after the primary RPC cannot resolve a signature", async () => {
+    const liveSignatureStore = new MemoryLiveSignatureStore();
+    await liveSignatureStore.admitSolanaSignature({
+      provider: "solana-rpc",
+      address: "ProgramFallback111",
+      signature: "fallback-recovers-old-transaction",
+      slot: 88,
+      notifiedAt: new Date().toISOString()
+    });
+    const requestUrls: string[] = [];
+    const accepted: string[] = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://primary-rpc.example",
+      transactionFallbackRpcUrl: "https://archival-rpc.example",
+      transactionFallbackMinRequestIntervalMs: 1,
+      transactionFetchMaxAttempts: 1,
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramFallback111"],
+      cursorStore: new MemoryCursorStore(),
+      liveSignatureStore,
+      fetchImpl: async (input, init) => {
+        requestUrls.push(String(input));
+        const request = JSON.parse(String(init?.body)) as { method: string };
+        const result =
+          request.method === "getTransaction" && String(input).includes("archival-rpc")
+            ? {
+                blockTime: 1_700_000_000,
+                transaction: { message: { instructions: [] } },
+                meta: {}
+              }
+            : request.method === "getTransaction"
+              ? null
+              : [];
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      webSocketFactory: () => new FakeSocket()
+    });
+
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    await waitUntil(() => accepted.length === 1);
+    expect(requestUrls.filter((url) => url.includes("primary-rpc"))).toHaveLength(1);
+    expect(requestUrls.filter((url) => url.includes("archival-rpc"))).toHaveLength(1);
+    expect(source.getDiagnostics()).toMatchObject({
+      transactionFallbackRequestCount: 1,
+      transactionFallbackRecoveredCount: 1,
+      durableSignatureDeadLetterCount: 0
+    });
+    expect([...liveSignatureStore.values.values()][0]?.status).toBe("completed");
+    await source.stop();
+  });
+
+  it("durably defers an unavailable head without starving a later signature", async () => {
+    const liveSignatureStore = new MemoryLiveSignatureStore();
+    const now = new Date().toISOString();
+    await liveSignatureStore.admitSolanaSignature({
+      provider: "solana-rpc",
+      address: "ProgramDeferred111",
+      signature: "unavailable-head",
+      slot: 1,
+      notifiedAt: now
+    });
+    await liveSignatureStore.admitSolanaSignature({
+      provider: "solana-rpc",
+      address: "ProgramDeferred111",
+      signature: "available-later",
+      slot: 2,
+      notifiedAt: now
+    });
+    const accepted: string[] = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramDeferred111"],
+      cursorStore: new MemoryCursorStore(),
+      liveSignatureStore,
+      maxConcurrentTransactionFetches: 1,
+      durableSignatureRetryBaseDelayMs: 60_000,
+      durableSignatureRetryMaxDelayMs: 60_000,
+      durableSignatureMaxAttempts: 3,
+      transactionFetchMaxAttempts: 1,
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+        const signature = String(request.params[0]);
+        const result =
+          request.method === "getTransaction" && signature === "available-later"
+            ? {
+                blockTime: 1_700_000_000,
+                transaction: { message: { instructions: [] } },
+                meta: {}
+              }
+            : request.method === "getTransaction"
+              ? null
+              : [];
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      webSocketFactory: () => new FakeSocket()
+    });
+
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    await waitUntil(() => accepted.includes("available-later"));
+    const unavailable = [...liveSignatureStore.values.values()].find(
+      (item) => item.signature === "unavailable-head"
+    );
+    const available = [...liveSignatureStore.values.values()].find(
+      (item) => item.signature === "available-later"
+    );
+    expect(unavailable).toMatchObject({ status: "pending", attemptCount: 1 });
+    expect(Date.parse(unavailable!.nextAttemptAt)).toBeGreaterThan(Date.now());
+    expect(available?.status).toBe("completed");
+    expect(source.getDiagnostics()).toMatchObject({
+      durableSignatureRetryCount: 1,
+      activeTransactionWorkerCount: 0
+    });
+    await source.stop();
+  });
+
+  it("re-arms a future durable retry after restart without a new websocket notification", async () => {
+    const liveSignatureStore = new MemoryLiveSignatureStore();
+    await liveSignatureStore.admitSolanaSignature({
+      provider: "solana-rpc",
+      address: "ProgramRestartRetry111",
+      signature: "future-retry-after-restart",
+      slot: 3,
+      notifiedAt: new Date().toISOString(),
+      attemptCount: 1,
+      nextAttemptAt: new Date(Date.now() + 25).toISOString()
+    });
+    const accepted: string[] = [];
+    let transactionRequests = 0;
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramRestartRetry111"],
+      cursorStore: new MemoryCursorStore(),
+      liveSignatureStore,
+      transactionFetchMaxAttempts: 1,
+      fetchImpl: async () => {
+        transactionRequests += 1;
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              blockTime: 1_700_000_000,
+              transaction: { message: { instructions: [] } },
+              meta: {}
+            }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      },
+      webSocketFactory: () => new FakeSocket()
+    });
+
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    await waitUntil(() => accepted.length === 1);
+    expect(transactionRequests).toBe(1);
+    expect([...liveSignatureStore.values.values()][0]?.status).toBe("completed");
+    await source.stop();
+  });
+
+  it("dead-letters a bounded unavailable signature and reports fail-closed coverage", async () => {
+    const liveSignatureStore = new MemoryLiveSignatureStore();
+    await liveSignatureStore.admitSolanaSignature({
+      provider: "solana-rpc",
+      address: "ProgramDeadLetter111",
+      signature: "permanently-unavailable",
+      slot: 99,
+      notifiedAt: new Date().toISOString()
+    });
+    const terminal: Array<{ signature: string; attemptCount: number }> = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramDeadLetter111"],
+      cursorStore: new MemoryCursorStore(),
+      liveSignatureStore,
+      durableSignatureMaxAttempts: 1,
+      transactionFetchMaxAttempts: 1,
+      onDurableSignatureDeadLetter: (item) => {
+        terminal.push({ signature: item.signature, attemptCount: item.attemptCount });
+      },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: null }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }),
+      webSocketFactory: () => new FakeSocket()
+    });
+
+    await source.start(() => undefined);
+    await waitUntil(() => terminal.length === 1);
+    expect(terminal).toEqual([{ signature: "permanently-unavailable", attemptCount: 1 }]);
+    expect([...liveSignatureStore.values.values()][0]?.status).toBe("dead_letter");
+    expect(source.getDiagnostics()).toMatchObject({
+      durableSignatureDeadLetterCount: 1,
+      activeTransactionWorkerCount: 0
     });
     await source.stop();
   });

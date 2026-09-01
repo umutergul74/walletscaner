@@ -749,6 +749,14 @@ on resume. This bounds RPC, CPU, RAM and database write pressure; an exact bound
 may converge, while a larger interval is retained as alpha-excluded. An unresolved transaction
 leaves the incident open for bounded retry.
 
+Live durable-signature recovery is independent from bounded reconnect repair. The worker makes one
+primary transaction request and may use the configured Helius RPC only as a metered archival
+fallback (`SOLANA_DISCOVERY_TRANSACTION_FALLBACK_INTERVAL_MS=250`). A failed cycle is persisted with
+60-second-to-one-hour exponential backoff, so it releases CPU/RAM/fetch concurrency while remaining
+unacknowledged. Six failed cycles produce retained signature dead-letter evidence and an
+`unresolved_transaction` coverage incident. Never clear that row to improve the queue number;
+repair the exact transaction/coverage evidence or keep the affected interval alpha-excluded.
+
 A signature-cap breach is terminal for that bounded repair, not permission to raise the cap until
 the database fills. After two independently fresh current-transport samples, the supervisor closes
 only the transport state as `transport_recovered_gap_unreconciled`, preserves the failed repair and
