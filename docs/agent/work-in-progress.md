@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-01T06:47:00Z
+updated_at_utc: 2026-09-01T07:27:00Z
 owner: codex
 task: R52 wallet-alpha admission checkpoint and queue equilibrium
 last_safe_checkpoint: read-only diagnosis complete; no mutation or service stop is in progress
@@ -79,10 +79,11 @@ Update this file immediately after every externally visible checkpoint.
 
 # Next exact action
 
-Commit the coherent R52 source/tests/docs checkpoint while preserving the four unrelated deploy
-remnants. Then refresh production read-only state and backup/restore evidence, create a fresh R52
-release ledger and build/hash the immutable transfer artifact. No clone restore, local migration or
-local reconciliation needs to be repeated.
+R52 is running and the queue slope is negative, but acceptance found that expected FIFO revision
+CAS races are counted as transient failures. Implement and test the smallest R52.1 worker-only fix:
+acknowledge only the superseded claimed revision, release its lease and keep the newer revision
+pending without `last_error`. Rebuild and rebind only wallet-alpha; do not rerun migration or
+reconciliation.
 
 # Local implementation checkpoint, 2026-08-31 23:32 UTC
 
@@ -131,3 +132,66 @@ local reconciliation needs to be repeated.
   RSS versus limits of 30 seconds / 100 MiB heap / 160 MiB RSS.
 - `git diff --check` passed. Migration 056 SHA-256 remains
   `7581249d86fb12cfdcf068148928f0de55083ff48c3483a74368164d68a6e551`.
+
+# Production preflight and artifact, 2026-09-01 06:55 UTC
+
+- Coherent implementation commit: `93f3b2e`. Release ledger
+  `reports/deploy/wallet-alpha-r52-admission-20260901.json` is revision 1 / preflight planned.
+- Production still runs 12 Walletscaner services. Wallet-alpha remains exact R43 container
+  `7313793b5a18...` / image `sha256:e87020e75036...f928bf3b`, restart 0, OOM false and live execution
+  false. No protected co-tenant Compose project is running. No service has been stopped or changed.
+- Root filesystem has 14,087,897,088 bytes free; available memory is about 1.01 GB. PostgreSQL is
+  24,235,146,263 bytes. Migration 055 is latest. Wallet trade freshness was 162 seconds.
+- Queue is 40,960 pending with 75,336 unresolved revisions and three error rows; 6,567 unresolved
+  revisions were touched/created in the last hour. This confirms ongoing positive arrival pressure.
+- Current server dump `memecoin_alpha_20260831T173517Z.dump` is 2,804,194,002 bytes; SHA-256
+  `112599cf58e915dd57993fa780b84cfc7e5c2fed22368d7e6b211fd80aa3e4ad` matched and PostgreSQL 16
+  `pg_restore --list` passed. The 29-Aug off-host-verified generation remains present.
+- Immutable image `walletscaner-worker:wallet-alpha-admission-r52-20260901` has ID/digest
+  `sha256:fc8180ea4e9dac79b28d06d01968ab0d872cb82784a7c1540dd8572d3a2606b1` and size 464,364,975
+  bytes. Transfer artifact `deploy/walletscaner-alpha-admission-r52-20260901.tar.zst` is 463,823,701
+  bytes with SHA-256 `4601c35858af4df45f952c08905d1ade69e104b676653de747185c94858d664b`.
+- The remote artifact SHA and zstd frame matched. Docker loaded the exact image ID above while the
+  R43 wallet-alpha container remained running and unchanged. Release ledger revision 4 is
+  `migration/planned`; preflight is terminal `completed` in its history.
+
+# Migration checkpoint, 2026-09-01 07:08 UTC
+
+- Release ledger revision 5 is `migration/in_progress`. Only wallet-alpha was stopped; the exact
+  hash of the other eleven running service IDs remained
+  `12bf221a6477b1f760a3c00c02b5324f30c5f33ce0069a97b6d0b7b19ff8d266`.
+- The first one-shot invoked a nonexistent `npm run migrate` script and exited 1 before database
+  access; it made no schema change. The verified repository entrypoint `npm run db:migrate` then
+  applied only `056_wallet_alpha_admission_checkpoint.sql`.
+- Production records the exact expected migration checksum
+  `7581249d86fb12cfdcf068148928f0de55083ff48c3483a74368164d68a6e551`; all three additive columns
+  and three functions exist. Wallet-alpha remains exited. The historical cohort is 40,933 pending,
+  all `unchecked`, so reconciliation has not started and is safe to resume exactly once.
+
+# Reconciliation checkpoint, 2026-09-01 07:23 UTC
+
+- Eighty-two non-empty transactions examined 40,874 historical rows: 40,783 deferred and 91 ready.
+  Producers concurrently classified/promoted additional rows through the same database gate.
+- Final queue snapshot before rollout: 41,178 deferred with zero pending/errors; 157 ready and
+  pending with three pre-existing errors; zero `unchecked` pending. Unresolved revision gap fell
+  from 75,336 to 3,396, a roughly 95.5% reduction, while pending wallets fell by about 99.6%.
+- Canonical wallet trade freshness was 151 seconds. Database size was 24,272,051,223 bytes. Other
+  service ID hash remained `12bf221a...d266`. Root free space was 11,893,678,080 bytes; most of the
+  preflight decrease is the newly loaded rollback-preserving image plus the still-present transfer
+  artifact, not queue-table growth.
+- The exact server release updater SHA matches local
+  `5cc7456847993197d3b291e29799c9936101134850f564e8d2570081b2ee359b`; dry-run proves only
+  `WALLETSCANER_RESEARCH_IMAGE` will change from R43 to R52.
+
+# R52 acceptance finding, 2026-09-01 07:27 UTC
+
+- R52 container `75d2c1494a1e...` runs exact image `sha256:fc8180ea4e9d...06b1`, restart 0, OOM
+  false and live execution false. Other service IDs remain unchanged.
+- Across eight approximately 45-second samples, pending fell 161 -> 100 and revision gap
+  3,442 -> 3,245; `unchecked` pending stayed zero. Wallet trade freshness reached 17-20 seconds,
+  worker RSS stayed 52-65 MiB and CPU was generally below 2% with one 4.75% sample.
+- The hard error gate did not pass: failed pending increased 3 -> 5. Both new rows are expected
+  producer/worker CAS races (`Wallet FIFO revision changed`), not evidence loss. The older claimed
+  revision was superseded by new evidence, but the generic catch path wrote `last_error` and a
+  five-minute retry. Treating this normal concurrency path as failure makes telemetry dishonest and
+  delays a wallet unnecessarily. Rollout ledger remains revision 11 / `rollout/in_progress`.

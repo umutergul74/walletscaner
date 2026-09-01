@@ -103,6 +103,7 @@ export interface WalletAlphaQueueResult {
   oversizedWallets: number;
   signalRelevantWallets: number;
   signalRefreshFailures: number;
+  supersededWallets: number;
   admissionCheckpointExamined: number;
   admissionCheckpointDeferred: number;
   admissionCheckpointReady: number;
@@ -271,6 +272,7 @@ export async function processWalletAlphaQueue(
   let oversizedWallets = 0;
   let signalRelevantWallets = 0;
   let signalRefreshFailures = 0;
+  let supersededWallets = 0;
   let admissionCheckpointExamined = 0;
   let admissionCheckpointDeferred = 0;
   let admissionCheckpointReady = 0;
@@ -520,7 +522,7 @@ export async function processWalletAlphaQueue(
           )
         );
         if (!committed) {
-          throw new Error(`Wallet FIFO revision changed for ${item.walletAddress}.`);
+          throw new WalletAlphaRevisionChangedError(item.walletAddress);
         }
       }
 
@@ -569,6 +571,23 @@ export async function processWalletAlphaQueue(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof WalletAlphaRevisionChangedError) {
+        // A producer advanced this wallet while its older revision was being computed. The old
+        // revision is superseded, not failed: acknowledge only the claimed revision, release the
+        // lease and leave the newer revision pending for a fresh deterministic pass.
+        if (!(await repository.completeWalletAlphaWork(item))) {
+          throw new Error(
+            `Wallet-alpha superseded-revision lease was lost for ${item.walletAddress}.`
+          );
+        }
+        supersededWallets += 1;
+        progress("wallet-superseded", {
+          workItem: workIndex + 1,
+          wallet: item.walletAddress,
+          revision: item.revision
+        });
+        continue;
+      }
       const oversized = error instanceof WalletAlphaEvidenceLimitError;
       if (
         !(await repository.failWalletAlphaWork(
@@ -601,6 +620,7 @@ export async function processWalletAlphaQueue(
     oversizedWallets,
     signalRelevantWallets,
     signalRefreshFailures,
+    supersededWallets,
     admissionCheckpointExamined,
     admissionCheckpointDeferred,
     admissionCheckpointReady,
@@ -902,6 +922,13 @@ export async function refreshWalletAlphaSignals(
 }
 
 class WalletAlphaEvidenceLimitError extends Error {}
+
+class WalletAlphaRevisionChangedError extends Error {
+  constructor(walletAddress: string) {
+    super(`Wallet FIFO revision changed for ${walletAddress}.`);
+    this.name = "WalletAlphaRevisionChangedError";
+  }
+}
 
 function evidenceLimitError(
   walletAddress: string,

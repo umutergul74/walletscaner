@@ -418,6 +418,57 @@ describe("wallet alpha report", () => {
     ).toMatchObject({ tradeRevision: 5, continuation: { tradeRevision: 5, generation: 3 } });
   });
 
+  it("requeues a concurrently superseded FIFO revision without recording a failure", async () => {
+    const repository = new MemoryRepository();
+    const walletAddress = "ConcurrentRevisionWallet";
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 1, "buy", 100, 100));
+    await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 2, "sell", 100, 150));
+    vi.spyOn(repository, "commitWalletFifoContinuation").mockImplementationOnce(async () => {
+      await repository.saveWalletTradeEvent(fifoTrade(walletAddress, 3, "buy", 50, 50));
+      return false;
+    });
+
+    const options = {
+      materializeHistorical: false,
+      workBatchSize: 1,
+      maxWorkBatches: 1,
+      minimumTradeEvents: 1,
+      minimumEntries: 1
+    };
+    const superseded = await processWalletAlphaQueue(
+      repository,
+      "evidence-v1",
+      "2026-07-10T00:00:00.000Z",
+      30,
+      options
+    );
+
+    expect(superseded).toMatchObject({
+      processedWallets: 0,
+      failedWallets: 0,
+      supersededWallets: 1
+    });
+    expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({
+      pending: 1,
+      failed: 0,
+      processing: 0
+    });
+
+    expect(
+      await processWalletAlphaQueue(
+        repository,
+        "evidence-v1",
+        "2026-07-10T00:01:00.000Z",
+        30,
+        options
+      )
+    ).toMatchObject({ processedWallets: 1, failedWallets: 0, supersededWallets: 0 });
+    expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({
+      pending: 0,
+      failed: 0
+    });
+  });
+
   it("seeds a large wallet in bounded pages and checks only its suffix after seeding", async () => {
     const repository = new MemoryRepository();
     const walletAddress = "PagedContinuationWallet";
