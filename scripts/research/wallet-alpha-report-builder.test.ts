@@ -213,6 +213,32 @@ describe("wallet alpha report", () => {
     expect(pageLoads.mock.calls.map((call) => call[1])).toEqual(["ThreeEntryWallet"]);
   });
 
+  it("does not lease another wallet without a complete per-wallet time budget", async () => {
+    const repository = new MemoryRepository();
+    await repository.saveWalletTradeEvent(walletTrade("BudgetGuardWallet", "budget-guard", 1));
+    const claims = vi.spyOn(repository, "claimWalletAlphaWork");
+
+    const result = await processWalletAlphaQueue(
+      repository,
+      "evidence-v1",
+      "2026-07-10T00:00:00.000Z",
+      30,
+      {
+        materializeHistorical: false,
+        workBatchSize: 1,
+        maxWorkBatches: 1,
+        maximumRunSeconds: 30,
+        minimumWorkItemBudgetSeconds: 300
+      }
+    );
+
+    expect(result).toMatchObject({ processedWallets: 0, failedWallets: 0 });
+    expect(claims).not.toHaveBeenCalled();
+    expect(await repository.getWalletAlphaWorkSummary("evidence-v1")).toMatchObject({
+      pending: 1
+    });
+  });
+
   it("falls back to a fresh probe when evidence advances the queued revision", async () => {
     const repository = new MemoryRepository();
     await repository.saveWalletTradeEvent(walletTrade("RevisionWallet", "revision-1", 1));

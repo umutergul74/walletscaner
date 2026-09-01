@@ -597,6 +597,12 @@ export interface WalletAlphaAdmissionProbe extends WalletAlphaWorkCandidate {
   entryCount: number;
 }
 
+export interface WalletAlphaAdmissionCheckpointResult {
+  examined: number;
+  deferred: number;
+  retainedReady: number;
+}
+
 /**
  * Price-enrichment queue admission. Evidence is always persisted; only the redundant
  * enrichment revision is suppressed until either bounded evidence threshold is met.
@@ -820,6 +826,10 @@ export interface EvidenceRepository {
     minimumTradeEvents: number,
     minimumEntries: number
   ): Promise<WalletAlphaAdmissionProbe[]>;
+  reconcileWalletAlphaAdmission(
+    strategyVersion: string,
+    limit?: number
+  ): Promise<WalletAlphaAdmissionCheckpointResult>;
   completeWalletAlphaWorkCandidates(candidates: WalletAlphaWorkCandidate[]): Promise<number>;
   probeWalletAlphaEvidenceBounds(
     item: WalletAlphaWorkItem,

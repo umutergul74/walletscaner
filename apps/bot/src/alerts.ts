@@ -137,6 +137,11 @@ export function formatPipelineStatusAlert(status: PipelineStatusNotification): s
     `📊 Walletscaner durum: ${status.pipelineStatus.toUpperCase()}`,
     `Inbox backlog / dead-letter: ${status.inboxBacklog} / ${status.deadLetters}`,
     `Alpha iş kuyruğu: ${status.alphaQueuePending.toLocaleString("en-US")}`,
+    ...(status.alphaQueueDeferred !== undefined
+      ? [
+          `Alpha pending / deferred / unchecked: ${status.alphaQueuePending.toLocaleString("en-US")} / ${status.alphaQueueDeferred.toLocaleString("en-US")} / ${(status.alphaQueueUnchecked ?? 0).toLocaleString("en-US")}`
+        ]
+      : []),
     ...(status.alphaQueueSignalPending !== undefined
       ? [
           `Alpha lane S/E/B: ${status.alphaQueueSignalPending.toLocaleString("en-US")} / ${(status.alphaQueueElevatedPending ?? 0).toLocaleString("en-US")} / ${(status.alphaQueueBackgroundPending ?? 0).toLocaleString("en-US")}`

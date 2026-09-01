@@ -114,6 +114,8 @@ export interface PipelineStatusNotification {
   inboxBacklog: number;
   deadLetters: number;
   alphaQueuePending: number;
+  alphaQueueDeferred?: number;
+  alphaQueueUnchecked?: number;
   alphaQueueReady?: number;
   alphaQueueFailed?: number;
   alphaQueueQuarantined?: number;

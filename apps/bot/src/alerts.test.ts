@@ -84,6 +84,8 @@ describe("telegram operational alerts", () => {
       inboxBacklog: 0,
       deadLetters: 0,
       alphaQueuePending: 100,
+      alphaQueueDeferred: 12_345,
+      alphaQueueUnchecked: 0,
       signals24h: 0,
       qualifiedPools24h: 3,
       lastPoolAgeSeconds: 4,
@@ -99,6 +101,7 @@ describe("telegram operational alerts", () => {
     });
     expect(message).toContain("Walletscaner durum: OK");
     expect(message).toContain("Inbox backlog / dead-letter: 0 / 0");
+    expect(message).toContain("Alpha pending / deferred / unchecked: 100 / 12,345 / 0");
     expect(message).toContain("Açık discovery coverage incident: 0");
     expect(message).toContain("Veritabanı: 10.00 GiB");
     expect(message).toContain("Wallet compact geçici işlem hatası: 1");

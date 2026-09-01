@@ -280,6 +280,8 @@ export class TelegramNotificationStore {
       inbox_backlog: number;
       dead_letters: number;
       alpha_queue_pending: number;
+      alpha_queue_deferred: number;
+      alpha_queue_unchecked: number;
       alpha_queue_ready: number;
       alpha_queue_failed: number;
       alpha_queue_quarantined: number;
@@ -321,6 +323,13 @@ export class TelegramNotificationStore {
          (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
           WHERE strategy_version = $2
             AND revision > completed_revision) AS alpha_queue_pending,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND admission_status = 'deferred') AS alpha_queue_deferred,
+         (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
+          WHERE strategy_version = $2
+            AND admission_status = 'unchecked'
+            AND revision > completed_revision) AS alpha_queue_unchecked,
          (SELECT COUNT(*)::integer FROM wallet_alpha_work_queue
           WHERE strategy_version = $2
             AND revision > completed_revision
@@ -426,6 +435,8 @@ export class TelegramNotificationStore {
       inboxBacklog: backlog,
       deadLetters,
       alphaQueuePending: Number(row.alpha_queue_pending),
+      alphaQueueDeferred: Number(row.alpha_queue_deferred ?? 0),
+      alphaQueueUnchecked: Number(row.alpha_queue_unchecked ?? 0),
       alphaQueueReady,
       alphaQueueFailed,
       alphaQueueQuarantined: Number(row.alpha_queue_quarantined ?? 0),

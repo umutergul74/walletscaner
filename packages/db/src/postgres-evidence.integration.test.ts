@@ -2264,7 +2264,7 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     ).toEqual([]);
   });
 
-  it("persists a wallet buy/sell ledger and keeps one-position evidence below signal gates", async () => {
+  it("durably defers one-position evidence below the production alpha prerequisites", async () => {
     await repository.saveWalletTradeEvent({
       idempotencyKey: "ledger-buy",
       chain: "solana",
@@ -2313,7 +2313,7 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
 
     expect(report.coverage).toMatchObject({
       tradeEvents: 2,
-      completedPositions: 1
+      completedPositions: 0
     });
     expect(report.mode).toBe("observe-only");
     expect(report.livePaperSignals).toEqual([]);
@@ -2323,6 +2323,142 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
         (trade) => trade.idempotencyKey
       )
     ).toEqual(["ledger-buy", "ledger-sell"]);
+  });
+
+  it("checkpoints unready evidence revisions and promotes them when watch prerequisites arrive", async () => {
+    const strategyVersion = "evidence-v1";
+    const deferredWallet = `AdmissionDeferred${Date.now()}`;
+    const legacyWallet = `AdmissionLegacy${Date.now()}`;
+    const qualifiedWallet = `AdmissionQualified${Date.now()}`;
+
+    await testPool.query(
+      `INSERT INTO wallet_trade_events (
+         idempotency_key, chain, wallet_address, token_address, side,
+         base_amount, execution_price_usd, quote_value_usd, data_quality,
+         signature, slot, provider, observed_at, strategy_version, raw
+       )
+       SELECT
+         'admission-sell-' || $1 || '-' || value,
+         'solana', $1, 'AdmissionSellMint' || value, 'sell',
+         1, 1, 1, 'observed-execution',
+         'admission-sell-signature-' || $1 || '-' || value,
+         50000 + value, 'integration-test', NOW() - INTERVAL '1 hour', $2, '{}'::jsonb
+       FROM generate_series(1, 8) value`,
+      [deferredWallet, strategyVersion]
+    );
+    expect(
+      (
+        await testPool.query<{ enqueue_wallet_alpha_work: boolean }>(
+          `SELECT enqueue_wallet_alpha_work('solana', $1, $2, 1::smallint, 'sell-trade')`,
+          [deferredWallet, strategyVersion]
+        )
+      ).rows[0]?.enqueue_wallet_alpha_work
+    ).toBe(false);
+    expect(
+      (
+        await testPool.query(
+          `SELECT revision, completed_revision, admission_status, admission_reason
+           FROM wallet_alpha_work_queue
+           WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+          [deferredWallet, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({
+      revision: "1",
+      completed_revision: "1",
+      admission_status: "deferred",
+      admission_reason: "insufficient-watch-upper-bound"
+    });
+
+    await testPool.query(
+      `INSERT INTO wallet_entry_signals (
+         idempotency_key, chain, wallet_address, token_address,
+         source_swap_idempotency_key, observed_entry_price_usd,
+         observed_liquidity_usd, cohort, repeat_wallet_count, flow_evidence,
+         signature, slot, provider, observed_at, strategy_version
+       )
+       SELECT
+         'admission-entry-' || $1 || '-' || value,
+         'solana', $1, 'AdmissionEntryMint' || value,
+         'admission-swap-' || $1 || '-' || value, 1, 25000,
+         'controlled-flow-control', 1,
+         '{"controlledFlow":true,"tokenRiskKnown":true,"tokenRiskPassed":true,"poolAgeMinutes":5}'::jsonb,
+         'admission-entry-signature-' || $1 || '-' || value,
+         51000 + value, 'integration-test', NOW() - INTERVAL '30 minutes', $2
+       FROM generate_series(1, 8) value`,
+      [deferredWallet, strategyVersion]
+    );
+    await testPool.query(
+      `INSERT INTO wallet_signal_outcomes (
+         idempotency_key, entry_idempotency_key, chain, horizon_minutes, status,
+         outcome_price_usd, frozen_at, gross_return_pct, net_return_pct,
+         estimated_round_trip_cost_pct, exit_strategy, rugged, signature, slot,
+         provider, observed_at, strategy_version, raw
+       )
+       SELECT
+         'admission-outcome-' || $1 || '-' || value,
+         'admission-entry-' || $1 || '-' || value,
+         'solana', 20, 'mature', 1.1, NOW() - INTERVAL '5 minutes', 10, 7,
+         3, 'fixed-horizon', FALSE,
+         'admission-outcome-signature-' || $1 || '-' || value,
+         52000 + value, 'integration-test', NOW() - INTERVAL '5 minutes', $2, '{}'::jsonb
+       FROM generate_series(1, 8) value`,
+      [deferredWallet, strategyVersion]
+    );
+    expect(
+      (
+        await testPool.query<{ enqueue_wallet_alpha_work: boolean }>(
+          `SELECT enqueue_wallet_alpha_work('solana', $1, $2, 1::smallint, 'signal-outcome')`,
+          [deferredWallet, strategyVersion]
+        )
+      ).rows[0]?.enqueue_wallet_alpha_work
+    ).toBe(true);
+    expect(
+      (
+        await testPool.query(
+          `SELECT revision, completed_revision, priority, admission_status
+           FROM wallet_alpha_work_queue
+           WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+          [deferredWallet, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({
+      revision: "2",
+      completed_revision: "1",
+      priority: 1,
+      admission_status: "ready"
+    });
+
+    await testPool.query(
+      `INSERT INTO wallet_alpha_work_queue (
+         chain, wallet_address, strategy_version, revision, completed_revision,
+         priority, priority_reason, pending_since, admission_status
+       ) VALUES ('solana',$1,$2,7,3,0,'legacy-seed',NOW(),'unchecked')`,
+      [legacyWallet, strategyVersion]
+    );
+    await expect(repository.reconcileWalletAlphaAdmission(strategyVersion, 5_000)).resolves.toEqual(
+      expect.objectContaining({ examined: expect.any(Number), deferred: expect.any(Number) })
+    );
+    expect(
+      (
+        await testPool.query(
+          `SELECT revision, completed_revision, admission_status
+           FROM wallet_alpha_work_queue
+           WHERE chain='solana' AND wallet_address=$1 AND strategy_version=$2`,
+          [legacyWallet, strategyVersion]
+        )
+      ).rows[0]
+    ).toMatchObject({ revision: "7", completed_revision: "7", admission_status: "deferred" });
+
+    await repository.saveWalletAlphaScore(qualifiedIntegrationScore(qualifiedWallet, strategyVersion));
+    expect(
+      (
+        await testPool.query<{ enqueue_wallet_alpha_work: boolean }>(
+          `SELECT enqueue_wallet_alpha_work('solana', $1, $2, 2::smallint, 'qualified-refresh')`,
+          [qualifiedWallet, strategyVersion]
+        )
+      ).rows[0]?.enqueue_wallet_alpha_work
+    ).toBe(true);
   });
 
   it("admits only evidence-mature wallets to production alpha claims", async () => {

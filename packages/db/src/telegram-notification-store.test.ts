@@ -41,6 +41,8 @@ describe("TelegramNotificationStore pipeline status", () => {
           inbox_backlog: 0,
           dead_letters: 0,
           alpha_queue_pending: 3,
+          alpha_queue_deferred: 42,
+          alpha_queue_unchecked: 7,
           signals_24h: 0,
           qualified_pools_24h: 0,
           last_pool_age_seconds: 30,
@@ -56,6 +58,8 @@ describe("TelegramNotificationStore pipeline status", () => {
     const status = await store.getPipelineStatus("  evidence-v1  ");
 
     expect(status.alphaQueuePending).toBe(3);
+    expect(status.alphaQueueDeferred).toBe(42);
+    expect(status.alphaQueueUnchecked).toBe(7);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("WHERE strategy_version = $2"), [
       strictQualifiedPoolNotificationPolicy.version,
       "evidence-v1"

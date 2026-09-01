@@ -51,6 +51,7 @@ import type {
   SolanaFinalityWorkItem,
   TokenRiskReport,
   WalletAlphaCoverageSummary,
+  WalletAlphaAdmissionCheckpointResult,
   WalletAlphaAdmissionProbe,
   WalletAlphaQueueAdmission,
   WalletAlphaDetail,
@@ -1565,6 +1566,27 @@ export class PostgresRepository
         entryCount: Number(row.entry_count)
       }));
     });
+  }
+
+  async reconcileWalletAlphaAdmission(
+    strategyVersion: string,
+    limit = 500
+  ): Promise<WalletAlphaAdmissionCheckpointResult> {
+    const boundedLimit = clampLimit(limit, 500, 5_000);
+    const result = await this.withTransaction(async (client) => {
+      await client.query("SET LOCAL statement_timeout = '30s'");
+      return client.query(
+        `SELECT examined, deferred, retained_ready
+         FROM reconcile_wallet_alpha_admission_batch($1, $2)`,
+        [strategyVersion, boundedLimit]
+      );
+    });
+    const row = result.rows[0] ?? {};
+    return {
+      examined: Number(row.examined ?? 0),
+      deferred: Number(row.deferred ?? 0),
+      retainedReady: Number(row.retained_ready ?? 0)
+    };
   }
 
   async completeWalletAlphaWorkCandidates(

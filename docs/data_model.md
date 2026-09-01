@@ -243,9 +243,10 @@ selection purposes.
   score primary key, replacement time and `ON DELETE CASCADE` back to the score row.
 - `wallet_alpha_signals`: one current paper signal per strategy/token.
 - `wallet_alpha_work_queue`: one coalescing revision per wallet/strategy with lease/retry state,
-  `pending_since`, and bounded priority `0..2`. Priority is scheduling metadata, never evidence or
-  an alpha score. `NOTIFY wallet_alpha_work` is only a commit-bound wake hint; this table is the
-  durable source of truth.
+  `pending_since`, bounded priority `0..2`, and a durable `unchecked|ready|deferred` expensive-work
+  admission checkpoint. Priority and admission are scheduling metadata, never evidence or an alpha
+  score. `NOTIFY wallet_alpha_work` is only a commit-bound wake hint; this table is the durable
+  source of truth.
 
 The bounded admission prefetch can complete multiple below-threshold queue revisions in one
 statement, but only when each row still has the exact measured revision and no active lease. A
@@ -253,12 +254,15 @@ concurrent producer revision therefore remains pending. This is queue-state comp
 deletion. The FIFO scorer reads a scalar trade projection without `raw` provider JSON; archive and
 general evidence readers retain the complete canonical row.
 
-Price enrichment applies the same configured admission floor as the consumer: at least the bounded
-trade count or the bounded recent-entry count. This gates only its redundant derived revision; the
-price provenance is always persisted. Trade, entry and outcome writes remain unconditional
-transactional queue producers, so threshold crossings and concurrent wallet discovery cannot be
-lost. Repository callers that omit enrichment admission retain explicit unconditional queue
-semantics for replay and tests.
+Migration 056 separates canonical collection from expensive scoring admission. For `evidence-v1`,
+an unseeded/unqualified wallet is ready only when recent evidence has the upper-bound prerequisites
+for the immutable watch gate: at least eight sells plus mature fixed-horizon outcomes for at least
+eight distinct source-linked token entries in the 90-day scorer window. This is deliberately a
+superset, not an alpha verdict; risk, quality, return and tail gates still run later. A deferred
+revision advances only `completed_revision`. All canonical rows and trade-source revisions remain,
+and every producer re-evaluates the wallet so the qualifying event promotes it transactionally.
+Existing FIFO continuations and the latest watch/candidate/validated-paper score bypass admission
+and remain current. Other strategy namespaces retain their explicit legacy behavior.
 
 Scores are versioned by `strategy_version`; reports and APIs should never silently mix versions.
 Failed or unknown token risk cannot enter the live wallet-entry/outcome cohort. Transitional

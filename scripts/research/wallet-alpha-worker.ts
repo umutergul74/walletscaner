@@ -86,6 +86,14 @@ try {
           maximumRunSeconds: positiveInt(process.env.WALLET_ALPHA_MAX_RUN_SECONDS, 240),
           minimumTradeEvents: positiveInt(process.env.WALLET_ALPHA_MIN_TRADE_EVENTS, 6),
           minimumEntries: positiveInt(process.env.WALLET_ALPHA_MIN_ENTRIES, 3),
+          admissionCheckpointBatchSize: positiveInt(
+            process.env.WALLET_ALPHA_ADMISSION_CHECKPOINT_BATCH_SIZE,
+            500
+          ),
+          minimumWorkItemBudgetSeconds: positiveInt(
+            process.env.WALLET_ALPHA_MIN_WORK_ITEM_BUDGET_SECONDS,
+            15
+          ),
           async onSignalRelevantWalletProcessed(item, signalEligible) {
             if (!signalEligible) {
               immediateSignalRefreshSkips += 1;

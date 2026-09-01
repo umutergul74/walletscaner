@@ -248,11 +248,13 @@ always take the highest ready priority and remain FIFO within a lane. PostgreSQL
 same bounded worker for elevated work, but the durable queue and 30/300-second fallback polls remain
 the recovery truth if a notification or listener is lost.
 
-Live price enrichment passes the worker's configured trade/entry admission floors and source window
-into persistence. PostgreSQL always stores the changed price evidence, then increments score work
-only when the wallet has reached either bounded floor. Trade and entry writes remain unconditional
-transactional producers; this preserves threshold crossings and concurrent smart-wallet discovery
-while suppressing the dominant redundant enrichment revisions. It does not filter canonical
+PostgreSQL always stores changed trade, entry, outcome and price evidence. Migration 056 then uses a
+producer-independent expensive-work checkpoint for `evidence-v1`: unseeded/unqualified wallets are
+deferred until their 90-day evidence has the upper-bound prerequisites for eight profitability and
+eight distinct mature followability samples. Deferred queue revisions are acknowledged, not
+deleted; every later producer write re-evaluates the same wallet and transactionally promotes it
+when the prerequisite crosses. Existing FIFO state and latest qualified scores bypass this gate.
+The bounded legacy reconciler uses row locks plus `SKIP LOCKED`; it does not filter canonical
 evidence, change lane priority or weaken score/risk gates.
 
 The optional `wallet-alpha-managed-v2` research path reuses the same canonical entries, trades and

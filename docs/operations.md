@@ -428,7 +428,7 @@ column while retaining the same persisted accounting, price, identity and event-
 General evidence/archive readers still return the complete raw payload. This reduces hot-query wire,
 parse and sort memory without changing canonical storage or granting source-retirement authority.
 
-The staged migration-054 continuation worker is not deployed yet. It uses exact-order keyset pages
+The migration-054 continuation worker uses exact-order keyset pages
 (`WALLET_ALPHA_FIFO_TRADE_PAGE_SIZE=1000`), a separately bounded first-seed/rebuild ceiling
 (`WALLET_ALPHA_MAX_SEED_TRADE_EVENTS_PER_WALLET=20000`), and the existing 10,000-row suffix ceiling.
 After seeding, the ceiling probe applies to the suffix, not the ever-growing historical total.
@@ -444,14 +444,19 @@ Its statement-level transition tables cover the canonical table boundary, coales
 per producer statement and ignore raw/provider-only updates. Do not substitute reader-only rollout:
 without producer-independent revision invalidation, a concurrent or historical correction could be
 missed by the checkpoint CAS.
-Live price enrichment therefore applies admission at its already-changed wallet scope, not in the
-ordered claim. It passes `WALLET_ALPHA_MIN_TRADE_EVENTS`, `WALLET_ALPHA_MIN_ENTRIES` and
-`WALLET_ALPHA_WINDOW_DAYS` explicitly. The two probes stop at their small configured limits on the
-existing strategy/wallet/time indexes. Sub-threshold price evidence remains durable but creates no
-second work revision. Trade and entry writes stay unconditional, so a threshold crossing or later
-entry requeues the wallet even under concurrent ingestion. Do not clean evidence or lower admission
-thresholds to reduce backlog. Operational acceptance is a negative producer slope plus unchanged
-evidence insert/enrichment counts, not merely a temporarily empty queue.
+Migration 056 moves production expensive-work admission to the database boundary shared by every
+producer image. Canonical trades, entries, outcomes and price provenance still persist
+unconditionally. For `evidence-v1`, an unseeded/unqualified wallet is durably deferred until the
+90-day upper bound can supply both eight profitability samples and eight distinct mature
+followability samples. `deferred` is not rejection: its exact queue revision is acknowledged and a
+later producer event re-evaluates and promotes it in the same transaction. Already-seeded and latest
+qualified wallets always refresh. `reconcile_wallet_alpha_admission_batch` walks legacy unchecked
+rows with row locks, `SKIP LOCKED` and a 5,000-row hard ceiling; production defaults to 500 per
+worker cycle. Never replace it with one unbounded update. The worker also requires
+`WALLET_ALPHA_MIN_WORK_ITEM_BUDGET_SECONDS` remaining before a claim, preventing a tail-of-cycle
+lease from becoming a false timeout. Do not clean evidence or lower score/risk gates to reduce
+backlog. Acceptance is bounded ready work, automatic future promotion, unchanged canonical ingest
+and bounded reconciliation WAL/temp—not merely a temporarily empty number.
 Migrations 043 and 048 add three scheduling lanes without adding another process or duplicating
 queue rows. Priority 2 is restricted to a controlled-flow, critical-risk-passed entry whose latest
 persisted wallet status is `watch`, `candidate` or `validated-paper`. Risk-passed entries from

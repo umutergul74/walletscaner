@@ -85,6 +85,8 @@ export interface WalletAlphaReportOptions {
   maximumRunSeconds?: number;
   minimumTradeEvents?: number;
   minimumEntries?: number;
+  admissionCheckpointBatchSize?: number;
+  minimumWorkItemBudgetSeconds?: number;
   minimumWorkPriority?: WalletAlphaWorkPriority;
   maximumWorkPriority?: WalletAlphaWorkPriority;
   onSignalRelevantWalletProcessed?: (
@@ -101,6 +103,9 @@ export interface WalletAlphaQueueResult {
   oversizedWallets: number;
   signalRelevantWallets: number;
   signalRefreshFailures: number;
+  admissionCheckpointExamined: number;
+  admissionCheckpointDeferred: number;
+  admissionCheckpointReady: number;
   minimumObservedAt: string;
 }
 
@@ -242,6 +247,18 @@ export async function processWalletAlphaQueue(
   const maximumRunSeconds = boundedInt(options.maximumRunSeconds, 240, 30, 3_300);
   const minimumTradeEvents = boundedInt(options.minimumTradeEvents, 1, 1, 100);
   const minimumEntries = boundedInt(options.minimumEntries, 1, 1, 100);
+  const admissionCheckpointBatchSize = boundedInt(
+    options.admissionCheckpointBatchSize,
+    0,
+    0,
+    5_000
+  );
+  const minimumWorkItemBudgetSeconds = boundedInt(
+    options.minimumWorkItemBudgetSeconds,
+    15,
+    1,
+    300
+  );
   const minimumWorkPriority = options.minimumWorkPriority ?? 0;
   const maximumWorkPriority = options.maximumWorkPriority ?? 2;
   if (minimumWorkPriority > maximumWorkPriority) {
@@ -254,8 +271,25 @@ export async function processWalletAlphaQueue(
   let oversizedWallets = 0;
   let signalRelevantWallets = 0;
   let signalRefreshFailures = 0;
+  let admissionCheckpointExamined = 0;
+  let admissionCheckpointDeferred = 0;
+  let admissionCheckpointReady = 0;
   const maximumWorkItems = workBatchSize * maxWorkBatches;
   const admissionCache = new Map<string, { tradeEventCount: number; entryCount: number }>();
+  if (admissionCheckpointBatchSize > 0) {
+    const reconciled = await repository.reconcileWalletAlphaAdmission(
+      strategyVersion,
+      admissionCheckpointBatchSize
+    );
+    admissionCheckpointExamined = reconciled.examined;
+    admissionCheckpointDeferred = reconciled.deferred;
+    admissionCheckpointReady = reconciled.retainedReady;
+    progress("wallet-admission-checkpoint", {
+      examinedWallets: reconciled.examined,
+      deferredWallets: reconciled.deferred,
+      readyWallets: reconciled.retainedReady
+    });
+  }
   try {
     const candidates = await repository.listWalletAlphaWorkCandidates(
       strategyVersion,
@@ -298,13 +332,16 @@ export async function processWalletAlphaQueue(
   }
 
   for (let workIndex = 0; workIndex < maximumWorkItems; workIndex += 1) {
-    if (Date.now() - startedAt >= maximumRunSeconds * 1_000) {
+    const remainingRunMs = startedAt + maximumRunSeconds * 1_000 - Date.now();
+    if (remainingRunMs < minimumWorkItemBudgetSeconds * 1_000) {
       progress("wallet-run-time-limit", {
         processedWallets,
         skippedLowEvidenceWallets,
         failedWallets,
         oversizedWallets,
-        maximumRunSeconds
+        maximumRunSeconds,
+        remainingRunSeconds: Math.max(0, Math.floor(remainingRunMs / 1_000)),
+        minimumWorkItemBudgetSeconds
       });
       break;
     }
@@ -564,6 +601,9 @@ export async function processWalletAlphaQueue(
     oversizedWallets,
     signalRelevantWallets,
     signalRefreshFailures,
+    admissionCheckpointExamined,
+    admissionCheckpointDeferred,
+    admissionCheckpointReady,
     minimumObservedAt
   };
 }

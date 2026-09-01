@@ -63,6 +63,7 @@ import type {
   SolanaFinalityWorkItem,
   TokenRiskReport,
   WalletAlphaCoverageSummary,
+  WalletAlphaAdmissionCheckpointResult,
   WalletAlphaAdmissionProbe,
   WalletAlphaQueueAdmission,
   WalletAlphaEvidenceBounds,
@@ -942,6 +943,16 @@ export class MemoryRepository
         ).length
       )
     }));
+  }
+
+  async reconcileWalletAlphaAdmission(
+    _strategyVersion: string,
+    _limit = 500
+  ): Promise<WalletAlphaAdmissionCheckpointResult> {
+    // The production admission checkpoint is enforced by a PostgreSQL function shared by all
+    // independently deployed producers. Unit repositories do not emulate database triggers;
+    // dedicated PostgreSQL integration tests cover promotion and revision-safe deferral.
+    return { examined: 0, deferred: 0, retainedReady: 0 };
   }
 
   async completeWalletAlphaWorkCandidates(
