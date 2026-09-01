@@ -621,6 +621,9 @@ const discoveryProgramSources = programs.map((program) => ({
     durableSignatureMaxAttempts: Number(
       process.env.SOLANA_DISCOVERY_DURABLE_MAX_ATTEMPTS ?? 6
     ),
+    durableSignatureReplayIntervalMs: Number(
+      process.env.SOLANA_DISCOVERY_DURABLE_REPLAY_INTERVAL_MS ?? 1_000
+    ),
     providerLatencyWarningMs: Number(process.env.SOLANA_PROVIDER_LATENCY_WARNING_MS ?? 30_000),
     subscriptionAckTimeoutMs: Number(
       process.env.SOLANA_DISCOVERY_SUBSCRIPTION_ACK_TIMEOUT_MS ?? 15_000

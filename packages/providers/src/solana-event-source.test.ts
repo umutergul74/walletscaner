@@ -2469,6 +2469,7 @@ describe("StandardSolanaEventSource", () => {
       allowConcurrentLiveSignaturesPerAddress: true,
       maxConcurrentTransactionFetches: 2,
       maxQueuedSignatures: 2,
+      durableSignatureReplayIntervalMs: 1,
       fetchImpl: async (_input, init) => {
         const request = JSON.parse(String(init?.body)) as { method: string };
         if (request.method === "getTransaction") await transactionGate;
@@ -2569,6 +2570,86 @@ describe("StandardSolanaEventSource", () => {
     await source.stop();
   });
 
+  it("prioritizes fresh durable admissions while pacing restart replay to one worker", async () => {
+    const cursorStore = new MemoryCursorStore();
+    const liveSignatureStore = new MemoryLiveSignatureStore();
+    for (const [signature, slot] of [
+      ["old-replay-1", 1],
+      ["old-replay-2", 2]
+    ] as const) {
+      await liveSignatureStore.admitSolanaSignature({
+        provider: "solana-rpc",
+        address: "ProgramPriority111",
+        signature,
+        slot,
+        notifiedAt: "2026-08-23T00:00:00.000Z"
+      });
+    }
+    const socket = new FakeSocket();
+    let releaseOld: (() => void) | undefined;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    const accepted: string[] = [];
+    const source = new StandardSolanaEventSource({
+      rpcUrl: "https://rpc.example",
+      wsUrl: "wss://rpc.example",
+      addresses: ["ProgramPriority111"],
+      cursorStore,
+      liveSignatureStore,
+      allowConcurrentLiveSignaturesPerAddress: true,
+      maxConcurrentTransactionFetches: 2,
+      maxQueuedSignatures: 2,
+      durableSignatureReplayIntervalMs: 1,
+      fetchImpl: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+        const signature = String(request.params[0] ?? "");
+        if (request.method === "getTransaction" && signature.startsWith("old-replay")) {
+          await oldGate;
+        }
+        const result =
+          request.method === "getSignaturesForAddress"
+            ? []
+            : {
+                blockTime: 1_700_000_000,
+                transaction: { message: { instructions: [] } },
+                meta: {}
+              };
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      },
+      webSocketFactory: () => socket
+    });
+
+    await source.start((event) => {
+      accepted.push(event.signature);
+    });
+    await waitUntil(() => source.getDiagnostics().activeDurableReplayWorkerCount === 1);
+    socket.open();
+    socket.message({ id: 1, result: 99 });
+    socket.message(standardLogNotification(99, "fresh-priority", 100));
+    await waitUntil(() => accepted.includes("fresh-priority"));
+
+    expect(accepted).toEqual(["fresh-priority"]);
+    expect(source.getDiagnostics()).toMatchObject({
+      activeDurableReplayWorkerCount: 1,
+      durableReplayIntervalMs: 1,
+      droppedSignatureCount: 0
+    });
+    releaseOld?.();
+    await waitUntil(() => accepted.length === 3);
+    expect(new Set(accepted)).toEqual(
+      new Set(["fresh-priority", "old-replay-1", "old-replay-2"])
+    );
+    expect(source.getDiagnostics()).toMatchObject({
+      liveEventCount: 1,
+      activeDurableReplayWorkerCount: 0
+    });
+    await source.stop();
+  });
+
   it("uses one bounded archival fallback after the primary RPC cannot resolve a signature", async () => {
     const liveSignatureStore = new MemoryLiveSignatureStore();
     await liveSignatureStore.admitSolanaSignature({
@@ -2650,6 +2731,7 @@ describe("StandardSolanaEventSource", () => {
       cursorStore: new MemoryCursorStore(),
       liveSignatureStore,
       maxConcurrentTransactionFetches: 1,
+      durableSignatureReplayIntervalMs: 1,
       durableSignatureRetryBaseDelayMs: 60_000,
       durableSignatureRetryMaxDelayMs: 60_000,
       durableSignatureMaxAttempts: 3,

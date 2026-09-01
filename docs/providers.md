@@ -164,6 +164,13 @@ an exact postfetch filter; unavailable rows persist attempts and backoff instead
 therefore permits bounded fetch concurrency without turning an in-memory crash, provider archive
 limit or retry storm into a hidden drop.
 
+Fresh durable admissions and restart replay use separate in-memory lanes. Fresh WebSocket rows are
+selected first; historical replay is limited to one worker per program and starts no faster than
+`SOLANA_DISCOVERY_DURABLE_REPLAY_INTERVAL_MS` (1,000 ms by default). A full bounded memory queue may
+evict a replay row only from memory to admit fresh work; PostgreSQL remains authoritative and reloads
+that replay row later. Diagnostics expose replay queue depth, replay workers and the configured
+interval so old recovery cannot be reported as current live latency.
+
 `getSignaturesForAddress` pagination cannot prove unbounded history. With no existing cursor, the
 first bounded page is an activation sample only; operators must not describe it as reconstructed
 pre-activation coverage. With a cursor, an unresolved transaction, missing block time or detected

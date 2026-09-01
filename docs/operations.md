@@ -756,6 +756,13 @@ fallback (`SOLANA_DISCOVERY_TRANSACTION_FALLBACK_INTERVAL_MS=250`). A failed cyc
 unacknowledged. Six failed cycles produce retained signature dead-letter evidence and an
 `unresolved_transaction` coverage incident. Never clear that row to improve the queue number;
 repair the exact transaction/coverage evidence or keep the affected interval alpha-excluded.
+Restart/catch-up rows use a separate paced replay lane: at most one replay worker per discovery
+program starts per `SOLANA_DISCOVERY_DURABLE_REPLAY_INTERVAL_MS` (1,000 ms by default), while newly
+admitted WebSocket signatures take the fresh lane. If the bounded in-memory queue is full, a fresh
+row may evict one replay row only from memory; the replay row remains pending in PostgreSQL and is
+reloaded later. Health reports fresh/replay queue and active replay-worker counts. This prevents a
+historical recovery cohort from hiding current transport latency or producing canonical inbox work
+faster than the ordered parser can consume it.
 
 A signature-cap breach is terminal for that bounded repair, not permission to raise the cap until
 the database fills. After two independently fresh current-transport samples, the supervisor closes

@@ -276,6 +276,9 @@ export interface SolanaEventSourceDiagnostics {
   durableSignatureDeadLetterCount?: number;
   durableSignatureLastRetryAt?: string | null;
   durableSignatureLastDeadLetterAt?: string | null;
+  durableReplayQueuedSignatureCount?: number;
+  activeDurableReplayWorkerCount?: number;
+  durableReplayIntervalMs?: number;
   transactionFallbackRequestCount?: number;
   transactionFallbackRecoveredCount?: number;
   transactionFallbackErrorCount?: number;
@@ -381,6 +384,8 @@ export interface StandardSolanaEventSourceOptions {
   durableSignatureRetryBaseDelayMs?: number;
   durableSignatureRetryMaxDelayMs?: number;
   durableSignatureMaxAttempts?: number;
+  /** Pace restart/catch-up rows without delaying newly admitted WebSocket work. */
+  durableSignatureReplayIntervalMs?: number;
   providerLatencyWarningMs?: number;
   subscriptionAckTimeoutMs?: number;
   heartbeatIntervalMs?: number;
@@ -469,6 +474,7 @@ interface QueuedLiveSignature {
   slot: number;
   notifiedAtMs: number;
   attemptCount?: number;
+  durableReplay?: boolean;
 }
 
 type SignatureOrigin = "live" | "backfill";
@@ -501,6 +507,7 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private readonly durableSignatureRetryBaseDelayMs: number;
   private readonly durableSignatureRetryMaxDelayMs: number;
   private readonly durableSignatureMaxAttempts: number;
+  private readonly durableSignatureReplayIntervalMs: number;
   private readonly providerLatencyWarningMs: number;
   private readonly subscriptionAckTimeoutMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -560,6 +567,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
   private transactionFallbackRequestGate: Promise<void> = Promise.resolve();
   private lastTransactionFallbackRequestAtMs = 0;
   private activeTransactionWorkers = 0;
+  private activeDurableReplayWorkers = 0;
+  private lastDurableReplayStartedAtMs = 0;
   private stopped = true;
   private handler: ((event: SolanaChainEvent) => Promise<void> | void) | null = null;
   private diagnostics: SolanaEventSourceDiagnostics;
@@ -637,6 +646,10 @@ export class StandardSolanaEventSource implements SolanaEventSource {
     this.durableSignatureMaxAttempts = positiveInteger(
       options.durableSignatureMaxAttempts ?? 6,
       "durableSignatureMaxAttempts"
+    );
+    this.durableSignatureReplayIntervalMs = positiveInteger(
+      options.durableSignatureReplayIntervalMs ?? 1_000,
+      "durableSignatureReplayIntervalMs"
     );
     this.providerLatencyWarningMs = positiveInteger(
       options.providerLatencyWarningMs ?? 30_000,
@@ -1323,7 +1336,12 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       seenSignatureLimit: this.seenSignatureLimit,
       inFlightSignatureCount: this.inFlightSignatures.size,
       queuedSignatureCount: this.liveSignatureQueue.length,
+      durableReplayQueuedSignatureCount: this.liveSignatureQueue.filter(
+        (item) => item.durableReplay
+      ).length,
       activeTransactionWorkerCount: this.activeTransactionWorkers,
+      activeDurableReplayWorkerCount: this.activeDurableReplayWorkers,
+      durableReplayIntervalMs: this.durableSignatureReplayIntervalMs,
       maxConcurrentTransactionFetches: this.maxConcurrentTransactionFetches,
       maxQueuedSignatures: this.maxQueuedSignatures,
       maximumLiveQueueDelayMs: this.maximumLiveQueueDelayMs,
@@ -1608,11 +1626,45 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         this.notifyQueuePressure(address, "full");
         return;
       }
+      // Admission and a concurrent durable refill may interleave at the
+      // database await. Re-check the in-memory ownership before adding a
+      // fresh-lane copy of the same durable row.
+      if (
+        this.seenSignatures.has(signature) ||
+        this.inFlightSignatures.has(signature) ||
+        this.queuedSignatures.has(signature)
+      ) {
+        this.diagnostics.duplicateSignatureCount += 1;
+        return;
+      }
       if (this.liveSignatureQueue.length >= this.maxQueuedSignatures) {
+        let replayIndex = -1;
+        for (let index = this.liveSignatureQueue.length - 1; index >= 0; index -= 1) {
+          if (this.liveSignatureQueue[index]?.durableReplay) {
+            replayIndex = index;
+            break;
+          }
+        }
+        if (replayIndex >= 0) {
+          const [evicted] = this.liveSignatureQueue.splice(replayIndex, 1);
+          if (evicted) this.queuedSignatures.delete(evicted.signature);
+        }
+      }
+      if (this.liveSignatureQueue.length < this.maxQueuedSignatures) {
+        this.queuedSignatures.add(signature);
+        this.liveSignatureQueue.push({ address, signature, slot, notifiedAtMs });
+        this.scheduleStaleQueueCheck(address);
+        this.diagnostics.queueHighWatermark = Math.max(
+          this.diagnostics.queueHighWatermark ?? 0,
+          this.liveSignatureQueue.length
+        );
+        this.drainLiveSignatureQueue(onEvent);
+      } else {
+        // The PostgreSQL row is the durable overflow lane. It will be reloaded
+        // after capacity returns; no notification is dropped or acknowledged.
         this.diagnostics.durablyDeferredSignatureCount =
           (this.diagnostics.durablyDeferredSignatureCount ?? 0) + 1;
       }
-      await this.refillDurableSignatureQueue(address, onEvent);
       return;
     }
     if (this.liveSignatureQueue.length >= this.maxQueuedSignatures) {
@@ -1677,7 +1729,8 @@ export class StandardSolanaEventSource implements SolanaEventSource {
           signature: item.signature,
           slot: item.slot,
           notifiedAtMs: Date.parse(item.notifiedAt),
-          attemptCount: item.attemptCount ?? 0
+          attemptCount: item.attemptCount ?? 0,
+          durableReplay: true
         });
         this.scheduleStaleQueueCheck(item.address);
         loaded += 1;
@@ -1814,11 +1867,18 @@ export class StandardSolanaEventSource implements SolanaEventSource {
       this.activeTransactionWorkers < this.maxConcurrentTransactionFetches &&
       this.liveSignatureQueue.length > 0
     ) {
-      const nextIndex = this.liveSignatureQueue.findIndex(
+      const eligible = (candidate: QueuedLiveSignature) =>
+        this.allowConcurrentLiveSignaturesPerAddress ||
+        !this.activeTransactionAddresses.has(candidate.address);
+      let nextIndex = this.liveSignatureQueue.findIndex(
         (candidate) =>
-          this.allowConcurrentLiveSignaturesPerAddress ||
-          !this.activeTransactionAddresses.has(candidate.address)
+          !candidate.durableReplay && eligible(candidate)
       );
+      if (nextIndex < 0 && this.activeDurableReplayWorkers === 0) {
+        nextIndex = this.liveSignatureQueue.findIndex(
+          (candidate) => Boolean(candidate.durableReplay) && eligible(candidate)
+        );
+      }
       if (nextIndex < 0) return;
       const [next] = this.liveSignatureQueue.splice(nextIndex, 1);
       if (!next) return;
@@ -1833,18 +1893,21 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         this.activeTransactionAddresses.add(next.address);
       }
       this.activeTransactionWorkers += 1;
-      const process = () =>
-        this.addressLogIncludes.has(next.address)
+      if (next.durableReplay) this.activeDurableReplayWorkers += 1;
+      const process = async () => {
+        if (next.durableReplay) await this.waitForDurableReplaySlot();
+        return this.addressLogIncludes.has(next.address)
           ? this.options.liveSignatureStore
             ? this.processSignatureUnlocked(next.address, next.signature, next.slot, onEvent, {
-                origin: "live",
-                notifiedAtMs: next.notifiedAtMs
+                origin: next.durableReplay ? "backfill" : "live",
+                ...(next.durableReplay ? {} : { notifiedAtMs: next.notifiedAtMs })
               })
             : this.processSignatureUntilResolved(next.address, next.signature, next.slot, onEvent, {
-                origin: "live",
-                notifiedAtMs: next.notifiedAtMs
+                origin: next.durableReplay ? "backfill" : "live",
+                ...(next.durableReplay ? {} : { notifiedAtMs: next.notifiedAtMs })
               })
-          : Promise.resolve(false);
+          : false;
+      };
       const running = this.allowConcurrentLiveSignaturesPerAddress
         ? process()
         : this.runAddressTask(next.address, process);
@@ -1864,12 +1927,23 @@ export class StandardSolanaEventSource implements SolanaEventSource {
         .finally(async () => {
           this.activeTransactionAddresses.delete(next.address);
           this.activeTransactionWorkers -= 1;
+          if (next.durableReplay) this.activeDurableReplayWorkers -= 1;
           if (refillImmediately) {
             await this.refillDurableSignatureQueue(next.address, onEvent);
           }
           this.drainLiveSignatureQueue(onEvent);
         });
     }
+  }
+
+  private async waitForDurableReplaySlot(): Promise<void> {
+    const waitMs = Math.max(
+      0,
+      this.lastDurableReplayStartedAtMs + this.durableSignatureReplayIntervalMs -
+        this.now().getTime()
+    );
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    this.lastDurableReplayStartedAtMs = this.now().getTime();
   }
 
   private async processSignatureUntilResolved(

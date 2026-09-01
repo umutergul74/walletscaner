@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-09-01T10:00:00Z
+updated_at_utc: 2026-09-01T12:19:00Z
 owner: codex
 task: R53 end-to-end queue, FIFO and maintenance recovery
-last_safe_checkpoint: R53 commit/image verified; production release ledger revision 1 planned; no service/schema mutation
+last_safe_checkpoint: R53 ingestion identity safe but capacity canary rejected; ledger revision 11 remains in progress while R53.1 is built
 ---
 
 # Active R53 objective and exclusions
@@ -104,10 +104,12 @@ every source commit, populated-data proof and production mutation.
 
 # Active R53 next exact action
 
-Run the complete local and populated PostgreSQL gates, document the new durable signature state,
-then build an immutable Linux worker artifact. Before any server mutation, refresh backup/headroom,
-write the revision-checked R53 release ledger and prove the exact migration/image rollback path. No
-production mutation is currently in progress.
+Release-ledger revision 11 remains `rollout-ingestion/in_progress`, but the R53 capacity canary is
+rejected. Implement and test an R53.1 two-lane live/durable replay queue: direct-priority fresh
+durable admissions, at most one paced replay worker per program, and safe in-memory replay eviction
+when fresh work needs capacity. Preserve every durable database row. Build an immutable copy-only or
+full off-host image, then update the in-progress ledger with the exact artifact and replace only
+ingestion. Do not deploy wallet-alpha/operations while this gate is unresolved.
 
 # Active R53 completed checkpoints
 
@@ -141,6 +143,39 @@ production mutation is currently in progress.
   Server dump `memecoin_alpha_20260831T173517Z.dump` remains. Production R53 ledger revision 1 is
   `artifact-transfer/planned`; no artifact upload, migration, environment or service mutation has
   occurred yet.
+- The R53 artifact was uploaded through a `.partial`, verified by SHA-256/zstd, atomically renamed,
+  loaded, and rechecked as exact image
+  `sha256:5845c8871753022f0374d9973cbdf9e47ab7488e8df84c92ded11ddd38ed9578`.
+  Release-ledger artifact transfer is completed. Migration 057 then ran once through that exact
+  image and exited zero at 2026-09-01 10:07 UTC. Independent production inspection found checksum
+  `01fb1381027e7d539af5ebd324484672a7a1c0d24eb740495259ae1173a9222c`, all four additive columns,
+  the pending-due/dead-letter partial indexes and the v2 status/terminal constraints. No service was
+  stopped or recreated; selected image keys remain R46/R48/R52.1. At 12:11 UTC root free space was
+  10,839,805,952 bytes and available RAM about 1.00 GB. The signature queue had about 38.4k pending,
+  all immediately due with attempt count zero because the old R46 runtime does not consume the new
+  retry state. The next mutation is the ingestion-only R53 canary, not another migration run.
+- Release-ledger revision 9 completed the hash-locked ingestion environment update. Local/server
+  updater SHA-256 is
+  `5cc7456847993197d3b291e29799c9936101134850f564e8d2570081b2ee359b`; the exact old R46 value and
+  pre-state env hash were required. Rendered Compose now selects R53 for ingestion with 0.20 CPU,
+  160 MiB and live execution false. The old R46 ingestion container remains running at this
+  checkpoint, so no runtime behavior changed yet. The pre-canary hash of all non-ingestion
+  Walletscaner container IDs is `f15bdbfd9b2813ec9dda9d1a2fdb58034fe40b583511698e0dc69eff1541d127`;
+  protected co-tenant inventory is empty.
+- Only `solana-ingestion` was recreated with `--no-build --no-deps`. New container
+  `fd59837346fc...` runs exact R53 image ID `sha256:5845c887...9578`, live=false, restart zero and
+  OOM false. The non-ingestion service-ID hash stayed exactly `f15bdbfd...d127` and protected
+  co-tenant inventory stayed empty. Release ledger revision 11 deliberately remains
+  `rollout-ingestion/in_progress` until queue/coverage/resource canary samples pass.
+- The first R53 heartbeat rejected capacity acceptance. Pump durable recovery completed roughly
+  4.5-5 signatures/second while canonical same-partition processing completed about 1-1.5
+  events/second: signature pending fell `38,330 -> 38,115`, but canonical inbox pending rose
+  `355 -> 589` in 48 seconds. The source loaded 500 old Pump rows into the same live queue, ran four
+  workers and reported about 24-hour notification/queue delay; fresh WebSocket admissions could sit
+  behind historical replay. RSS remained about 79 MiB, restart/OOM stayed zero and no signature
+  dead-letter appeared, so this is a bounded scheduling/backpressure fault rather than data loss.
+  R53 remains running only while the smallest tested R53.1 scheduling fix is prepared; no alpha or
+  operations service rollout is authorized by this failed canary.
 
 # Completed R52 history
 
