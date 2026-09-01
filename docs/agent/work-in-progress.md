@@ -1,9 +1,9 @@
 ---
 status: active
-updated_at_utc: 2026-09-01T12:19:00Z
+updated_at_utc: 2026-09-01T12:32:00Z
 owner: codex
 task: R53 end-to-end queue, FIFO and maintenance recovery
-last_safe_checkpoint: R53 ingestion identity safe but capacity canary rejected; ledger revision 11 remains in progress while R53.1 is built
+last_safe_checkpoint: R53 capacity canary rejected; committed/tested R53.1 image and transfer artifact are ready off-host
 ---
 
 # Active R53 objective and exclusions
@@ -104,12 +104,12 @@ every source commit, populated-data proof and production mutation.
 
 # Active R53 next exact action
 
-Release-ledger revision 11 remains `rollout-ingestion/in_progress`, but the R53 capacity canary is
-rejected. Implement and test an R53.1 two-lane live/durable replay queue: direct-priority fresh
-durable admissions, at most one paced replay worker per program, and safe in-memory replay eviction
-when fresh work needs capacity. Preserve every durable database row. Build an immutable copy-only or
-full off-host image, then update the in-progress ledger with the exact artifact and replace only
-ingestion. Do not deploy wallet-alpha/operations while this gate is unresolved.
+Mark release-ledger revision 11 `rollout-ingestion/in_progress` failed with the measured inbox
+growth, then stage/upload R53.1 artifact SHA
+`eb0aa98d3776c5de70e6ed884d58f9ff5e69a0049ce9fddd1996792aa2c58223` through `.partial`, verify,
+atomically rename and load it. Update only the existing ingestion image key from R53 to R53.1 and
+recreate only ingestion. Do not rerun migration 057 or deploy wallet-alpha/operations while the new
+canary is unresolved.
 
 # Active R53 completed checkpoints
 
@@ -176,6 +176,14 @@ ingestion. Do not deploy wallet-alpha/operations while this gate is unresolved.
   dead-letter appeared, so this is a bounded scheduling/backpressure fault rather than data loss.
   R53 remains running only while the smallest tested R53.1 scheduling fix is prepared; no alpha or
   operations service rollout is authorized by this failed canary.
+- R53.1 implementation commit is `cd0eeeeace26cfbb75219d65f263007aaee411c5`. Local and exact Linux
+  image tests pass 57/57; typecheck, lint and workspace production build pass. The network-disabled
+  copy-only image is `walletscaner-worker:queue-recovery-r53-1-20260901`, exact ID
+  `sha256:fe1439cf2fd8654e398a50ea771c0aef302a6752ff1725becea18bd3ee1ad116`, based on exact R53
+  `sha256:5845c887...9578`. The 463,813,090-byte zstd transfer artifact has SHA-256
+  `eb0aa98d3776c5de70e6ed884d58f9ff5e69a0049ce9fddd1996792aa2c58223`. At 12:28 UTC the still-running
+  rejected R53 had drained signature pending to 34,413 but grown canonical inbox pending to 4,404;
+  disk free was 10,077,478,912 bytes. Upload/recreate should proceed without another full build.
 
 # Completed R52 history
 
