@@ -3,6 +3,42 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-09-01 07:39 UTC R52.1 admission checkpoint operational
+
+- Migration 056 is operational with checksum
+  `7581249d86fb12cfdcf068148928f0de55083ff48c3483a74368164d68a6e551`. The database now admits
+  `evidence-v1` wallet-alpha work only when an immutable upper bound can still meet the current watch
+  sample gate, or when a prior FIFO/qualified state requires continuation. Deferred rows acknowledge
+  only their exact queue revision; no trade, entry, outcome, score or source revision was deleted.
+  Every future producer statement re-evaluates the wallet and promotes it automatically when enough
+  mature evidence exists.
+- The old worker had 40,960 pending wallets / 75,336 unresolved revisions and received 6,567
+  revisions in one hour while draining too slowly. Restart-safe 500-row transactions classified the
+  historical cohort without stopping ingestion. The first completed snapshot had 41,178 deferred,
+  157 ready and zero unchecked pending. Final acceptance had only three pending rows, all three
+  pre-existing fail-closed evidence-limit/probe rows; signal pending and unchecked pending were zero.
+- Exact R52.1 wallet-alpha image
+  `sha256:3666f0c616ada4894cc6b24fd03c867577f2a92c9e68704b57ebb985996aea70`
+  runs as container `0baf5d420db1...`, restart 0, OOM false, live execution false, 160 MiB / 0.10 CPU.
+  It is a network-free copy-only patch over exact R52 `sha256:fc8180...06b1`; R43 remains loaded as
+  rollback. Only wallet-alpha was stopped/recreated. The other eleven service-ID hash remained
+  `12bf221a...d266`; canonical Solana ingestion never stopped.
+- Production acceptance reversed the queue slope: R52 reduced pending 161 -> 100 in the first six
+  minutes; R52.1 then reduced 26 -> 8 over eight samples and ultimately to three. An actual producer
+  CAS race emitted `wallet-superseded`; its cycle processed 23 wallets with zero failures and one
+  superseded revision, leaving the new revision pending rather than writing a false `last_error`.
+  RSS stayed 48-67 MiB and CPU was normally below 3%, with one expected sample at the 10% container
+  ceiling. Final wallet trade age was 37 seconds, open coverage incidents zero, database
+  24,404,425,751 bytes and root free space 11,961,954,304 bytes.
+- Current server dump `memecoin_alpha_20260831T173517Z.dump` passed exact SHA-256 and PostgreSQL 16
+  restore-list verification; the 29-Aug off-host-verified generation remains. Transfer artifacts
+  were removed after image verification, reclaiming about 454 MiB; R52.1, R52 and R43 images remain.
+- Implementation commits are `93f3b2e` and `b1180c5`. Platform-composite full coverage accounts for
+  all 554 tests (Windows 548/554 with only missing-zstd failures; Linux archive subset 9/9), plus
+  PostgreSQL integration 42/42, typecheck, lint, production build and bounded benchmarks. The R52.1
+  delta passed typecheck, lint and 12/12 targeted tests. Release ledger
+  `reports/deploy/wallet-alpha-r52-admission-20260901.json` revision 15 is completed.
+
 ## 2026-08-31 23:03 UTC R51 FIFO rollout rejected and rolled back
 
 - Production migrations052-055 are operational. Checksums match source, wallet-trade relfilenode

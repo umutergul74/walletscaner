@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-09-01T07:27:00Z
+status: complete
+updated_at_utc: 2026-09-01T07:39:00Z
 owner: codex
 task: R52 wallet-alpha admission checkpoint and queue equilibrium
-last_safe_checkpoint: read-only diagnosis complete; no mutation or service stop is in progress
+last_safe_checkpoint: R52.1 operational; release ledger revision 15 complete; no mutation in progress
 ---
 
 # Objective and exclusions
@@ -79,11 +79,9 @@ Update this file immediately after every externally visible checkpoint.
 
 # Next exact action
 
-R52 is running and the queue slope is negative, but acceptance found that expected FIFO revision
-CAS races are counted as transient failures. Implement and test the smallest R52.1 worker-only fix:
-acknowledge only the superseded claimed revision, release its lease and keep the newer revision
-pending without `last_error`. Rebuild and rebind only wallet-alpha; do not rerun migration or
-reconciliation.
+No rollout action remains. Leave the system collecting evidence and measure future queue/error/
+storage slopes from fresh production state. Do not rerun migration, reconciliation or cleanup. A
+future alpha-threshold or live-execution change is a separate research/security task.
 
 # Local implementation checkpoint, 2026-08-31 23:32 UTC
 
@@ -195,3 +193,32 @@ reconciliation.
   revision was superseded by new evidence, but the generic catch path wrote `last_error` and a
   five-minute retry. Treating this normal concurrency path as failure makes telemetry dishonest and
   delays a wallet unnecessarily. Rollout ledger remains revision 11 / `rollout/in_progress`.
+
+# R52.1 artifact checkpoint, 2026-09-01 07:32 UTC
+
+- Hotfix commit `b1180c5`; typecheck, lint, 12/12 targeted tests and bounded benchmark passed.
+  Benchmark: 471.68 ms, 31.33 MiB heap, 116.48 MiB RSS.
+- Copy-only context is 45,056 bytes, SHA-256
+  `64d7f7b09be5976c8c98af5c3cf5a7cbf07a2cdc38b6b57d3a263d21eb00580c`. It contains only the
+  Dockerfile and `wallet-alpha-report-builder.ts`; remote SHA matched and build used `--network=none`.
+- Production image `walletscaner-worker:wallet-alpha-admission-r52-1-20260901` is
+  `sha256:3666f0c616ada4894cc6b24fd03c867577f2a92c9e68704b57ebb985996aea70`, size 464,376,316 bytes.
+  Its base label is exact R52 `sha256:fc8180...06b1` and patch label is `b1180c5`. R52 still runs;
+  the new image has not yet been bound to a service.
+
+# Completion checkpoint, 2026-09-01 07:39 UTC
+
+- R52.1 is operational as container `0baf5d420db1...`, exact image
+  `sha256:3666f0c616ada4894cc6b24fd03c867577f2a92c9e68704b57ebb985996aea70`, restart 0, OOM false and
+  live execution false. All other Walletscaner service IDs remained unchanged; ingestion never
+  stopped and open discovery coverage incidents are zero.
+- The acceptance cycle processed 23 wallets with zero failures and one actual superseded revision.
+  The superseded revision emitted `wallet-superseded`, kept newer work pending and did not increase
+  `last_error`. Final queue is three pending / three pre-existing fail-closed errors / zero signal /
+  zero unchecked; final wallet trade age is 37 seconds.
+- Root free space is 11,961,954,304 bytes after deleting only the exact generated transfer/context
+  artifacts. R52.1, R52 and R43 images remain for runtime/base/rollback. No canonical evidence,
+  backup or B2 object was removed.
+- Implementation commits: `93f3b2e` and `b1180c5`. Release ledger
+  `reports/deploy/wallet-alpha-r52-admission-20260901.json` is revision 15 / cleanup completed, SHA-256
+  `968ad3297c8e6eb447a1ca543bf3e7b7725d37b12707928069fd836775f9d1e2`.
