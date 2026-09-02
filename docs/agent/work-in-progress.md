@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T20:42:00Z
+updated_at_utc: 2026-09-02T21:06:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
@@ -131,6 +131,20 @@ new indexes if the plans do not improve. Activate the tested repository code onl
   next operation is the existing resumable 20-Mbps off-host pull of the new dump, independent hash
   and archive-list verification, acknowledgement upload, then fail-closed reconciliation that
   retains the new server dump and removes only the older acknowledged generation.
+- The first off-host pull invocation used bare host `46.101.142.68`; Windows OpenSSH therefore
+  attempted `umut@46.101.142.68` and stalled at authentication while copying only the checksum
+  sidecar. At 20:52 UTC the local target contained no completed or partial dump, the remote 02-Sep
+  acknowledgement was still absent and root availability was 7,538,163,712 bytes. No remote file,
+  marker, database, service or backup was changed by this failed attempt. Terminate only its exact
+  local `pwsh`/`scp` processes, then invoke the same resumable script with
+  `root@46.101.142.68`; do not start a second transfer while either process remains.
+- The incorrect local transfer processes were terminated and the same script was restarted once
+  with `root@46.101.142.68`. Its resumable `.partial` reached 1,674,040,320 bytes (52.5%) at about
+  20.7 Mbit/s by 21:05 UTC. Remote acknowledgement/pruning still has not run. Local Docker Desktop
+  remains unavailable because its Windows AF_UNIX runtime sockets cannot be removed by the backend;
+  two runtime-only directories were moved aside reversibly, but the engine still did not start.
+  No repository, database or production state changed. Do not reset Docker Desktop or move image
+  assembly to the shared host merely to bypass this gate; finish backup verification first.
 
 # Active R53 objective and exclusions
 
