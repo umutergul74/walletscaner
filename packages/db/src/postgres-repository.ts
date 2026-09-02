@@ -1754,6 +1754,11 @@ export class PostgresRepository
              AND trade.strategy_version = $3
              AND (
                $5::bigint IS NULL
+               OR ROW(trade.slot, trade.observed_at) >=
+                  ROW($5::bigint, $6::timestamptz)
+             )
+             AND (
+               $5::bigint IS NULL
                OR ROW(trade.slot, trade.observed_at,
                       trade.signature COLLATE "C", trade.idempotency_key COLLATE "C") >
                   ROW($5::bigint, $6::timestamptz,
@@ -3082,6 +3087,8 @@ export class PostgresRepository
        WHERE chain = $1
          AND wallet_address = $2
          AND strategy_version = $3
+         AND ROW(slot, observed_at) >=
+             ROW($4::bigint, $5::timestamptz)
          AND ROW(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C") >
              ROW($4::bigint, $5::timestamptz, $6::text COLLATE "C", $7::text COLLATE "C")
        ORDER BY slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C"
@@ -3122,6 +3129,11 @@ export class PostgresRepository
        WHERE chain = $1
          AND wallet_address = $2
          AND strategy_version = $3
+         AND (
+           $4::bigint IS NULL
+           OR ROW(slot, observed_at) >=
+              ROW($4::bigint, $5::timestamptz)
+         )
          AND (
            $4::bigint IS NULL
            OR ROW(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C") >
@@ -3894,11 +3906,7 @@ export class PostgresRepository
           SELECT
             event.idempotency_key,
             event.chain,
-            COALESCE(
-              NULLIF(event.partition_key, ''),
-              NULLIF(event.payload->>'address', ''),
-              event.source
-            ) AS partition_key,
+            event.partition_key,
             event.slot,
             event.transaction_index,
             event.instruction_index,
@@ -3911,11 +3919,7 @@ export class PostgresRepository
           WHERE event.status NOT IN ('processed', 'rolled_back')
           ORDER BY
             event.chain,
-            COALESCE(
-              NULLIF(event.partition_key, ''),
-              NULLIF(event.payload->>'address', ''),
-              event.source
-            ),
+            event.partition_key,
             event.slot ASC NULLS LAST,
             event.transaction_index ASC NULLS LAST,
             event.instruction_index ASC NULLS LAST,
@@ -3930,11 +3934,7 @@ export class PostgresRepository
           SELECT
             event.idempotency_key,
             event.chain,
-            COALESCE(
-              NULLIF(event.partition_key, ''),
-              NULLIF(event.payload->>'address', ''),
-              event.source
-            ) AS partition_key,
+            event.partition_key,
             event.slot,
             event.transaction_index,
             event.instruction_index,
@@ -3947,19 +3947,11 @@ export class PostgresRepository
           WHERE event.status NOT IN ('processed', 'rolled_back')
             AND (
               event.chain,
-              COALESCE(
-                NULLIF(event.partition_key, ''),
-                NULLIF(event.payload->>'address', ''),
-                event.source
-              )
+              event.partition_key
             ) > (previous.chain, previous.partition_key)
           ORDER BY
             event.chain,
-            COALESCE(
-              NULLIF(event.partition_key, ''),
-              NULLIF(event.payload->>'address', ''),
-              event.source
-            ),
+            event.partition_key,
             event.slot ASC NULLS LAST,
             event.transaction_index ASC NULLS LAST,
             event.instruction_index ASC NULLS LAST,

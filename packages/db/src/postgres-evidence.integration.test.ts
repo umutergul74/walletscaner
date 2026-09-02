@@ -601,6 +601,39 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
     expect(
       await repository.probeWalletAlphaEvidenceBounds(item!, observedAt, 1, 1, 1, second[0])
     ).toMatchObject({ tradeEventsExceeded: false });
+
+    const planClient = await testPool.connect();
+    try {
+      await planClient.query("BEGIN");
+      await planClient.query("SET LOCAL enable_seqscan = off");
+      const plan = await planClient.query<{ "QUERY PLAN": string }>(
+        `EXPLAIN (COSTS OFF)
+         SELECT idempotency_key
+         FROM wallet_trade_events
+         WHERE chain = 'solana'
+           AND wallet_address = $1
+           AND strategy_version = $2
+           AND ROW(slot, observed_at) >= ROW($3::bigint, $4::timestamptz)
+           AND ROW(slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C") >
+               ROW($3::bigint, $4::timestamptz, $5::text COLLATE "C", $6::text COLLATE "C")
+         ORDER BY slot, observed_at, signature COLLATE "C", idempotency_key COLLATE "C"
+         LIMIT 1`,
+        [
+          walletAddress,
+          strategyVersion,
+          second[0]!.slot,
+          second[0]!.observedAt,
+          second[0]!.signature,
+          second[0]!.idempotencyKey
+        ]
+      );
+      expect(plan.rows.map((row) => row["QUERY PLAN"]).join("\n")).toContain(
+        "idx_wallet_trade_events_fifo_order_prefix"
+      );
+    } finally {
+      await planClient.query("ROLLBACK");
+      planClient.release();
+    }
   });
 
   it("coalesces historical materialization changes into one wallet source revision", async () => {
@@ -3005,6 +3038,30 @@ integrationDescribe("PostgreSQL evidence pipeline", () => {
       event("pg-pool-a-2", 602, "PgPoolA"),
       event("pg-pool-b-1", 603, "PgPoolB")
     ]);
+
+    const partitionPlanClient = await testPool.connect();
+    try {
+      await partitionPlanClient.query("BEGIN");
+      await partitionPlanClient.query("SET LOCAL enable_seqscan = off");
+      const plan = await partitionPlanClient.query<{ "QUERY PLAN": string }>(
+        `EXPLAIN (COSTS OFF)
+         SELECT idempotency_key, chain, partition_key, slot, transaction_index,
+                instruction_index, received_at, status, attempt_count,
+                next_attempt_at, lock_expires_at
+         FROM chain_event_inbox
+         WHERE status NOT IN ('processed', 'rolled_back')
+         ORDER BY chain, partition_key, slot ASC NULLS LAST,
+                  transaction_index ASC NULLS LAST, instruction_index ASC NULLS LAST,
+                  received_at, idempotency_key
+         LIMIT 1`
+      );
+      expect(plan.rows.map((row) => row["QUERY PLAN"]).join("\n")).toContain(
+        "idx_chain_event_inbox_direct_partition_head"
+      );
+    } finally {
+      await partitionPlanClient.query("ROLLBACK");
+      partitionPlanClient.release();
+    }
 
     const first = await repository.claimChainEvents({ workerId: "parser-order", limit: 10 });
     expect(first.map((item) => item.idempotencyKey)).toEqual(["pg-pool-a-1", "pg-pool-b-1"]);

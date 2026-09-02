@@ -1,10 +1,116 @@
 ---
-status: paused-for-host-migration
-updated_at_utc: 2026-09-01T13:06:00Z
+status: active
+updated_at_utc: 2026-09-02T20:00:00Z
 owner: codex
-task: Preserve R53 recovery state for DigitalOcean to Netcup migration
-last_safe_checkpoint: R53.1 deployed; acceptance intentionally paused at release ledger revision 38
+task: R54 queue equilibrium and production query-path repair
+last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
 ---
+
+# Active R54 queue-equilibrium resume — 2026-09-02
+
+The user postponed the DigitalOcean-to-Netcup move and explicitly resumed work on growing queues.
+Do not delete or clear canonical evidence/queues, increase CPU/RAM/timeouts as a substitute for a
+query fix, alter live execution, touch another project, or interrupt the active verified backup.
+
+## R54 verified resume state
+
+- Local Git is `c360c7d` on `main`, equal to `origin/main`. Preserve the four pre-existing untracked
+  transfer remnants under `deploy/`; there is no uncommitted source change.
+- Production migration 057 checksum remains
+  `01fb1381027e7d539af5ebd324484672a7a1c0d24eb740495259ae1173a9222c`. Solana ingestion,
+  wallet-alpha, data-maintenance and operations-monitor all run exact R53.1 image
+  `walletscaner-worker:queue-recovery-r53-1-20260901`; unhealthy count is zero.
+- At 2026-09-02 19:27 UTC the durable discovery-signature queue had drained from roughly 29,000 to
+  zero with no dead letter. The alpha queue was 178 pending / 8 failed: six exact
+  `trade-events bound probe` timeouts and two intentional FIFO inventory-budget failures. Canonical
+  inbox was 1,782 pending / 8 processing / zero retry or dead letter, dominated by 1,288 Pump.fun
+  discovery rows and 511 Helius trade rows across eight active partitions.
+- A daily dump `memecoin_alpha_20260902T173517Z.dump.tmp` is actively running. It had reached about
+  1.97 GB after two hours; root free space was about 9.5 GB. No production mutation or heavy build
+  may overlap it. The previous 31-Aug dump remains the verified server/offsite recovery point.
+- The canonical recursive claim has 3.35 million calls since the SQL-statistics reset, 35 ms mean,
+  58.4 s maximum and about 18.5 GB WAL. During the active dump its live claim latency was 7-12 s.
+  A read-only plan read 4,098 heap blocks and took 6.99 s. A `DISTINCT ON` alternative was rejected:
+  it read 7,760 blocks and took 10.39 s.
+- Every current bound-probe timeout sampled has an existing FIFO continuation. The exact append
+  query for one affected wallet read 3,275 blocks and filtered 3,227 historical rows to return six
+  suffix rows, completing at 4.996 s against the five-second limit. The current
+  `(strategy_version, wallet_address, observed_at)` index cannot serve deterministic
+  `(slot, observed_at, signature C, idempotency_key C)` continuation order.
+
+## R54 acceptance and next exact action
+
+Implement and test the smallest additive deterministic-order index/query contract for FIFO append
+and upper-bound probes. Rehearse it on PostgreSQL 16 with populated-data size/plan/WAL evidence.
+Separately remeasure canonical claim and backlog slope after the active dump completes; do not call
+the dump-induced spike a permanent capacity failure or hide it as healthy. Before any production
+mutation require completed SHA/archive-list/offsite backup evidence, at least the documented disk
+reserve plus index-build/WAL/temp headroom, exact artifact identity, live execution false and named
+service rollback state. Acceptance requires no recurring bound-probe timeout, no growing alpha
+failed/pending slope, bounded canonical backlog that drains after backup load, fresh wallet trades,
+zero dead-letter growth and unchanged CPU/RAM ceilings.
+
+## R54 local implementation checkpoint — 2026-09-02 19:49 UTC
+
+- Added unapplied migration `058_wallet_trade_fifo_order_index.sql`. It creates one compact
+  concurrent index on `(chain, wallet_address, strategy_version, slot, observed_at)`; it does not
+  delete, rewrite or change the meaning of canonical evidence.
+- FIFO suffix reads and the trade upper-bound probe retain the complete C-collated
+  `(slot, observed_at, signature, idempotency_key)` boundary and add its logically implied
+  `(slot, observed_at) >= boundary` seek. This preserves same-slot/time tie correctness while
+  allowing PostgreSQL to start near the continuation instead of filtering the wallet's history.
+- Targeted bound/index tests pass 2/2; repository-wide TypeScript typecheck passes. The Windows
+  suite passes 100 files / 490 tests and has only the pre-existing three archive-artifact failures
+  caused by missing local `zstd`; seven PostgreSQL suites are skipped because local Docker is not
+  available. Do not call this a populated database gate.
+- The live dump remains active and reached 2,208,614,971 bytes at 19:43 UTC. Root availability was
+  9,123,565,568 bytes. Production is unchanged.
+- Current live `evidence-v1` queue is 206 unresolved / 202 ready / 1 processing / 12 with an error,
+  split priority 76/130/0. Nine are the exact trade-bound timeout and two remain intentional FIFO
+  inventory limits. A separate inactive `evidence-v2` namespace contains 334 historical rows; the
+  production worker and Telegram status are strategy-filtered, so these rows are not the current
+  evidence-v1 capacity count and must not be deleted or relabelled as part of R54.
+- Canonical inbox reached 2,327 unresolved rows during the dump (1,860 discovery pools and 467
+  Helius swaps); last wallet trade was about 16 minutes old. Continue to treat this as an active
+  backup-contention measurement until a post-backup drain sample proves or rejects that diagnosis.
+
+Next exact action: let the current dump finish, verify its checksum/archive-list/offsite state and
+remeasure both queue slopes without backup I/O. Restore the populated local PostgreSQL gate only if
+the existing clone can be accessed without destructive Docker repair; otherwise production rollout
+remains blocked rather than silently treating skipped integration as validation.
+
+## R54 canonical claim checkpoint — 2026-09-02 20:00 UTC
+
+- Live read-only evidence found 2,397 unresolved canonical rows across ten direct partitions and
+  exactly zero unresolved rows with a null/empty durable `partition_key`. The existing expression
+  index is only 24,477,696 bytes but has fetched over ten million heap tuples; the recursive claim
+  cannot remain index-only because it asks PostgreSQL to recompute a JSON fallback that current
+  writes no longer need.
+- Added migration 059 to backfill only an older unresolved working set, then install a NOT VALID
+  check that is enforced for new/updated unresolved rows without scanning or rewriting historical
+  processed evidence. Added migration 060 with a small concurrent direct-partition covering index.
+  The legacy expression indexes remain untouched as rollback evidence.
+- `claimChainEvents` now orders and advances on the durable direct partition column. The durable
+  before-side-effects boundary, one-head-per-partition ordering, finality gate, leases, retries and
+  dead-letter behavior are unchanged.
+- Migration SHA-256 values: 058
+  `92a609d2efac8637b025d338f6f89518734938654ef52292a5a2f7b64a3d5989`; 059
+  `c80adb4f928ee7cec9f78950753d3aa7faa463873a2f86d5543e9a439f519a37`; 060
+  `5ad3d36533f8471e303b6ecaa185d1b79c6fa80aef00bbfba62c2f08a66a690e`.
+- Static queue-path tests pass 4/4 and typecheck passes. A fresh isolated local PostgreSQL 18 engine
+  accepted the complete migration chain and the primary evidence integration suite passed 44/44,
+  including both new index-plan assertions. Across all seven DB/maintenance integration files,
+  six files / 67 tests passed; the archive file's three tests timed out only because Windows has no
+  `zstd` executable, matching the full-suite environment limitation. This is strong SQL correctness
+  evidence but not the required PostgreSQL 16 populated-plan proof.
+- The temporary PostgreSQL 18 server was stopped cleanly. The production dump was still active at
+  19:59 UTC, had reached 2,605,310,019 bytes and left 8,702,054,400 bytes available (89% reported
+  use). Production remains unchanged; do not overlap migration/index/image work with this dump.
+
+Next exact action: after the dump finalizes, capture its SHA/archive-list state and a no-backup queue
+sample. If disk reserve remains safe, stage migrations 059/060/058 as an additive schema-only
+production canary, measure exact PostgreSQL 16 populated plans/index sizes and abort/drop only the
+new indexes if the plans do not improve. Activate the tested repository code only after that gate.
 
 # Active R53 objective and exclusions
 
