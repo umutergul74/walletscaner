@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T20:16:00Z
+updated_at_utc: 2026-09-02T20:43:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
@@ -121,6 +121,16 @@ new indexes if the plans do not improve. Activate the tested repository code onl
   hash-verified at `/opt/walletscaner/deploy/walletscaner-r54-d98788a.tar`, then extracted under
   `/opt/walletscaner/deploy/r54-d98788a`. No image was built, migration applied, environment changed
   or service recreated while the dump remained active.
+- The 02-Sep dump completed at 3,186,064,426 bytes. Scheduler and an independent host read both
+  produced SHA-256 `cd7116a955754719b713a33908b6ed8612fc5c91cc884b71bb98c7e58a50c26c`;
+  an isolated read-only PostgreSQL 16 `pg_restore --list` passed. The final dump pushed root usage
+  to 90% with 7,555,842,048 bytes available, so index work remains blocked on headroom rather than
+  being overlapped with the just-finished backup.
+- The 31-Aug server dump is still present and has a matching off-host acknowledgement; the new
+  02-Sep generation does not yet. Rollout ledger revision 2 is `preflight/in_progress`. The exact
+  next operation is the existing resumable 20-Mbps off-host pull of the new dump, independent hash
+  and archive-list verification, acknowledgement upload, then fail-closed reconciliation that
+  retains the new server dump and removes only the older acknowledged generation.
 
 # Active R53 objective and exclusions
 
