@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T20:43:00Z
+updated_at_utc: 2026-09-02T20:42:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
