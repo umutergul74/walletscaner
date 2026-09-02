@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T20:02:00Z
+updated_at_utc: 2026-09-02T20:16:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
@@ -116,6 +116,11 @@ new indexes if the plans do not improve. Activate the tested repository code onl
   untracked transfer remnants remain untouched. Local rollout ledger
   `reports/deploy/queue-equilibrium-r54-20260902.json` is revision 1, `preflight/planned`; its next
   action is explicitly gated on backup completion and recovery/headroom verification.
+- Exact five-file runtime staging archive is 235,520 bytes with SHA-256
+  `e008c5f150a704fb8dcbdf07b771c53c46a416b2960d3b1128fc5c736420363e`. It was copied and
+  hash-verified at `/opt/walletscaner/deploy/walletscaner-r54-d98788a.tar`, then extracted under
+  `/opt/walletscaner/deploy/r54-d98788a`. No image was built, migration applied, environment changed
+  or service recreated while the dump remained active.
 
 # Active R53 objective and exclusions
 
