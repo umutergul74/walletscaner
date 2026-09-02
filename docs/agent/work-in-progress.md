@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T20:00:00Z
+updated_at_utc: 2026-09-02T20:02:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
@@ -111,6 +111,11 @@ Next exact action: after the dump finalizes, capture its SHA/archive-list state 
 sample. If disk reserve remains safe, stage migrations 059/060/058 as an additive schema-only
 production canary, measure exact PostgreSQL 16 populated plans/index sizes and abort/drop only the
 new indexes if the plans do not improve. Activate the tested repository code only after that gate.
+
+- Coherent R54 source/test/migration/overlay checkpoint is commit `d98788a`. The four pre-existing
+  untracked transfer remnants remain untouched. Local rollout ledger
+  `reports/deploy/queue-equilibrium-r54-20260902.json` is revision 1, `preflight/planned`; its next
+  action is explicitly gated on backup completion and recovery/headroom verification.
 
 # Active R53 objective and exclusions
 
