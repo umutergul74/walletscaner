@@ -3,6 +3,30 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-09-03 01:37 UTC R54 queue equilibrium operational
+
+- Additive migrations 058-060 are applied with canonical Git/Linux checksums. The FIFO seek index
+  reduced the previously timing-out wallet upper-bound probe from 4,995.587 ms/3,275 blocks to
+  89.464 ms/17 blocks. The direct canonical partition-head index reduced the measured cold claim
+  path from 6.99 seconds/4,098 blocks to 417.513 ms/482 blocks; the subsequent production worker
+  reported 5-8 ms claims with zero claim or event-processing failure.
+- Wallet-alpha and Solana ingestion run exact R54 image
+  `sha256:ce8ec7d5a1f46dacaacb6bad910be1f4f96a1d075f6b72508df790361d173f0f`, sourced from
+  `d98788a451778211fe31921e883f2ded6a1d47b9`. Both are live-execution false, restart/OOM zero and
+  retain their 160 MiB plus 0.10/0.20 CPU ceilings. Exact R53.1
+  `sha256:fe1439cf...ad116` remains loaded for independent named-service rollback.
+- Production acceptance processed wallet cohorts without a bound-probe timeout; alpha returned to
+  only two pre-existing intentional FIFO inventory-limit rows. Canonical pending drained
+  `149 -> 106 -> 25 -> 7 -> 3`, with 8.5-second oldest age, no retry/dead letter, fresh wallet trades
+  and no dropped/rejected signature. The controlled ingestion restart's three discovery gaps were
+  durably reconciled and open coverage incidents returned to zero.
+- Root free space was 11,336,105,984 bytes and PostgreSQL was 26,806,262,807 bytes. The 02-Sep dump is independently SHA/archive-list and
+  off-host verified; older verified off-host generations remain. No canonical evidence, backup,
+  B2 object, volume or unrelated service was removed.
+- Three historical `solana_signature_queue` dead letters remain unchanged as a separate fail-closed
+  incident-repair task; they keep aggregate operational status honest but are not a growing queue.
+  R54 release ledger `reports/deploy/queue-equilibrium-r54-20260902.json` revision 20 is completed.
+
 ## 2026-09-01 07:39 UTC R52.1 admission checkpoint operational
 
 - Migration 056 is operational with checksum

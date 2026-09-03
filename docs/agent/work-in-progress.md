@@ -1,9 +1,9 @@
 ---
-status: active
-updated_at_utc: 2026-09-03T01:24:00Z
+status: complete
+updated_at_utc: 2026-09-03T01:37:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
-last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
+last_safe_checkpoint: R54 operational on wallet-alpha and ingestion; acceptance ledger revision 20 complete; exact R53.1 retained for rollback
 ---
 
 # Active R54 queue-equilibrium resume — 2026-09-02
@@ -218,6 +218,55 @@ new indexes if the plans do not improve. Activate the tested repository code onl
   `sha256:fe1439cf...ad116`. No service or environment key has changed. Next exact action: record
   image verification complete, atomically bind only the research image key, recreate only
   `wallet-alpha`, and reject/roll back on identity, live-mode, resource or error-growth failure.
+- Wallet-alpha canary pre-state at 01:22 UTC is already down to only two unresolved rows, both
+  intentional `FIFO continuation inventory budget exceeded`; ready work and bound-probe timeouts
+  are zero. Canonical inbox is three pending/zero retry or dead letter. Signature dead letters stay
+  at the separate baseline of three. The approved updater dry-run proves the sole environment
+  change is `WALLETSCANER_RESEARCH_IMAGE` R53.1 -> R54; the hash of all other running Walletscaner
+  service IDs is `f5beed8c...db0ba3`. Next exact action remains the named wallet-alpha-only canary.
+- The first wallet-alpha canary was rejected and fully rolled back before processing work: the
+  copy-only image inherited the staging container's temporary `/bin/true` entrypoint, so the
+  container exited and reached restart count five. The hash-locked research key was restored to
+  R53.1 and only wallet-alpha was recreated. It is now running exact
+  `sha256:fe1439cf...ad116`, live=false, restart/OOM zero; every other service ID hash remains
+  `f5beed8c...db0ba3`. No database row, migration or other service changed. Next: mark the canary
+  failed, delete only the unbound bad R54 image, reconstruct it from a stopped base container
+  without changing entrypoint/CMD, compare runtime config to R53.1, and repeat the same canary.
+- The unbound bad image was removed and rebuilt from a stopped R53.1 container without any config
+  override. Corrected R54 image is `sha256:ce8ec7d5a1f46dacaacb6bad910be1f4f96a1d075f6b72508df790361d173f0f`
+  (464,466,030 bytes). Environment, entrypoint `docker-entrypoint.sh`, command
+  `npm run worker:solana`, workdir, user, volumes, ports, healthcheck, shell and stop signal are
+  byte-for-byte equivalent to R53.1; the four source hashes again pass in a no-network probe and
+  the staging container is gone. Wallet-alpha remains on R53.1. Next: repeat the same isolated
+  wallet-alpha canary with the corrected immutable image.
+- Corrected wallet-alpha canary is operational as container `d6c10e90...3bda9`, exact R54 image,
+  live=false, restart/OOM zero and the unchanged 160 MiB/0.10 CPU ceilings. It processed successive
+  cohorts of 23 and 18 wallets with zero failure; one normal superseded revision remained pending
+  and was subsequently processed. Bound-probe errors stayed zero and the queue remained only the
+  two pre-existing intentional FIFO inventory limits. RSS was about 55 MiB in the independent
+  sample; all non-alpha service IDs retained hash `f5beed8c...db0ba3`.
+- Ingestion preflight proves only `WALLETSCANER_INGEST_IMAGE` would change R53.1 -> R54. Current
+  ingestion is live=false, restart/OOM zero with unchanged 160 MiB/0.20 CPU ceilings; all other
+  running service IDs hash to `6f26ca67...ff69bd`. Root free space is 11,209,052,160 bytes. Next:
+  recreate only ingestion and verify canonical queue slope, freshness, coverage/dead-letter and
+  resource gates; wallet-alpha remains on the accepted R54 image.
+- R54 acceptance completed at ledger revision 20. Ingestion runs container
+  `939aaa93...6771f` and wallet-alpha runs `d6c10e90...3bda9`, both exact image
+  `sha256:ce8ec7d5...173f0f`, live=false, restart/OOM zero and unchanged resource ceilings. The
+  controlled ingestion restart opened three bounded discovery gaps; all were durably reconciled
+  and open incidents returned to zero. Canonical pending drained `149 -> 106 -> 25 -> 7`, oldest
+  age was nine seconds, retry/dead-letter stayed zero, latest claim was eight milliseconds and the
+  R54 process completed 875 events with zero failure, dropped signature or handler rejection.
+  Wallet trade age was 16.6 seconds. The final 01:38 UTC handoff improved further to three pending
+  canonical rows with 8.5-second oldest age, zero processing/retry/dead letter, 26.2-second wallet
+  trade age and zero open coverage incident.
+- Wallet-alpha returned to only two unresolved rows, both pre-existing intentional FIFO inventory
+  limits; ready work and bound-probe timeout errors are zero. A transient live cohort of 17 ready
+  rows drained in the next cycle. Final root free space is 11,336,105,984 bytes and PostgreSQL is
+  26,806,262,807 bytes. The three retained
+  signature dead letters did not increase and remain a separate fail-closed incident-repair task;
+  they were not deleted or reset. Source implementation is `d98788a`; GitHub CI passed through its
+  descendants and exact R53.1 remains loaded as the named-service rollback image.
 
 # Active R53 objective and exclusions
 
