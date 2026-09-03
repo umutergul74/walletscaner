@@ -3,6 +3,23 @@
 This is a compact, dated handoff for agents. It is not production authority. Refresh live state
 before every operational claim or mutation.
 
+## 2026-09-03 02:28 UTC Walletscaner temporarily stopped
+
+- At the user's request, all twelve running Walletscaner Compose services were stopped with named
+  `docker compose stop` operations; `down`, removal, cleanup and configuration changes were not
+  used. Zero Walletscaner containers now run. The twelve service containers remain `exited`, and
+  the already-disabled `paper-alert` remains `created`.
+- PostgreSQL and Redis stopped last with exit code zero. Their persistent volumes
+  `walletscaner_postgres-data` and `walletscaner_redis-data` remain present. No `pg_dump` or
+  `pg_restore` was active; the verified 3,186,064,426-byte 02-Sep server/off-host recovery
+  generation remains intact.
+- The root filesystem remains 85% used with 10,943,631,360 bytes available. The shutdown prevents
+  new Walletscaner database/archive/backup/log growth but intentionally reclaimed no storage.
+  Perform a separate read-only cleanup inventory before deleting anything or restarting services.
+- Restart must be separately authorized and staged: PostgreSQL/Redis first, then only the twelve
+  previously running named services. Keep API, web, paper-alert, alpha-decision-tape and legacy
+  research stopped unless explicitly requested.
+
 ## 2026-09-03 01:37 UTC R54 queue equilibrium operational
 
 - Additive migrations 058-060 are applied with canonical Git/Linux checksums. The FIFO seek index
