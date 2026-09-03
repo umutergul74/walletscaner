@@ -1,6 +1,6 @@
 ---
 status: active
-updated_at_utc: 2026-09-02T21:06:00Z
+updated_at_utc: 2026-09-03T01:24:00Z
 owner: codex
 task: R54 queue equilibrium and production query-path repair
 last_safe_checkpoint: R53.1 deployed at ledger revision 38; R54 remains read-only pending backup completion and tested artifact
@@ -93,10 +93,12 @@ remains blocked rather than silently treating skipped integration as validation.
 - `claimChainEvents` now orders and advances on the durable direct partition column. The durable
   before-side-effects boundary, one-head-per-partition ordering, finality gate, leases, retries and
   dead-letter behavior are unchanged.
-- Migration SHA-256 values: 058
-  `92a609d2efac8637b025d338f6f89518734938654ef52292a5a2f7b64a3d5989`; 059
-  `c80adb4f928ee7cec9f78950753d3aa7faa463873a2f86d5543e9a439f519a37`; 060
-  `5ad3d36533f8471e303b6ecaa185d1b79c6fa80aef00bbfba62c2f08a66a690e`.
+- Canonical Git/Linux migration SHA-256 values: 058
+  `77a576409abab1a7b24781404ee6463d157cdaa80e1ccab69c773221859ef988`; 059
+  `b0aa7d9d9e425e1bedca4c36f469cdcf2ebdd21dc09ed638f914c21559daa83f`; 060
+  `aac810dbc381261d9651d3d97ba5156c7b7bf1a73931112d363acc69e555b049`.
+  Earlier `92a...`/`c80...`/`5ad...` values were hashes of the Windows CRLF checkout, not Git blob
+  bytes; a fresh `git archive d98788a` independently reproduced all three production checksums.
 - Static queue-path tests pass 4/4 and typecheck passes. A fresh isolated local PostgreSQL 18 engine
   accepted the complete migration chain and the primary evidence integration suite passed 44/44,
   including both new index-plan assertions. Across all seven DB/maintenance integration files,
@@ -145,6 +147,77 @@ new indexes if the plans do not improve. Activate the tested repository code onl
   two runtime-only directories were moved aside reversibly, but the engine still did not start.
   No repository, database or production state changed. Do not reset Docker Desktop or move image
   assembly to the shared host merely to bypass this gate; finish backup verification first.
+- The corrected transfer completed at 21:15 UTC. Local bytes are 3,186,064,426 and an independent
+  local SHA-256 reread matches
+  `cd7116a955754719b713a33908b6ed8612fc5c91cc884b71bb98c7e58a50c26c`; PostgreSQL
+  `pg_restore --list` passed using the off-host PostgreSQL binary. The server acknowledgement
+  contains the same hash. Fail-closed reconciliation retained the 02-Sep server generation and
+  removed only the older acknowledged 31-Aug server dump; the 31-Aug, 29-Aug and 28-Aug off-host
+  generations remain locally verified. Root availability increased to 10,301,616,128 bytes (86%
+  used), and no `pg_dump`/`pg_restore` process is active. Rollout ledger revision 3 completes
+  preflight. Next: capture a fresh service/schema/queue snapshot, record schema canary in progress,
+  then apply only additive migrations 058-060 and measure their PostgreSQL 16 plans.
+- Fresh 21:17 UTC preflight: only the `walletscaner` Compose project is present; all twelve running
+  services have restart zero/OOM false. Ingestion and wallet-alpha still run exact R53.1
+  `sha256:fe1439cf...ad116`, retain 160 MiB and 0.20/0.10 CPU ceilings, and both report
+  `ENABLE_LIVE_EXECUTION=false`. PostgreSQL is 16.14, 27,564,096,535 bytes; migration 057 is latest,
+  invalid indexes and unresolved rows without `partition_key` are both zero. Available RAM is
+  1,037,434,880 bytes and swap use is 199,041,024 bytes.
+- The post-backup canonical queue drained from about 2,397 to ten pending rows with oldest age 46
+  seconds, proving the large spike was backup I/O contention rather than a persistent arrival-rate
+  breach. `evidence-v1` still has 214 unresolved rows and 23 failures: 21 exact bound-probe timeouts
+  plus two intentional FIFO inventory limits; oldest ready work is about 46.7 hours. This remains
+  the R54 capacity defect.
+- A separate baseline hard fault exists in `solana_signature_queue`: three retained dead letters at
+  00:20, 02:56 and 15:30 UTC (two real signatures and one all-ones canary identity), plus two
+  pending rows. Their matching `unresolved_transaction` incidents are closed only as transport
+  recovered/gap unreconciled. Do not delete or bulk-reset them. R54 acceptance must show no increase
+  from this baseline; exact repair is a separately evidenced step, and overall pipeline health may
+  not be called OK while they remain.
+- R54 rollout ledger revision 5 is `schema-canary/in_progress`. The first two one-shot containers
+  exited before database access because the PowerShell pipeline appended a carriage return to the
+  final npm script argument (`db:migrate\r`), including after normalizing the in-memory string.
+  Independent verification after the first attempt found no 058-060 migration row, no index build
+  in progress and no remaining run container; `--rm` also removed the second failed container.
+  Invoke the same exact command as a direct SSH argument with no stdin script, retain the three
+  read-only mounts and rerun once; do not alter the ledger phase or assume partial schema.
+- The direct invocation completed migrations 058, 059 and 060 through the existing R53.1 migration
+  runner. Exact production checksums match `git archive d98788a`; both new indexes are valid/ready,
+  there are zero invalid indexes and zero unresolved rows without a direct partition key. The FIFO
+  prefix index is 324,878,336 bytes; the unresolved-only canonical index is 253,952 bytes. Migration
+  WAL from LSN `108/A66E0000` was 1,306,391,656 bytes; root availability remains 9,925,820,416 bytes
+  (87% used). Running R53.1 services retained their original IDs, restart zero and OOM false.
+- On the same previously timing-out wallet, the exact new bound probe used
+  `idx_wallet_trade_events_fifo_order_prefix`, read 17 blocks, filtered one boundary tie and
+  completed in 89.464 ms versus the measured 4,995.587 ms old plan. The new direct canonical
+  recursive seek used `idx_chain_event_inbox_direct_partition_head`; its first cold post-build run
+  completed in 417.513 ms/482 reads versus 6.99 seconds/4,098 reads before R54, and the second run
+  completed in 187.532 ms. Schema canary ledger revision 6 is completed. No service code is yet
+  activated; exact-base off-host image construction remains the next gate.
+- The user explicitly requested finishing R54 without expanding the workflow. Local Docker remains
+  unavailable, but GitHub CI passed on every R54 descendant through `167099b`. To avoid both a
+  shared-host source/dependency build and a new CI/deployment subsystem, assemble one stopped,
+  network-free copy-only image layer directly from exact loaded R53.1: create a uniquely named
+  stopped container, copy only the staged hash-verified repository file and migrations, commit with
+  R54 revision/base labels, independently hash the files in a no-network probe, then remove the
+  staging container. This executes no application code, installs no dependency and shares the
+  loaded base layers. Record exact image ID before changing either service image key. Rollback is
+  exact R53.1 `sha256:fe1439cf...ad116`.
+- Interruption revalidation at 2026-09-03 01:18 UTC found no staging container and no R54 image;
+  both target services still run exact R53.1. The four staged source hashes match the verified
+  artifact, root free space is 11,127,332,864 bytes and available memory is about 1.01 GiB. Rollout
+  ledger revision 7 records `image-assembly/planned`. Next exact action is only the stopped
+  copy-only image assembly and hash probe; no service, environment key or database state changes in
+  this phase.
+- Copy-only image assembly completed and removed its stopped staging container. Immutable image
+  `walletscaner-worker:queue-equilibrium-r54-20260902` is
+  `sha256:22a61d1eb61671ec84b220cf3768e6f1b0441607bed927ee63b66d31f2175dcc`, only 40,274 bytes larger
+  than R53.1 at the Docker image-size boundary; its new top layer is 262 kB. A network-disabled,
+  64 MiB/0.05-CPU probe independently matched repository hash `0678e013...63d9f` and all three
+  canonical migration hashes. Labels bind exact source `d98788a...1d47b9` and base
+  `sha256:fe1439cf...ad116`. No service or environment key has changed. Next exact action: record
+  image verification complete, atomically bind only the research image key, recreate only
+  `wallet-alpha`, and reject/roll back on identity, live-mode, resource or error-growth failure.
 
 # Active R53 objective and exclusions
 
